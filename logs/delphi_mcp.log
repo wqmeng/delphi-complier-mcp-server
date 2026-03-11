@@ -47,3 +47,71 @@
 2026-03-10 15:55:56,602 - delphi_mcp - INFO - 工具服务实例设置完成
 2026-03-10 15:55:56,602 - delphi_mcp - INFO - MCP Server 实例创建完成
 2026-03-10 15:55:56,602 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-10 18:06:36,738 - delphi_mcp - INFO - 调用工具: compile_file
+2026-03-10 18:07:28,858 - delphi_mcp - INFO - 调用工具: compile_file
+2026-03-10 18:07:54,707 - delphi_mcp - INFO - 调用工具: compile_file
+2026-03-10 18:11:42,128 - delphi_mcp - INFO - 调用工具: compile_file
+2026-03-11 08:38:55,353 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.10
+2026-03-11 08:38:55,354 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 08:38:55,362 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 08:38:55,364 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 08:38:55,364 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 08:38:55,364 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 08:38:55,364 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-11 15:44:37,012 - delphi_mcp - INFO - 调用工具: check_environment
+2026-03-11 21:04:04,818 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.10
+2026-03-11 21:04:04,818 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 21:04:04,829 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 21:04:04,838 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 21:04:04,838 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-03-11 21:04:04,839 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 21:04:04,839 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 21:04:04,839 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-11 21:04:45,660 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.10
+2026-03-11 21:04:45,660 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 21:04:45,661 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 21:04:45,661 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 21:04:45,661 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-03-11 21:04:45,661 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 21:04:45,661 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 21:04:45,661 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-11 21:17:18,247 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.10
+2026-03-11 21:17:18,247 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 21:17:18,248 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 21:17:18,248 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 21:17:18,248 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-03-11 21:17:18,248 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 21:17:18,248 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 21:17:18,249 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-11 21:25:32,221 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.10
+2026-03-11 21:25:32,221 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 21:25:32,221 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 21:25:32,221 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 21:25:32,222 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-03-11 21:25:32,222 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 21:25:32,222 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 21:25:32,222 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-11 22:39:00,843 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.10
+2026-03-11 22:39:00,843 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 22:39:00,843 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 22:39:00,844 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 22:39:00,844 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-03-11 22:39:00,844 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 22:39:00,844 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 22:39:00,844 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-11 22:39:31,271 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.10
+2026-03-11 22:39:31,271 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 22:39:31,272 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 22:39:31,272 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 22:39:31,272 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-03-11 22:39:31,272 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 22:39:31,272 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 22:39:31,272 - delphi_mcp - INFO - MCP Server 启动中...
+2026-03-11 22:45:58,574 - delphi_mcp - INFO - 启动 Delphi MCP Server v2026.03.11
+2026-03-11 22:45:58,574 - delphi_mcp - INFO - Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin
+2026-03-11 22:45:58,575 - delphi_mcp - INFO - 配置管理器初始化完成
+2026-03-11 22:45:58,575 - delphi_mcp - INFO - 编译服务初始化完成
+2026-03-11 22:45:58,575 - delphi_mcp - INFO - 知识库服务初始化完成
+2026-03-11 22:45:58,575 - delphi_mcp - INFO - 工具服务实例设置完成
+2026-03-11 22:45:58,575 - delphi_mcp - INFO - MCP Server 实例创建完成
+2026-03-11 22:45:58,575 - delphi_mcp - INFO - MCP Server 启动中...

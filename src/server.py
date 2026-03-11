@@ -32,7 +32,11 @@ from mcp.server.stdio import stdio_server
 
 from src.services.config_manager import ConfigManager
 from src.services.compiler_service import CompilerService
+from src.services.knowledge_base import DelphiKnowledgeBaseService
 from src.tools import compile_project, compile_file, get_args, config, environment
+from src.tools import knowledge_base as kb_tools
+from src.tools import project_knowledge_base as project_kb_tools
+from src.tools import help_knowledge_base as help_kb_tools
 from src.utils.logger import init_default_logger, get_logger
 from src.__version__ import __version__, __copyright__
 
@@ -53,12 +57,17 @@ async def run_server():
     compiler_service = CompilerService(config_manager)
     logger.info("编译服务初始化完成")
 
+    # 初始化知识库服务
+    kb_service = DelphiKnowledgeBaseService()
+    logger.info("知识库服务初始化完成")
+
     # 设置工具的服务实例
     compile_project.set_compiler_service(compiler_service)
     compile_file.set_compiler_service(compiler_service)
     get_args.set_compiler_service(compiler_service)
     config.set_config_manager(config_manager)
     environment.set_config_manager(config_manager)
+    kb_tools.set_knowledge_base_service(kb_service)
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
@@ -156,6 +165,180 @@ async def run_server():
                     "properties": {},
                     "required": []
                 }
+            ),
+            Tool(
+                name="build_knowledge_base",
+                description="构建 Delphi 源码知识库 (支持语义搜索)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "version": {"type": "string", "description": "Delphi 版本 (可选),默认使用最新版本"},
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建知识库"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="search_class",
+                description="搜索 Delphi 类定义",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "class_name": {"type": "string", "description": "类名,如 'TButton'"}
+                    },
+                    "required": ["class_name"]
+                }
+            ),
+            Tool(
+                name="search_function",
+                description="搜索 Delphi 函数/过程定义",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "function_name": {"type": "string", "description": "函数名,如 'Create'"}
+                    },
+                    "required": ["function_name"]
+                }
+            ),
+            Tool(
+                name="semantic_search",
+                description="语义搜索 Delphi 代码 (支持自然语言查询)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索查询,如 'create button' 或 'network http request'"},
+                        "top_k": {"type": "integer", "default": 10, "description": "返回结果数量"}
+                    },
+                    "required": ["query"]
+                }
+            ),
+            Tool(
+                name="get_knowledge_base_stats",
+                description="获取知识库统计信息",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            ),
+            Tool(
+                name="list_delphi_versions",
+                description="列出已安装的 Delphi 版本",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            ),
+            # 项目知识库工具
+            Tool(
+                name="init_project_knowledge_base",
+                description="初始化项目知识库 (从 .dproj 读取三方库路径并构建知识库)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"},
+                        "build_thirdparty": {"type": "boolean", "default": True, "description": "是否构建三方库知识库"},
+                        "build_project": {"type": "boolean", "default": True, "description": "是否构建项目源码知识库"},
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
+                    },
+                    "required": ["project_path"]
+                }
+            ),
+            Tool(
+                name="search_project_class",
+                description="在项目中搜索类定义 (支持搜索项目源码和三方库)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"},
+                        "class_name": {"type": "string", "description": "类名"},
+                        "search_in": {"type": "string", "enum": ["project", "thirdparty", "all"], "default": "all", "description": "搜索范围: project(项目源码), thirdparty(三方库), all(全部)"}
+                    },
+                    "required": ["project_path", "class_name"]
+                }
+            ),
+            Tool(
+                name="search_project_function",
+                description="在项目中搜索函数定义 (支持搜索项目源码和三方库)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"},
+                        "function_name": {"type": "string", "description": "函数名"},
+                        "search_in": {"type": "string", "enum": ["project", "thirdparty", "all"], "default": "all", "description": "搜索范围: project(项目源码), thirdparty(三方库), all(全部)"}
+                    },
+                    "required": ["project_path", "function_name"]
+                }
+            ),
+            Tool(
+                name="semantic_search_project",
+                description="在项目中进行语义搜索 (支持自然语言查询,自动检测源码变动并更新)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"},
+                        "query": {"type": "string", "description": "搜索查询,如 'create button' 或 'network http request'"},
+                        "top_k": {"type": "integer", "default": 10, "description": "返回结果数量"},
+                        "search_in": {"type": "string", "enum": ["project", "thirdparty", "all"], "default": "all", "description": "搜索范围: project(项目源码), thirdparty(三方库), all(全部)"}
+                    },
+                    "required": ["project_path", "query"]
+                }
+            ),
+            Tool(
+                name="get_project_kb_stats",
+                description="获取项目知识库统计信息",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"}
+                    },
+                    "required": ["project_path"]
+                }
+            ),
+            Tool(
+                name="get_thirdparty_paths",
+                description="获取项目的三方库路径 (从 .dproj 文件中提取)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"}
+                    },
+                    "required": ["project_path"]
+                }
+            ),
+            # 帮助文档知识库工具
+            Tool(
+                name="build_help_knowledge_base",
+                description="构建 Delphi 帮助文档知识库 (从 CHM 文件提取)",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
+                    },
+                    "required": []
+                }
+            ),
+            Tool(
+                name="search_help",
+                description="搜索 Delphi 帮助文档",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索查询"},
+                        "top_k": {"type": "integer", "default": 10, "description": "返回结果数量"}
+                    },
+                    "required": ["query"]
+                }
+            ),
+            Tool(
+                name="get_help_kb_stats",
+                description="获取帮助文档知识库统计信息",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
             )
         ]
 
@@ -175,6 +358,38 @@ async def run_server():
                 result = await config.set_compiler_config(**arguments)
             elif name == "check_environment":
                 result = await environment.check_environment()
+            elif name == "build_knowledge_base":
+                result = await kb_tools.build_knowledge_base(arguments)
+            elif name == "search_class":
+                result = await kb_tools.search_class(arguments)
+            elif name == "search_function":
+                result = await kb_tools.search_function(arguments)
+            elif name == "semantic_search":
+                result = await kb_tools.semantic_search(arguments)
+            elif name == "get_knowledge_base_stats":
+                result = await kb_tools.get_knowledge_base_stats(arguments)
+            elif name == "list_delphi_versions":
+                result = await kb_tools.list_delphi_versions(arguments)
+            # 项目知识库工具
+            elif name == "init_project_knowledge_base":
+                result = await project_kb_tools.init_project_knowledge_base(arguments)
+            elif name == "search_project_class":
+                result = await project_kb_tools.search_project_class(arguments)
+            elif name == "search_project_function":
+                result = await project_kb_tools.search_project_function(arguments)
+            elif name == "semantic_search_project":
+                result = await project_kb_tools.semantic_search_project(arguments)
+            elif name == "get_project_kb_stats":
+                result = await project_kb_tools.get_project_kb_stats(arguments)
+            elif name == "get_thirdparty_paths":
+                result = await project_kb_tools.get_thirdparty_paths(arguments)
+            # 帮助文档知识库工具
+            elif name == "build_help_knowledge_base":
+                result = await help_kb_tools.build_help_knowledge_base(arguments)
+            elif name == "search_help":
+                result = await help_kb_tools.search_help(arguments)
+            elif name == "get_help_kb_stats":
+                result = await help_kb_tools.get_help_kb_stats(arguments)
             else:
                 raise ValueError(f"未知工具: {name}")
 

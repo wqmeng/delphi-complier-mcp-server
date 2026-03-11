@@ -1,3 +1,0 @@
-Embarcadero Delphi for Win32 compiler version 35.0
-Copyright (c) 1983,2022 Embarcadero Technologies, Inc.
-C:\User\diandaxia\Thirdpart\ZBar\zbar.animation.pas(6) Fatal: F2613 Unit 'Math' not found.
