@@ -37,6 +37,7 @@ from src.tools import compile_project, compile_file, get_args, config, environme
 from src.tools import knowledge_base as kb_tools
 from src.tools import project_knowledge_base as project_kb_tools
 from src.tools import help_knowledge_base as help_kb_tools
+from src.tools import coding_rules
 from src.utils.logger import init_default_logger, get_logger
 from src.__version__ import __version__, __copyright__
 
@@ -163,6 +164,17 @@ async def run_server():
                 inputSchema={
                     "type": "object",
                     "properties": {},
+                    "required": []
+                }
+            ),
+            Tool(
+                name="get_coding_rules",
+                description="获取 Delphi 源码编码规则",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目路径（可选），用于查找用户自定义的编码规则文件"}
+                    },
                     "required": []
                 }
             ),
@@ -358,6 +370,8 @@ async def run_server():
                 result = await config.set_compiler_config(**arguments)
             elif name == "check_environment":
                 result = await environment.check_environment()
+            elif name == "get_coding_rules":
+                result = await coding_rules.get_coding_rules(**arguments)
             elif name == "build_knowledge_base":
                 result = await kb_tools.build_knowledge_base(arguments)
             elif name == "search_class":
