@@ -1,8 +1,8 @@
 # Delphi MCP Server
 
-[!\[License: MIT\](https://img.shields.io/badge/License-MIT-yellow.svg null)](https://opensource.org/licenses/MIT)
-[!\[Python 3.10+\](https://img.shields.io/badge/python-3.10+-blue.svg null)](https://www.python.org/downloads/)
-[!\[Delphi\](https://img.shields.io/badge/Delphi-2005%20to%2013-red.svg null)](https://www.embarcadero.com/products/delphi)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
+![Delphi 2005-13](https://img.shields.io/badge/Delphi-2005%20to%2013-red.svg)
 
 一个为 AI 助手(如 Claude Desktop、CodeArts Agent 等)提供 Delphi 工程编译能力和知识库查询功能的 MCP Server。如果您觉得有用，请不要吝啬您的 Star! ⭐
 
@@ -381,6 +381,22 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 详见 [LICENSE](LICENSE) 文件。
 
 ## 版本历史
+
+### v2026.03.26 (2026-03-26)
+
+- 新增 pasfmt 代码格式化工具
+  - 新增 `format_delphi_file` 工具，格式化 Delphi 源代码文件
+  - 新增 `format_delphi_code` 工具，格式化 Delphi 代码字符串
+  - 新增 `download_and_install_pasfmt` 工具，下载并安装 pasfmt CLI
+  - 新增 `download_and_install_pasfmt_rad` 工具，下载并安装 pasfmt-rad IDE 插件
+  - 新增 `check_pasfmt_installation` 工具，检查 pasfmt 安装状态
+  - 新增 `check_pasfmt_rad_installation` 工具，检查 pasfmt-rad IDE 插件安装状态
+  - 新增 `set_pasfmt_path` 工具，设置 pasfmt 可执行文件路径
+- 支持从 GitHub 下载预编译的 pasfmt 二进制文件（支持 Windows 32/64 位和 Linux）
+- 支持 Delphi 11/12/13 版本的 IDE 插件安装
+- 适配 pasfmt v0.7.0 命令行参数
+- 支持 UTF-8/UTF-8 BOM/GBK 编码文件
+- 修复测试文件导入路径问题
 
 ### v2026.03.21 (2026-03-21)
 
