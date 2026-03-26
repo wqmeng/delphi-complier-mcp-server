@@ -10,10 +10,10 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import time
 import os
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from pathlib import Path
-from ..models.compile_request import ProjectCompileRequest, FileCompileRequest, TargetPlatform
+from ..models.compile_request import ProjectCompileRequest, FileCompileRequest, TargetPlatform, CompileOptions, OutputType, RuntimeLibrary
 from ..models.compile_result import CompileResult, CompileStatus
 from ..models.command_args import CommandArgs
 from ..models.compile_history import CompileHistoryEntry
@@ -430,6 +430,253 @@ class CompilerService:
 
         return options
 
+    async def compile_dpr_direct(self, request: ProjectCompileRequest) -> CompileResult:
+        """
+        直接使用 dcc32/dcc64 编译 .dpr 文件（不依赖 .dproj）
+
+        Args:
+            request: 工程编译请求
+
+        Returns:
+            编译结果
+        """
+        logger.info(f"直接编译 .dpr 文件: {request.project_path}")
+        start_time = time.time()
+
+        try:
+            # 1. 验证项目路径
+            is_valid, error_msg = self.validator.validate_project_path(request.project_path)
+            if not is_valid:
+                logger.error(f"项目路径验证失败: {error_msg}")
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="INVALID_PROJECT_PATH",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
+
+            # 2. 确定输出路径 - 默认输出到 Win32 子目录
+            project_dir = str(Path(request.project_path).parent)
+            project_name = Path(request.project_path).stem
+
+            if request.options.output_path:
+                output_base = request.options.output_path
+            else:
+                output_base = str(Path(project_dir) / "Win32")
+
+            # 确保输出目录存在
+            Path(output_base).mkdir(parents=True, exist_ok=True)
+
+            # 3. 获取编译器配置
+            compiler_config = self.config_manager.get_compiler(request.options.compiler_version)
+            if not compiler_config:
+                # 尝试自动查找 dcc32
+                dcc32_path = self._find_dcc32_from_registry()
+                if dcc32_path:
+                    logger.info(f"自动找到 dcc32: {dcc32_path}")
+                    compiler_path = dcc32_path
+                else:
+                    error_msg = "未配置默认编译器且无法自动查找"
+                    logger.error(error_msg)
+                    return CompileResult(
+                        status=CompileStatus.FAILED,
+                        error_code="COMPILER_NOT_FOUND",
+                        error_message=error_msg,
+                        duration=int((time.time() - start_time) * 1000)
+                    )
+            else:
+                compiler_path = compiler_config.path
+
+            # 4. 根据目标平台选择编译器
+            if request.options.target_platform == TargetPlatform.WIN64:
+                if 'dcc32.exe' in compiler_path.lower():
+                    compiler_path = compiler_path.replace('dcc32.exe', 'dcc64.exe')
+                    logger.info(f"切换到 64 位编译器: {compiler_path}")
+
+            # 5. 验证编译器路径
+            is_valid, error_msg = self.validator.validate_compiler_path(compiler_path)
+            if not is_valid:
+                logger.error(f"编译器路径验证失败: {error_msg}")
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="INVALID_COMPILER_PATH",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000)
+                )
+
+            # 6. 检查目标程序是否正在运行
+            running_process = self._check_process_running(project_name)
+            if running_process:
+                error_msg = f"目标程序 '{project_name}.exe' 正在运行 (PID: {running_process['pid']})，无法编译。请先关闭程序后再试。"
+                logger.warning(error_msg)
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="PROCESS_RUNNING",
+                    error_message=error_msg,
+                    duration=int((time.time() - start_time) * 1000),
+                    log=f"进程信息: PID={running_process['pid']}, 路径={running_process.get('path', '未知')}"
+                )
+
+            # 7. 生成命令行参数
+            args = self._generate_dpr_args(request.project_path, request.options, output_base)
+
+            # 8. 验证参数
+            if not self.args_generator.validate_args(args):
+                logger.error("参数验证失败")
+                return CompileResult(
+                    status=CompileStatus.FAILED,
+                    error_code="INVALID_ARGS",
+                    error_message="编译参数包含非法字符",
+                    duration=int((time.time() - start_time) * 1000)
+                )
+
+            logger.info(f"编译命令: {compiler_path} {' '.join(args)}")
+
+            # 9. 执行编译
+            try:
+                return_code, stdout, stderr = await self.process_manager.execute(
+                    compiler_path,
+                    args,
+                    request.options.timeout
+                )
+
+                # 10. 解析输出
+                errors = self.output_parser.parse_errors(stdout + stderr)
+                warnings = self.output_parser.parse_warnings(stdout + stderr)
+
+                # 11. 构建结果
+                duration = int((time.time() - start_time) * 1000)
+                output_file = str(Path(output_base) / f"{project_name}.exe")
+
+                if return_code == 0:
+                    result = CompileResult(
+                        status=CompileStatus.SUCCESS,
+                        output_file=output_file,
+                        warnings=warnings,
+                        errors=errors,
+                        duration=duration,
+                        log=stdout + stderr
+                    )
+                    logger.info(f"编译成功,输出文件: {output_file},耗时 {duration}ms")
+                else:
+                    result = CompileResult(
+                        status=CompileStatus.FAILED,
+                        error_code="COMPILATION_FAILED",
+                        error_message=self.output_parser.extract_error_summary(stdout + stderr),
+                        warnings=warnings,
+                        errors=errors,
+                        duration=duration,
+                        log=stdout + stderr
+                    )
+                    logger.error(f"编译失败,耗时 {duration}ms")
+
+                # 12. 保存编译历史
+                self._save_history(request.project_path, result.status.value, duration, result.error_message)
+
+                return result
+
+            except TimeoutError as e:
+                duration = int((time.time() - start_time) * 1000)
+                logger.error(f"编译超时: {str(e)}")
+                result = CompileResult(
+                    status=CompileStatus.TIMEOUT,
+                    error_code="COMPILATION_TIMEOUT",
+                    error_message=str(e),
+                    duration=duration
+                )
+                self._save_history(request.project_path, result.status.value, duration, str(e))
+                return result
+
+        except Exception as e:
+            duration = int((time.time() - start_time) * 1000)
+            error_msg = f"直接编译过程发生异常: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            result = CompileResult(
+                status=CompileStatus.FAILED,
+                error_code="INTERNAL_ERROR",
+                error_message=error_msg,
+                duration=duration
+            )
+            self._save_history(request.project_path, result.status.value, duration, error_msg)
+            return result
+
+    def _generate_dpr_args(self, project_path: str, options: 'CompileOptions', output_base: str) -> List[str]:
+        """生成 .dpr 文件的直接编译参数"""
+        args = []
+
+        # 项目文件
+        args.append(project_path)
+
+        # 输出目录（存放 .exe 文件）
+        args.append(f'-E"{output_base}"')
+
+        # 中间文件目录（存放 .dcu 文件）
+        dcu_dir = str(Path(output_base) / "dcu")
+        args.append(f'-N"{dcu_dir}"')
+
+        # 条件编译符号
+        if options.conditional_defines:
+            defines = ";".join(options.conditional_defines)
+            args.append(f'-$D+{defines}')
+
+        # 单元搜索路径
+        if options.unit_search_paths:
+            paths = ";".join(options.unit_search_paths)
+            args.append(f'-U{paths}')
+
+        # 资源搜索路径
+        if options.resource_search_paths:
+            paths = ";".join(options.resource_search_paths)
+            args.append(f'-R{paths}')
+
+        # 优化选项
+        if options.optimization_enabled:
+            args.append('-$O+')
+        else:
+            args.append('-$O-')
+
+        # 调试信息
+        if options.debug_info_enabled:
+            args.append('-$D+')
+        else:
+            args.append('-$D-')
+
+        # 警告级别
+        args.append(f'-$W{options.warning_level}')
+
+        # 禁用警告
+        for warning in options.disabled_warnings:
+            args.append(f'-$W-{warning}')
+
+        # 输出类型
+        output_type_map = {
+            OutputType.CONSOLE: "-CC",
+            OutputType.GUI: "-CG",
+            OutputType.DLL: "-LD"
+        }
+        args.append(output_type_map[options.output_type])
+
+        # 运行时库
+        if options.runtime_library == RuntimeLibrary.DYNAMIC:
+            args.append('-$Y+')
+        else:
+            args.append('-$Y-')
+
+        logger.debug(f"生成的 .dpr 编译参数: {' '.join(args)}")
+        return args
+
+    def _find_dcc32_from_registry(self) -> Optional[str]:
+        """从注册表查找 dcc32.exe 路径"""
+        root_dir = self._get_delphi_root_from_registry()
+        if not root_dir:
+            return None
+
+        dcc32_path = Path(root_dir) / "bin" / "dcc32.exe"
+        if dcc32_path.exists():
+            return str(dcc32_path)
+
+        return None
+
     async def compile_project_with_msbuild(self, request: ProjectCompileRequest) -> CompileResult:
         """
         使用 MSBuild 编译 Delphi 工程
@@ -735,7 +982,7 @@ class CompilerService:
         """
         编译 Delphi 工程
         
-        优先使用 MSBuild 编译,如果 MSBuild 不可用则回退到直接调用编译器
+        优先使用 MSBuild 编译,如果 MSBuild 不可用或没有 .dproj 文件则回退到直接调用编译器
 
         Args:
             request: 工程编译请求
@@ -744,14 +991,29 @@ class CompilerService:
             编译结果
         """
         logger.info(f"开始编译工程: {request.project_path}")
+
+        # 检查项目类型
+        is_dpr_only = request.project_path.lower().endswith('.dpr')
+        
+        # 检查是否存在 .dproj 文件
+        dproj_exists = False
+        if is_dpr_only:
+            dproj_path = request.project_path.replace('.dpr', '.dproj')
+            dproj_exists = Path(dproj_path).exists()
+            if not dproj_exists:
+                logger.info(f"未找到 .dproj 文件，将使用 dcc32 直接编译 .dpr 文件")
+        
+        # 如果是 .dpr 文件且没有 .dproj 文件，或者 MSBuild 不可用，使用直接编译
+        if (is_dpr_only and not dproj_exists) or not self.msbuild_path:
+            if is_dpr_only and not dproj_exists:
+                logger.info("使用 dcc32 直接编译 .dpr 文件")
+            else:
+                logger.info("MSBuild 不可用，使用直接编译器调用")
+            return await self.compile_dpr_direct(request)
         
         # 优先使用 MSBuild 编译
-        if self.msbuild_path:
-            logger.info("使用 MSBuild 编译")
-            return await self.compile_project_with_msbuild(request)
-        
-        # 如果 MSBuild 不可用,使用直接编译器调用
-        logger.info("MSBuild 不可用,使用直接编译器调用")
+        logger.info("使用 MSBuild 编译")
+        return await self.compile_project_with_msbuild(request)
         start_time = time.time()
 
         try:
