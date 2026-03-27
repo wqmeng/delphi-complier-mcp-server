@@ -264,21 +264,67 @@ def _extract_types(content: str) -> List[Dict]:
 
 
 class DelphiSourceScanner:
-    def __init__(self, source_dir: str, output_dir: str, progress_callback: Optional[Callable[[ProgressInfo], None]] = None):
+    def __init__(self, source_dir: str, output_dir: str, progress_callback: Optional[Callable[[ProgressInfo], None]] = None, force_rebuild: bool = False):
         self.source_dir = Path(source_dir)
         self.output_dir = Path(output_dir)
         self.index_file = self.output_dir / "index" / "source_index.json"
         self.metadata_file = self.output_dir / "index" / "metadata.json"
         self.file_extensions = {'.pas', '.dpr', '.dpk', '.inc', '.hpp', '.h'}
         self.progress_callback = progress_callback
+        self.force_rebuild = force_rebuild
+        self._existing_index: Optional[Dict] = None
 
         # 创建必要的目录
         self.output_dir.mkdir(parents=True, exist_ok=True)
         (self.output_dir / "index").mkdir(parents=True, exist_ok=True)
         (self.output_dir / "data").mkdir(parents=True, exist_ok=True)
 
+    def _load_existing_index(self) -> Optional[Dict]:
+        """加载已有的索引文件"""
+        if self._existing_index is None:
+            if self.index_file.exists():
+                try:
+                    with open(self.index_file, 'r', encoding='utf-8') as f:
+                        self._existing_index = json.load(f)
+                    print(f"已加载现有索引: {len(self._existing_index.get('files', []))} 个文件")
+                except Exception as e:
+                    print(f"加载索引失败: {e}")
+                    self._existing_index = None
+        return self._existing_index
+
+    def _check_file_changed(self, file_path: Path) -> bool:
+        """
+        检查文件是否已变更（增量构建核心）
+        只检查文件大小和修改时间，不计算哈希
+        """
+        existing_index = self._load_existing_index()
+        if not existing_index:
+            return True
+        
+        # 构建已有文件的快速查找表
+        existing_files = {f['full_path']: f for f in existing_index.get('files', [])}
+        
+        full_path = str(file_path)
+        if full_path not in existing_files:
+            return True  # 新文件
+        
+        # 比较大小和修改时间
+        existing = existing_files[full_path]
+        try:
+            stat = file_path.stat()
+            if stat.st_size != existing.get('size'):
+                return True
+            # 比较时间（转换为时间戳）
+            current_mtime = datetime.fromtimestamp(stat.st_mtime).isoformat()
+            if current_mtime != existing.get('last_modified'):
+                return True
+        except Exception:
+            return True
+        
+        return False  # 文件未变更
+
     def scan_directory(self) -> Dict:
-        """扫描源码目录,收集文件信息（多进程版本）"""
+        """扫描源码目录,收集文件信息（多进程版本 + 增量构建）"""
         print(f"开始扫描目录: {self.source_dir}")
         
         # 首先收集所有要扫描的文件路径
@@ -292,10 +338,39 @@ class DelphiSourceScanner:
         total_files = len(file_paths)
         print(f"预计扫描 {total_files} 个文件...")
         
+        # 增量构建: 检查哪些文件需要重新处理
+        changed_files = []
+        unchanged_files = {}
+        
+        if not self.force_rebuild and self._load_existing_index():
+            print("检查文件变更...")
+            existing_files = {f['full_path']: f for f in self._existing_index.get('files', [])}
+            
+            for file_path_str, source_dir in file_paths:
+                file_path = Path(file_path_str)
+                if file_path_str in existing_files:
+                    existing = existing_files[file_path_str]
+                    try:
+                        stat = file_path.stat()
+                        if stat.st_size == existing.get('size'):
+                            current_mtime = datetime.fromtimestamp(stat.st_mtime).isoformat()
+                            if current_mtime == existing.get('last_modified'):
+                                # 文件未变化，直接使用现有数据
+                                unchanged_files[file_path_str] = existing
+                                continue
+                    except Exception:
+                        pass
+                # 文件已变化或新增
+                changed_files.append((file_path_str, source_dir))
+            
+            print(f"文件状态: {len(unchanged_files)} 个未变化, {len(changed_files)} 个需要重新处理")
+        else:
+            changed_files = file_paths
+        
         # Create progress tracker
         tracker = None
-        if self.progress_callback and total_files > 0:
-            tracker = ProgressTracker(total_files, self.progress_callback, update_interval=0.5)
+        if self.progress_callback and len(changed_files) > 0:
+            tracker = ProgressTracker(len(changed_files), self.progress_callback, update_interval=0.5)
         
         # 计算worker数量
         # 对于I/O密集型任务（磁盘读取），应限制worker数量避免磁盘争用
@@ -304,7 +379,7 @@ class DelphiSourceScanner:
         max_needed = max(1, total_files // 100)
         max_workers = min(max_needed, 8)  # 上限8个worker
         
-        print(f"Processing: files={total_files}, workers={max_workers} (cpu_cores={cpu_cores})")
+        print(f"Processing: files={len(changed_files)}, workers={max_workers} (cpu_cores={cpu_cores})")
         
         import time
         from concurrent.futures import ProcessPoolExecutor
@@ -313,26 +388,32 @@ class DelphiSourceScanner:
         file_count = 0
         total_lines = 0
         
-        # Calculate optimal chunk size for IPC efficiency
-        # 公式: chunksize = total_files // (workers * 4)
-        # 目标: 30-60个chunks，让每个worker处理2-4个chunks
-        chunk_size = max(50, total_files // (max_workers * 4))
+        # 先添加未变化的文件
+        for unchanged_file in unchanged_files.values():
+            source_files.append(unchanged_file)
+            file_count += 1
+            total_lines += unchanged_file.get('line_count', 0)
         
-        # Use ProcessPoolExecutor with larger chunksize to reduce IPC overhead
-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            results = executor.map(_analyze_file_worker, file_paths, chunksize=chunk_size)
+        # 只处理变化的文件
+        if changed_files:
+            # Calculate optimal chunk size for IPC efficiency
+            chunk_size = max(50, len(changed_files) // (max_workers * 4))
             
-            for file_info in results:
-                if file_info:
-                    source_files.append(file_info)
-                    file_count += 1
-                    total_lines += file_info.get('line_count', 0)
-                    
-                    if tracker and file_count % 100 == 0:
-                        tracker.update(file_count, f"Scanning: {file_count}/{total_files}")
+            # Use ProcessPoolExecutor with larger chunksize to reduce IPC overhead
+            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                results = executor.map(_analyze_file_worker, changed_files, chunksize=chunk_size)
+                
+                for file_info in results:
+                    if file_info:
+                        source_files.append(file_info)
+                        file_count += 1
+                        total_lines += file_info.get('line_count', 0)
+                        
+                        if tracker and file_count % 100 == 0:
+                            tracker.update(file_count, f"Scanning: {file_count}/{len(changed_files)}")
         
         if tracker:
-            tracker.update(total_files, f"Scanning completed: {file_count} files")
+            tracker.update(len(changed_files), f"Scanning completed: {file_count} files")
         
         print(f"Scanning completed! Found {file_count} source files, {total_lines} lines of code")
 

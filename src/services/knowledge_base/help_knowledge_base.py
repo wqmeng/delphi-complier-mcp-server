@@ -17,7 +17,7 @@ import shutil
 import hashlib
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple, Callable, Set
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
@@ -908,6 +908,96 @@ class DelphiHelpKnowledgeBase:
 
     # ==================== 步骤1: 解压 CHM 文件 ====================
 
+    def _get_chm_file_list(self, chm_path: str) -> Optional[Set[str]]:
+        """
+        使用7z列出CHM文件内容
+        
+        Args:
+            chm_path: CHM文件路径
+            
+        Returns:
+            文件列表或None（如果失败）
+        """
+        if not self.sevenzip_path:
+            return None
+            
+        try:
+            result = subprocess.run(
+                [self.sevenzip_path, 'l', '-slt', chm_path],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode != 0:
+                return None
+            
+            files = set()
+            in_archive = False
+            for line in result.stdout.split('\n'):
+                if line.strip() == 'Archive:':
+                    in_archive = True
+                elif in_archive and line.startswith('Path = '):
+                    file_path = line[7:].strip()
+                    if file_path and not file_path.endswith('/'):
+                        files.add(file_path)
+                        
+            return files
+        except Exception:
+            return None
+
+    def _check_chm_needs_extraction(self, name: str, chm_path: Path) -> bool:
+        """
+        检查CHM是否需要重新解压（增量构建核心）
+        
+        Args:
+            name: 帮助文件名称
+            chm_path: CHM文件路径
+            
+        Returns:
+            是否需要解压
+        """
+        extracted_dir = self.kb_dir / "files" / name
+        
+        # 检查解压目录是否存在
+        if not extracted_dir.exists():
+            return True
+            
+        # 检查CHM文件是否存在
+        if not chm_path.exists():
+            return False
+            
+        # 获取CHM文件列表
+        chm_files = self._get_chm_file_list(str(chm_path))
+        if not chm_files:
+            # 无法获取CHM列表，假设需要解压
+            return True
+            
+        # 检查解压目录中的文件数量
+        try:
+            existing_files = set()
+            for f in extracted_dir.rglob('*'):
+                if f.is_file():
+                    rel = f.relative_to(extracted_dir)
+                    existing_files.add(str(rel).replace('\\', '/'))
+                    
+            # 比较文件数量
+            if len(existing_files) < len(chm_files):
+                # 文件数量不符，需要重新解压
+                return True
+                
+            # 可选：更严格的检查 - 验证关键文件是否存在
+            # 抽样检查几个文件
+            if chm_files:
+                sample_files = list(chm_files)[:10]
+                for sample in sample_files:
+                    if sample not in existing_files:
+                        return True
+                        
+            return False  # 不需要解压
+        except Exception:
+            return True  # 出错时假设需要解压
+
     def extract_chm(self, chm_path: str, output_dir: str, progress_callback: Optional[Callable] = None) -> bool:
         """
         解压 CHM 文件
@@ -983,12 +1073,21 @@ class DelphiHelpKnowledgeBase:
             if help_names is None or name in help_names:
                 chm_path = Path(self.delphi_help_dir) / f"{name}.chm"
                 if chm_path.exists():
+                    # 增量构建: 检查是否需要重新解压
+                    if not self._check_chm_needs_extraction(name, chm_path):
+                        print(f"跳过 {desc} (无需解压)")
+                        results[name] = True
+                        continue
                     files_to_process[name] = (chm_path, desc)
                 else:
                     logger.warning(f"帮助文件不存在: {chm_path}")
                     results[name] = False
 
         total = len(files_to_process)
+        
+        if total == 0:
+            print("所有帮助文件都已解压，跳过解压步骤")
+            return results
         
         # 并行解压
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

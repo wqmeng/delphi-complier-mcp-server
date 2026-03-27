@@ -193,8 +193,8 @@ class DelphiKnowledgeBaseService:
         # 导入扫描模块
         from scan_delphi_sources import DelphiSourceScanner
 
-        # 初始化扫描器（带进度回调）
-        scanner = DelphiSourceScanner(self.source_dir, self.kb_dir, self.progress_callback)
+        # 初始化扫描器（带进度回调和增量构建选项）
+        scanner = DelphiSourceScanner(self.source_dir, self.kb_dir, self.progress_callback, force_rebuild=force_rebuild)
 
         # 扫描源码
         print("开始扫描 Delphi 源码...")
