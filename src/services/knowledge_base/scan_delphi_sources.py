@@ -266,15 +266,15 @@ class DelphiSourceScanner:
         print(f"Processing: files={total_files}, workers={max_workers}")
         
         import time
-        from concurrent.futures import ThreadPoolExecutor
+        from concurrent.futures import ProcessPoolExecutor
         
         source_files = []
         file_count = 0
         total_lines = 0
         
-        # Use fixed worker count (ThreadPoolExecutor doesn't support dynamic resizing)
-        # Rule 4: Process in chunks of 50
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Use ProcessPoolExecutor with batch of 50
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            # Rule 4: Process in chunks of 50
             for batch_start in range(0, total_files, 50):
                 batch_end = min(batch_start + 50, total_files)
                 batch = file_paths[batch_start:batch_end]
