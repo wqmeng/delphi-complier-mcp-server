@@ -342,7 +342,12 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
         
         # 汇总
         total_resolved = len(all_resolved)
-        output += f"\n📊 解析汇总: {total_resolved}/{result['total_units']} ({total_resolved*100//result['total_units']}%)"
+        total_units = result.get('total_units', 0)
+        if total_units > 0:
+            percentage = total_resolved * 100 // total_units
+            output += f"\n📊 解析汇总: {total_resolved}/{total_units} ({percentage}%)"
+        else:
+            output += f"\n📊 解析汇总: {total_resolved}/0 (0%)"
         
         return CallToolResult(content=[{"type": "text", "text": output}])
         
