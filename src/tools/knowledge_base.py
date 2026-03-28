@@ -475,28 +475,28 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         
     if "delphi_functions" in results and results["delphi_functions"]:
         output += f"Delphi 函数 ({len(results['delphi_functions'])}):\n"
-        for r in results["delphi_functions"][:3]:
+        for r in results["delphi_functions"][:top_k]:
             output += f"  - {r.get('function', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
         output += "\n"
         has_results = True
         
     if "project_classes" in results and results["project_classes"]:
         output += f"项目类 ({len(results['project_classes'])}):\n"
-        for r in results["project_classes"][:3]:
+        for r in results["project_classes"][:top_k]:
             output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
         output += "\n"
         has_results = True
         
     if "thirdparty_classes" in results and results["thirdparty_classes"]:
         output += f"第三方库类 ({len(results['thirdparty_classes'])}):\n"
-        for r in results["thirdparty_classes"][:3]:
+        for r in results["thirdparty_classes"][:top_k]:
             output += f"  - {r.get('class', {}).get('name', 'N/A')} @ {r.get('file', {}).get('path', 'N/A')}\n"
         output += "\n"
         has_results = True
         
     if "help_results" in results and results["help_results"]:
         output += f"帮助文档 ({len(results['help_results'])}):\n"
-        for r in results["help_results"][:3]:
+        for r in results["help_results"][:top_k]:
             output += f"  - {r.get('title', 'N/A')[:50]}\n"
         output += "\n"
         has_results = True
