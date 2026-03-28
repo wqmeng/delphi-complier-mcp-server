@@ -765,22 +765,36 @@ class DelphiHelpKnowledgeBase:
             if file_path.stat().st_size < 100:
                 return False
             
-            # 获取文件名和路径字符串
+            # 获取文件名和路径字符串（统一使用正斜杠）
             file_name = file_path.name.lower()
-            path_str = str(file_path).lower()
+            path_str = str(file_path).replace('\\', '/').lower()
             
             # 跳过特定目录（只跳过真正的系统目录）
-            skip_path_patterns = ['/scripts/', '/styles/', '/css/', '/js/', '/assets/', 
-                        '/_private/', '/images/']
+            # 同时支持 Windows 反斜杠和 Unix 正斜杠
+            skip_path_patterns = [
+                '/scripts/', '/styles/', '/css/', '/js/', '/assets/',
+                '/_private/', '/images/', 
+                '/image/', '/img/', '/icons/', '/fonts/'
+            ]
             if any(p in path_str for p in skip_path_patterns):
                 return False
             
-            # 只跳过真正的索引文件，而不是包含index的文件名
-            # 精确匹配: index.htm, index.html, index.htm 等
-            if file_name in ['index.htm', 'index.html', 'index.xhtml',
-                           'search.htm', 'search.html',
-                           'toc.htm', 'toc.html',
-                           'nav.htm', 'nav.html']:
+            # 跳过特定文件（系统文件）
+            skip_files = [
+                'index.htm', 'index.html', 'index.xhtml',
+                'search.htm', 'search.html',
+                'toc.htm', 'toc.html',
+                'nav.htm', 'nav.html',
+                '.htaccess', 'robots.txt',
+                'favicon.ico', 'favicon.png',
+                'sitemap.xml', 'sitemap.html',
+            ]
+            if file_name in skip_files:
+                return False
+            
+            # 跳过包含错误页面关键词的文件名
+            error_patterns = ['404', 'error', 'redirect', 'notfound', 'accessdenied']
+            if any(p in file_name for p in error_patterns):
                 return False
             
             return True
