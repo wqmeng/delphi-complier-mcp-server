@@ -333,83 +333,48 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 | 工具名称                       | 功能描述                                           |
 | -------------------------- | ---------------------------------------------- |
-| `build_knowledge_base`     | 构建 Delphi 源码知识库                                |
+| `build_knowledge_base`     | 统一构建知识库 (Delphi/项目/第三方/帮助)                   |
+| `search_knowledge`         | 统一搜索知识库                                       |
 | `search_class`             | 搜索 Delphi 类型定义（支持 class、record、interface、enum） |
 | `search_function`          | 搜索 Delphi 函数/过程定义                              |
 | `semantic_search`          | 语义搜索 Delphi 代码                                 |
 | `get_knowledge_base_stats` | 获取知识库统计信息                                      |
-| `list_delphi_versions`     | 列出已安装的 Delphi 版本                               |
 
 ### 项目知识库工具
 
 | 工具名称                          | 功能描述                                       |
 | ----------------------------- | ------------------------------------------ |
 | `init_project_knowledge_base` | 初始化项目知识库                                   |
-| `search_project_class`        | 在项目中搜索类型定义（支持 class、record、interface、enum） |
-| `search_project_function`     | 在项目中搜索函数定义                                 |
-| `semantic_search_project`     | 在项目中进行语义搜索                                 |
 | `get_project_kb_stats`        | 获取项目知识库统计信息                                |
-| `get_thirdparty_paths`        | 获取项目的三方库路径                                 |
 
-### 全局第三方库知识库工具
+### 第三方库知识库工具
 
-| 工具名称                              | 功能描述                                     |
-| --------------------------------- | ---------------------------------------- |
-| `build_thirdparty_knowledge_base` | 构建第三方库知识库 (全局)                           |
-| `search_thirdparty_class`         | 在第三方库中搜索类（包含 record、interface、enum） (全局) |
-| `search_thirdparty_function`      | 在第三方库中搜索函数 (全局)                          |
-| `search_thirdparty_record`        | 在第三方库中搜索 record 类型 (全局)                  |
-| `semantic_search_thirdparty`      | 在第三方库中进行语义搜索 (全局)                        |
-| `search_by_filename`              | 按文件名搜索文件（支持通配符） (全局)                     |
-| `get_thirdparty_kb_stats`         | 获取第三方库知识库统计信息 (全局)                       |
-| `get_thirdparty_paths_global`     | 获取第三方库路径列表 (全局)                          |
+| 工具名称                        | 功能描述                                     |
+| --------------------------- | ---------------------------------------- |
+| `get_thirdparty_paths`      | 获取第三方库路径列表                              |
+| `search_thirdparty_class`  | 在第三方库中搜索类                               |
+| `search_thirdparty_function` | 在第三方库中搜索函数                            |
+| `semantic_search_thirdparty` | 在第三方库中进行语义搜索                        |
+| `search_by_filename`       | 按文件名搜索文件（支持通配符）                       |
+| `get_thirdparty_kb_stats`  | 获取第三方库知识库统计信息                         |
 
 ### 帮助文档工具
 
 | 工具名称                        | 功能描述                                     |
 | --------------------------- | ---------------------------------------- |
-| `build_help_knowledge_base` | 构建 Delphi 帮助文档知识库 (完整构建：解压+扫描+索引，支持异步模式) |
-| `extract_help_chm`          | 解压 Delphi 帮助文档 CHM 文件（分步骤构建第1步）          |
-| `scan_help_html`            | 扫描已解压的 HTML 文件（分步骤构建第2步）                 |
-| `build_help_kb_index`       | 构建帮助文档向量索引（分步骤构建第3步）                     |
-| `get_task_status`           | 获取后台任务状态（用于查询帮助知识库构建进度）                  |
-| `list_tasks`                | 列出所有后台任务                                 |
-| `search_help`               | 搜索 Delphi 帮助文档（支持语义搜索类、函数和文档）            |
-| `get_help_kb_stats`         | 获取帮助文档知识库统计信息                            |
+| `build_help_kb_index`      | 构建帮助文档向量索引（支持异步模式）                    |
+| `search_help`              | 搜索 Delphi 帮助文档（支持语义搜索类、函数和文档）        |
+| `get_help_kb_stats`        | 获取帮助文档知识库统计信息                            |
 
-#### 帮助文档知识库构建方式
+#### 帮助文档知识库构建
 
-**方式1：完整构建（一键完成）**
-
-```json
-{
-  "force_rebuild": false,
-  "async_mode": true,
-  "help_names": ["fmx", "vcl"],
-  "max_files_per_help": 100
-}
-```
-
-**方式2：分步骤构建（更灵活，适合大知识库）**
-
-```json
-// 第1步：解压 CHM
-{ "help_names": ["fmx", "vcl"] }
-
-// 第2步：扫描 HTML
-{ "help_names": ["fmx", "vcl"], "max_files_per_help": 100 }
-
-// 第3步：构建索引
-{ "help_names": ["fmx", "vcl"], "max_files_per_help": 100, "async_mode": true }
-```
-
-**方式3：增量构建（跳过解压，直接扫描已解压的 HTML）**
+使用 `build_help_kb_index` 工具构建帮助文档知识库：
 
 ```json
 {
   "help_names": ["fmx", "vcl"],
   "max_files_per_help": 100,
-  "source_dir": "data/help-knowledge-base/extracted"
+  "async_mode": true
 }
 ```
 
@@ -516,10 +481,8 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 - 新增 pasfmt 代码格式化工具
   - 新增 `format_delphi_file` 工具，格式化 Delphi 源代码文件
   - 新增 `format_delphi_code` 工具，格式化 Delphi 代码字符串
-  - 新增 `download_and_install_pasfmt` 工具，下载并安装 pasfmt CLI
-  - 新增 `download_and_install_pasfmt_rad` 工具，下载并安装 pasfmt-rad IDE 插件
+  - 新增 `install_pasfmt` 工具，下载并安装 pasfmt CLI 或 IDE 插件
   - 新增 `check_pasfmt_installation` 工具，检查 pasfmt 安装状态
-  - 新增 `check_pasfmt_rad_installation` 工具，检查 pasfmt-rad IDE 插件安装状态
   - 新增 `set_pasfmt_path` 工具，设置 pasfmt 可执行文件路径
 - 支持从 GitHub 下载预编译的 pasfmt 二进制文件（支持 Windows 32/64 位和 Linux）
 - 支持 Delphi 11/12/13 版本的 IDE 插件安装
@@ -529,11 +492,9 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ### v2026.03.21 (2026-03-21)
 
-- 新增帮助文档知识库分步骤构建功能
-  - 新增 `extract_help_chm` 工具，单独解压 CHM 文件（第1步）
-  - 新增 `scan_help_html` 工具，单独扫描 HTML 文件（第2步）
-  - 新增 `build_help_kb_index` 工具，单独构建向量索引（第3步）
-  - 支持增量构建，可指定外部源目录，避免重复解压
+- 新增帮助文档知识库构建功能
+  - 新增 `build_help_kb_index` 工具，构建帮助文档向量索引
+  - 支持增量构建，可指定外部源目录
   - 支持限制处理文件数量，便于小范围测试
 - 增强帮助文档内容提取
   - HTML 转 Markdown，保留更好的结构化信息
@@ -555,33 +516,25 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 - 优化知识库去重逻辑
   - 基于完整路径去重，正确处理同名不同目录的文件
   - 保留相对路径和完整路径，查询结果更合理
-- 新增增量构建脚本
-  - `build_help_kb_incremental.py` 支持跳过 CHM 解压，直接重建向量索引
-  - `rebuild_all_kbs.py` 支持重建所有知识库
-- 修复第三方库知识库服务初始化问题
-  - 修复 `build_thirdparty_knowledge_base` 等工具提示"服务未初始化"的错误
 - 新增源码文件读取功能
   - 新增 `read_source_file` 工具，先在知识库中定位文件，再从磁盘读取源码内容
   - 新增 `search_and_read_file` 工具，搜索类型（类/record/interface）或函数并自动读取所在文件内容
   - 支持指定行号范围读取，便于查看特定代码段
-- 增强类型搜索功能（所有知识库统一支持）
-  - 新增 `search_thirdparty_record` 工具，专门搜索 record 类型
+- 增强类型搜索功能
   - 新增 `search_by_filename` 工具，支持按文件名通配符搜索
   - 扩展知识库扫描，支持 class、record、interface、enum 等多种类型
   - 搜索结果添加 `type_kind` 字段，显示类型种类（class/record/interface/enum）
-  - 官方源码知识库、第三方库知识库、项目知识库全部支持 record 类型搜索
 
 ### v2026.03.20 (2026-03-20)
 
 - 新增全局第三方库知识库功能
-  - 新增 `build_thirdparty_knowledge_base` 工具，构建全局第三方库知识库
+  - 新增 `get_thirdparty_paths` 工具，获取第三方库路径列表
   - 新增 `search_thirdparty_class` 工具，在第三方库中搜索类
   - 新增 `search_thirdparty_function` 工具，在第三方库中搜索函数
   - 新增 `semantic_search_thirdparty` 工具，在第三方库中进行语义搜索
   - 新增 `get_thirdparty_kb_stats` 工具，获取第三方库知识库统计信息
-  - 新增 `get_thirdparty_paths_global` 工具，获取第三方库路径列表
 - 优化帮助文档知识库构建
-  - `build_help_knowledge_base` 支持异步模式（默认开启），避免超时
+  - 支持异步模式，避免超时
   - 新增 `get_task_status` 工具，查询后台任务状态
   - 新增 `list_tasks` 工具，列出所有后台任务
 - 完全向后兼容
