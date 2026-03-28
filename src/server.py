@@ -50,7 +50,7 @@ from src.tools.knowledge_base import (
     set_project_kb_service,
     set_thirdparty_kb_service,
     set_help_kb_service,
-    build_knowledge_base,
+    build_knowledge,
     search_class,
     search_function,
     semantic_search,
@@ -244,13 +244,13 @@ async def run_server():
                 }
             ),
             Tool(
-                name="build_knowledge_base",
-                description="【推荐】统一构建知识库。支持同时构建多个知识库。",
+                name="build_knowledge",
+                description="【推荐】构建知识库。支持构建 Delphi 源码、项目源码、第三方库和帮助文档知识库。提供 project_path 参数时自动初始化项目知识库。",
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "kb_type": {"type": "string", "default": "all", "description": "知识库类型: all, delphi, project, thirdparty, help (可组合,如'delphi,project')"},
-                        "project_path": {"type": "string", "description": "项目路径 (仅project类型需要)"},
+                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)，提供此参数时自动初始化项目知识库"},
                         "version": {"type": "string", "description": "Delphi版本 (仅delphi/thirdparty需要)"},
                         "async_mode": {"type": "boolean", "default": True, "description": "是否异步"},
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
@@ -268,21 +268,6 @@ async def run_server():
                         "project_path": {"type": "string", "description": "项目路径 (仅project需要)"}
                     },
                     "required": []
-                }
-            ),
-            # 项目知识库工具
-            Tool(
-                name="init_project_knowledge_base",
-                description="【首次使用必读】初始化项目知识库。在分析一个新项目之前，必须先调用此工具构建项目的知识库。它会从.dproj读取三方库路径，自动扫描并索引项目源码，之后才能使用项目搜索功能。",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)"},
-                        "build_thirdparty": {"type": "boolean", "default": True, "description": "是否构建三方库知识库"},
-                        "build_project": {"type": "boolean", "default": True, "description": "是否构建项目源码知识库"},
-                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
-                    },
-                    "required": ["project_path"]
                 }
             ),
             # 项目依赖分析工具
@@ -349,7 +334,7 @@ async def run_server():
                     "properties": {
                         "task_type": {
                             "type": "string",
-                            "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base"],
+                            "enum": ["build_knowledge", "build_project_knowledge"],
                             "description": "任务类型"
                         },
                         "params": {
@@ -495,7 +480,7 @@ async def run_server():
                 result = await check_environment()
             elif name == "get_coding_rules":
                 result = await coding_rules.get_coding_rules(**arguments)
-            elif name == "build_knowledge_base":
+            elif name == "build_knowledge":
                 result = await kb_tools.build_unified_knowledge_base(arguments)
             elif name == "get_knowledge_base_stats":
                 result = await kb_tools.get_unified_knowledge_stats(arguments)
