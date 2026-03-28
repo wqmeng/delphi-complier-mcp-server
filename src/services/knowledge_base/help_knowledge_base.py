@@ -762,18 +762,25 @@ class DelphiHelpKnowledgeBase:
         """
         try:
             # 跳过太小的文件(通常是无用的占位文件)
-            if file_path.stat().st_size < 500:
+            if file_path.stat().st_size < 100:
                 return False
             
-            # 跳过特定目录
-            skip_dirs = ['_private', 'scripts', 'styles', 'images', 'css', 'js', 'assets']
-            if any(skip_dir in str(file_path).lower() for skip_dir in skip_dirs):
+            # 获取文件名和路径字符串
+            file_name = file_path.name.lower()
+            path_str = str(file_path).lower()
+            
+            # 跳过特定目录（只跳过真正的系统目录）
+            skip_path_patterns = ['/scripts/', '/styles/', '/css/', '/js/', '/assets/', 
+                        '/_private/', '/images/']
+            if any(p in path_str for p in skip_path_patterns):
                 return False
             
-            # 跳过特定文件名模式
-            skip_patterns = ['index', 'search', 'toc', 'nav', 'menu', 'header', 'footer']
-            file_name_lower = file_path.name.lower()
-            if any(pattern in file_name_lower for pattern in skip_patterns):
+            # 只跳过真正的索引文件，而不是包含index的文件名
+            # 精确匹配: index.htm, index.html, index.htm 等
+            if file_name in ['index.htm', 'index.html', 'index.xhtml',
+                           'search.htm', 'search.html',
+                           'toc.htm', 'toc.html',
+                           'nav.htm', 'nav.html']:
                 return False
             
             return True
