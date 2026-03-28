@@ -754,6 +754,11 @@ class DelphiHelpKnowledgeBase:
         """
         判断文件是否需要处理 (性能优化)
         
+        新规则：
+        1. 非HTML文件扩展名匹配 .html .htm .xhtml（由调用处处理）
+        2. 跳过 .htaccess, robots.txt, sitemap.xml
+        3. 跳过 index/toc/nav/menu/footer 开头，扩展名为 .htm/.html/.xhtml 的文件
+        
         Args:
             file_path: 文件路径
             
@@ -765,36 +770,22 @@ class DelphiHelpKnowledgeBase:
             if file_path.stat().st_size < 100:
                 return False
             
-            # 获取文件名和路径字符串（统一使用正斜杠）
+            # 获取文件名和扩展名
             file_name = file_path.name.lower()
-            path_str = str(file_path).replace('\\', '/').lower()
+            ext = file_path.suffix.lower()
             
-            # 跳过特定目录（只跳过真正的系统目录）
-            # 同时支持 Windows 反斜杠和 Unix 正斜杠
-            skip_path_patterns = [
-                '/scripts/', '/styles/', '/css/', '/js/', '/assets/',
-                '/_private/', '/images/', 
-                '/image/', '/img/', '/icons/', '/fonts/'
-            ]
-            if any(p in path_str for p in skip_path_patterns):
+            # 非HTML文件扩展名（调用处已处理，这里作为保险）
+            if ext not in ['.html', '.htm', '.xhtml']:
                 return False
             
-            # 跳过特定文件（系统文件）
-            skip_files = [
-                'index.htm', 'index.html', 'index.xhtml',
-                'search.htm', 'search.html',
-                'toc.htm', 'toc.html',
-                'nav.htm', 'nav.html',
-                '.htaccess', 'robots.txt',
-                'favicon.ico', 'favicon.png',
-                'sitemap.xml', 'sitemap.html',
-            ]
-            if file_name in skip_files:
+            # 跳过系统配置文件
+            if file_name in ['.htaccess', 'robots.txt', 'sitemap.xml']:
                 return False
             
-            # 跳过包含错误页面关键词的文件名
-            error_patterns = ['404', 'error', 'redirect', 'notfound', 'accessdenied']
-            if any(p in file_name for p in error_patterns):
+            # 跳过导航页面：index/toc/nav/menu/footer 开头，扩展名为 .htm/.html/.xhtml
+            skip_names = ['index', 'toc', 'nav', 'menu', 'footer']
+            name_without_ext = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
+            if name_without_ext in skip_names:
                 return False
             
             return True
@@ -1223,7 +1214,7 @@ class DelphiHelpKnowledgeBase:
         Returns:
             Document list
         """
-        html_files = list(Path(directory).rglob("*.html")) + list(Path(directory).rglob("*.htm"))
+        html_files = list(Path(directory).rglob("*.html")) + list(Path(directory).rglob("*.htm")) + list(Path(directory).rglob("*.xhtml"))
 
         # Filter unnecessary files
         html_files = [f for f in html_files if self._should_process_file(f)]

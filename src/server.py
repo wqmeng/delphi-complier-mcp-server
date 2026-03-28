@@ -41,7 +41,7 @@ from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnow
 from src.tools.compile_project import set_compiler_service as sp1, compile_project
 from src.tools.compile_file import set_compiler_service as sp2, compile_file
 from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
-from src.tools.config import set_compiler_config, set_config_manager
+from src.tools.config import set_compiler_config, set_config_manager, detect_compilers, search_delphi_compilers
 from src.tools.environment import check_environment, set_config_manager as scm
 from src.tools.knowledge_base import set_knowledge_base_service, build_knowledge_base, search_class, search_function, semantic_search, get_knowledge_base_stats, list_delphi_versions
 from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
@@ -176,6 +176,26 @@ async def run_server():
                         "version": {"type": "string", "description": "编译器版本号，如 '10.4' 或 '11.0'"}
                     },
                     "required": ["name", "path"]
+                }
+            ),
+            Tool(
+                name="detect_compilers",
+                description="【环境检测】自动检测系统中已安装的 Delphi 编译器。当编译器未配置或需要查看可用编译器时使用。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            ),
+            Tool(
+                name="search_delphi_compilers",
+                description="【编译器搜索】在指定路径搜索 Delphi 编译器。如果未指定路径，则搜索默认安装位置。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "search_path": {"type": "string", "description": "搜索路径，如 'C:\\Program Files (x86)\\Embarcadero\\Studio'"}
+                    },
+                    "required": []
                 }
             ),
             Tool(
@@ -485,26 +505,6 @@ async def run_server():
                 }
             ),
             Tool(
-                name="get_task_status",
-                description="获取后台任务状态（用于查询帮助知识库构建进度）",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "task_id": {"type": "string", "description": "任务ID"}
-                    },
-                    "required": ["task_id"]
-                }
-            ),
-            Tool(
-                name="list_tasks",
-                description="列出所有后台任务",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            ),
-            Tool(
                 name="search_help",
                 description="【文档查询】搜索 Delphi 官方帮助文档。当需要了解VCL/FMX类的官方用法、查看方法参数说明、查找示例代码时使用。返回帮助文档中的相关内容。",
                 inputSchema={
@@ -687,24 +687,15 @@ async def run_server():
                 }
             ),
             Tool(
-                name="download_and_install_pasfmt",
-                description="下载并安装 pasfmt 工具",
+                name="install_pasfmt",
+                description="安装 pasfmt 代码格式化工具。可选择安装命令行工具或 IDE 插件",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "install_dir": {"type": "string", "description": "安装目录，默认为 C:\\\\Program Files\\\\pasfmt"}
-                    },
-                    "required": []
-                }
-            ),
-            Tool(
-                name="download_and_install_pasfmt_rad",
-                description="下载并安装 pasfmt-rad IDE 插件",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "delphi_version": {"type": "string", "description": "Delphi 版本 (11, 12, 13)，默认为 11", "default": "11"},
-                        "install_64bit": {"type": "boolean", "description": "是否安装64位版本，默认为 false", "default": False},
+                        "install_dir": {"type": "string", "description": "命令行工具安装目录，默认为 C:\\\\Program Files\\\\pasfmt"},
+                        "install_rad": {"type": "boolean", "default": False, "description": "是否安装 IDE 插件 (pasfmt-rad)"},
+                        "delphi_version": {"type": "string", "description": "Delphi 版本 (11, 12, 13)，仅 IDE 插件需要"},
+                        "install_64bit": {"type": "boolean", "default": False, "description": "是否安装64位版本，仅 IDE 插件需要"},
                         "delphi_install_dir": {"type": "string", "description": "Delphi 安装目录，默认为自动检测"}
                     },
                     "required": []
@@ -712,20 +703,12 @@ async def run_server():
             ),
             Tool(
                 name="check_pasfmt_installation",
-                description="检查 pasfmt 工具安装状态",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
-                    "required": []
-                }
-            ),
-            Tool(
-                name="check_pasfmt_rad_installation",
-                description="检查 pasfmt-rad IDE 插件安装状态",
+                description="检查 pasfmt 安装状态。可检查命令行工具或 IDE 插件",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "delphi_version": {"type": "string", "description": "Delphi 版本 (11, 12, 13)，默认为 11", "default": "11"}
+                        "check_rad": {"type": "boolean", "default": False, "description": "是否检查 IDE 插件"},
+                        "delphi_version": {"type": "string", "description": "Delphi 版本 (11, 12, 13)，检查 IDE 插件时需要"}
                     },
                     "required": []
                 }
@@ -746,6 +729,10 @@ async def run_server():
                 result = await get_compiler_args(**arguments)
             elif name == "set_compiler_config":
                 result = await set_compiler_config(**arguments)
+            elif name == "detect_compilers":
+                result = await detect_compilers()
+            elif name == "search_delphi_compilers":
+                result = await search_delphi_compilers(**arguments)
             elif name == "check_environment":
                 result = await check_environment()
             elif name == "get_coding_rules":
@@ -837,14 +824,18 @@ async def run_server():
                     result = {"message": f"pasfmt 路径已设置为: {path}"}
                 else:
                     result = {"message": "未提供 pasfmt 路径"}
-            elif name == "download_and_install_pasfmt":
-                result = await pasfmt.download_and_install_pasfmt(**arguments)
-            elif name == "download_and_install_pasfmt_rad":
-                result = await pasfmt.download_and_install_pasfmt_rad(**arguments)
+            elif name == "install_pasfmt":
+                install_rad = arguments.get("install_rad", False)
+                if install_rad:
+                    result = await pasfmt.download_and_install_pasfmt_rad(**arguments)
+                else:
+                    result = await pasfmt.download_and_install_pasfmt(**arguments)
             elif name == "check_pasfmt_installation":
-                result = await pasfmt.check_pasfmt_installation(**arguments)
-            elif name == "check_pasfmt_rad_installation":
-                result = await pasfmt.check_pasfmt_rad_installation(**arguments)
+                check_rad = arguments.get("check_rad", False)
+                if check_rad:
+                    result = await pasfmt.check_pasfmt_rad_installation(**arguments)
+                else:
+                    result = await pasfmt.check_pasfmt_installation(**arguments)
             else:
                 raise ValueError(f"未知工具: {name}")
 

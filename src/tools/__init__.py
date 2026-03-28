@@ -2,7 +2,7 @@
 from .compile_project import compile_project, set_compiler_service
 from .compile_file import compile_file
 from .get_args import get_compiler_args
-from .config import set_compiler_config
+from .config import set_compiler_config, detect_compilers, search_delphi_compilers
 from .environment import check_environment
 from .coding_rules import get_coding_rules
 from .knowledge_base import (

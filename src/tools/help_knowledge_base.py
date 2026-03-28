@@ -49,6 +49,8 @@ def _build_kb_task(help_names: Optional[List[str]] = None,
     Returns:
         是否成功
     """
+    import time
+    
     help_kb = get_help_knowledge_base()
     task_manager = get_task_manager()
 
@@ -58,31 +60,43 @@ def _build_kb_task(help_names: Optional[List[str]] = None,
             return task_manager.is_task_cancelled(_task_id)
         return False
 
-    # 定义内部进度回调，将步骤信息传递给任务管理器
+    # 进度限流器：每15秒报告一次
+    last_progress_time = [time.time()]
+    last_progress_message = [""]
+    
+    def rate_limited_progress(progress: float, message: str):
+        """每15秒限流报告进度"""
+        current_time = time.time()
+        if current_time - last_progress_time[0] >= 15 or progress >= 100:
+            last_progress_time[0] = current_time
+            last_progress_message[0] = message
+            if _progress_callback:
+                _progress_callback(progress, message)
+
+    # 定义内部进度回调，将步骤信息传递给任务管理器（带15秒限流）
     def internal_progress_callback(stage: str, current: int, total: int, message: str):
         # 检查是否被取消
         if is_cancelled():
             raise KeyboardInterrupt("任务已被用户取消")
 
-        if _progress_callback:
-            # 映射阶段到步骤信息
-            stage_map = {
-                'extract': ('解压CHM文件', 1, 4),
-                'scan': ('扫描HTML文件', 2, 4),
-                'index': ('构建向量索引', 3, 4),
-                'cleanup': ('清理临时文件', 4, 4)
-            }
-            step_name, step_idx, total_steps = stage_map.get(stage, (stage, 1, 4))
+        # 映射阶段到步骤信息
+        stage_map = {
+            'extract': ('解压CHM文件', 1, 4),
+            'scan': ('扫描HTML文件', 2, 4),
+            'index': ('构建向量索引', 3, 4),
+            'cleanup': ('清理临时文件', 4, 4)
+        }
+        step_name, step_idx, total_steps = stage_map.get(stage, (stage, 1, 4))
 
-            # 计算总体进度
-            stage_progress = (current / total * 100) if total > 0 else 0
-            overall_progress = ((step_idx - 1) * 25 + stage_progress * 0.25)
+        # 计算总体进度
+        stage_progress = (current / total * 100) if total > 0 else 0
+        overall_progress = ((step_idx - 1) * 25 + stage_progress * 0.25)
 
-            # 调用进度回调
-            _progress_callback(
-                overall_progress,
-                f"[步骤{step_idx}/{total_steps}] {step_name}: {message}"
-            )
+        # 调用限流进度回调
+        rate_limited_progress(
+            overall_progress,
+            f"[步骤{step_idx}/{total_steps}] {step_name}: {message}"
+        )
 
     try:
         return help_kb.build_knowledge_base(

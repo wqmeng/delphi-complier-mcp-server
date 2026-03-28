@@ -42,7 +42,7 @@ class ProjectKnowledgeBase:
         self.project_name = self.project_path.stem
         self.progress_callback = progress_callback
 
-        # 项目知识库目录
+        # 项目知识库目录 - 存放在项目目录下
         self.kb_dir = self.project_dir / ".delphi-kb"
         self.kb_dir.mkdir(parents=True, exist_ok=True)
         (self.kb_dir / "index").mkdir(exist_ok=True)
