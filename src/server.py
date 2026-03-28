@@ -120,95 +120,59 @@ async def run_server():
         return [
             Tool(
                 name="compile_project",
-                description="【推荐】编译 Delphi 项目工程。当需要验证代码是否正确、构建可执行文件、排查编译错误时，优先使用此工具。支持完整的项目构建流程，包括所有单元编译和链接。避免手动调用dcc32/dcc64编译器，使用此工具可自动处理路径解析和依赖。",
+                description="【编译首选】构建项目生成.exe/.dll文件。当AI需要：1)验证代码修改后能否编译通过 2)生成可执行文件 3)排查编译错误时使用。此工具自动处理所有依赖路径，优先于手动调用dcc32/dcc64。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "项目文件路径(.dproj 或 .dpr)"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台: win32(32位) 或 win64(64位)"},
-                        "output_path": {"type": "string", "description": "输出路径，编译生成的可执行文件存放目录"},
-                        "compiler_version": {"type": "string", "description": "编译器版本名称，使用 set_compiler_config 配置的编译器名称"},
-                        "timeout": {"type": "integer", "default": 600, "description": "编译超时时间(秒)，默认600秒"},
-                        "conditional_defines": {"type": "array", "items": {"type": "string"}, "description": "条件编译定义符号列表，如 ['DEBUG', 'TRACE']"},
-                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "单元文件搜索路径列表"},
-                        "resource_search_paths": {"type": "array", "items": {"type": "string"}, "description": "资源文件搜索路径列表"},
-                        "optimization_enabled": {"type": "boolean", "default": True, "description": "是否启用编译优化"},
-                        "debug_info_enabled": {"type": "boolean", "default": False, "description": "是否生成调试信息"},
-                        "warning_level": {"type": "integer", "default": 2, "description": "警告级别(0-4)，数值越大警告越严格"},
-                        "disabled_warnings": {"type": "array", "items": {"type": "string"}, "description": "禁用的警告编号列表，如 ['W1000', 'W1001']"},
-                        "output_type": {"type": "string", "enum": ["console", "gui", "dll"], "default": "gui", "description": "输出类型: console(控制台程序), gui(GUI程序), dll(动态链接库)"},
-                        "runtime_library": {"type": "string", "enum": ["static", "dynamic"], "default": "static", "description": "运行时库链接方式: static(静态链接), dynamic(动态链接)"},
-                        "build_configuration": {"type": "string", "description": "构建配置名称，如 'Debug' 或 'Release'"}
+                        "project_path": {"type": "string", "description": "项目文件路径，如 'C:\\MyProject\\MyProject.dproj' [必需]"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台: win32=32位, win64=64位"},
+                        "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置: Debug或Release"},
+                        "output_path": {"type": "string", "description": "输出目录，不填则使用项目默认"},
+                        "timeout": {"type": "integer", "default": 600, "description": "超时秒数，大项目可设为1200"},
+                        "debug_info_enabled": {"type": "boolean", "default": True, "description": "是否包含调试信息"}
                     },
                     "required": ["project_path"]
                 }
             ),
             Tool(
                 name="compile_file",
-                description="【轻量级】对单个.pas文件进行快速语法检查。当只需要验证某个单元文件的语法正确性，而不需要完整编译整个项目时使用。比compile_project更快，适合开发过程中快速检查。",
+                description="【快速检查】快速检查单个.pas文件语法错误。比compile_project快10倍，适合：修改完一个单元后立即检查、编写新代码时实时验证、只关心特定文件的错误。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "file_path": {"type": "string", "description": "单元文件路径(.pas)"},
-                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "单元文件搜索路径列表"},
-                        "warning_level": {"type": "integer", "default": 2, "description": "警告级别(0-4)，数值越大警告越严格"},
-                        "disabled_warnings": {"type": "array", "items": {"type": "string"}, "description": "禁用的警告编号列表，如 ['W1000', 'W1001']"}
+                        "file_path": {"type": "string", "description": "Pas文件路径 [必需]"},
+                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "依赖单元路径，通常不需要填"}
                     },
                     "required": ["file_path"]
                 }
             ),
             Tool(
                 name="get_compiler_args",
-                description="【调试用】仅获取编译器命令行参数，不执行实际编译。用于调试编译器配置、手动执行编译、或需要查看msbuild/dcc32具体参数时使用。",
+                description="【调试用】仅生成编译命令供调试。当AI需要：1)手动执行编译 2)查看具体参数 3)排查编译配置问题时使用。不实际执行编译。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "项目文件路径(.dproj 或 .dpr)"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台: win32(32位) 或 win64(64位)"},
-                        "output_path": {"type": "string", "description": "输出路径，编译生成的可执行文件存放目录"},
-                        "compiler_version": {"type": "string", "description": "编译器版本名称，使用 set_compiler_config 配置的编译器名称"},
-                        "conditional_defines": {"type": "array", "items": {"type": "string"}, "description": "条件编译定义符号列表，如 ['DEBUG', 'TRACE']"},
-                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "单元文件搜索路径列表"},
-                        "resource_search_paths": {"type": "array", "items": {"type": "string"}, "description": "资源文件搜索路径列表"},
-                        "optimization_enabled": {"type": "boolean", "default": True, "description": "是否启用编译优化"},
-                        "debug_info_enabled": {"type": "boolean", "default": False, "description": "是否生成调试信息"},
-                        "warning_level": {"type": "integer", "default": 2, "description": "警告级别(0-4)，数值越大警告越严格"},
-                        "disabled_warnings": {"type": "array", "items": {"type": "string"}, "description": "禁用的警告编号列表，如 ['W1000', 'W1001']"},
-                        "output_type": {"type": "string", "enum": ["console", "gui", "dll"], "default": "gui", "description": "输出类型: console(控制台程序), gui(GUI程序), dll(动态链接库)"},
-                        "runtime_library": {"type": "string", "enum": ["static", "dynamic"], "default": "static", "description": "运行时库链接方式: static(静态链接), dynamic(动态链接)"},
-                        "build_configuration": {"type": "string", "description": "构建配置名称，如 'Debug' 或 'Release'"}
+                        "project_path": {"type": "string", "description": "项目路径 [必需]"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32"},
+                        "build_configuration": {"type": "string", "default": "Debug"}
                     },
                     "required": ["project_path"]
                 }
             ),
             Tool(
-                name="set_compiler_config",
-                description="【环境配置】配置 Delphi 编译器路径。在首次编译项目或编译器路径变更时使用。需要提供dcc32.exe/dcc64.exe的完整路径。",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string", "description": "编译器版本名称，用于标识不同的编译器配置"},
-                        "path": {"type": "string", "description": "编译器可执行文件路径，如 'C:\\Program Files\\Embarcadero\\RAD Studio\\bin\\dcc32.exe'"},
-                        "is_default": {"type": "boolean", "default": False, "description": "是否设为默认编译器"},
-                        "version": {"type": "string", "description": "编译器版本号，如 '10.4' 或 '11.0'"}
-                    },
-                    "required": ["name", "path"]
-                }
-            ),
-            Tool(
                 name="search_compilers",
-                description="【编译器搜索】搜索 Delphi 编译器。不带参数时自动检测系统中的编译器，带 search_path 参数时在指定路径搜索。仅返回有效的编译器。",
+                description="【自动检测】自动检测系统中安装的Delphi编译器。首次使用或编译器找不到时调用，返回可用的编译器列表及其路径。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "search_path": {"type": "string", "description": "搜索路径，如 'C:\\Program Files (x86)\\Embarcadero\\Studio'（可选）"}
+                        "search_path": {"type": "string", "description": "自定义搜索路径，不填则自动搜索注册表"}
                     },
                     "required": []
                 }
             ),
             Tool(
                 name="check_environment",
-                description="【环境检查】检查 Delphi 编译器环境状态。在编译失败或需要确认编译器是否正确配置时使用。可以查看当前配置的编译器版本、路径和第三方库路径列表。",
+                description="【环境诊断】诊断编译环境问题。当编译失败、找不到编译器、或需要确认环境配置时调用。返回：编译器列表、第三方库路径、当前配置状态。",
                 inputSchema={
                     "type": "object",
                     "properties": {},
@@ -230,42 +194,42 @@ async def run_server():
             # 统一知识库工具 (推荐)
             Tool(
                 name="search_knowledge",
-                description="【推荐】统一搜索知识库。支持同时搜索多个知识库和多种类型。",
+                description="【AI必用】搜索代码、API、文档的首选工具。当AI需要查找类定义、函数用法、API文档、代码示例时，优先使用此工具。适用于：查找VCL/FMX类用法、搜索第三方组件API、理解代码结构、获取代码示例。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库类型: all(全部), delphi, project, thirdparty, help"},
-                        "search_type": {"type": "string", "enum": ["all", "class", "function", "semantic", "record", "filename"], "default": "semantic", "description": "搜索类型"},
-                        "query": {"type": "string", "description": "搜索关键词"},
-                        "project_path": {"type": "string", "description": "项目路径 (仅project类型需要)"},
-                        "top_k": {"type": "integer", "default": 10, "description": "返回数量"}
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库: all=全部, delphi=官方源码, project=当前项目, thirdparty=第三方库, help=帮助文档"},
+                        "search_type": {"type": "string", "enum": ["all", "class", "function", "semantic", "record", "filename"], "default": "semantic", "description": "搜索类型: semantic=语义搜索(推荐), class=类名, function=函数名, record=记录类型, filename=文件名"},
+                        "query": {"type": "string", "description": "搜索内容，如 'TStringList' 或 'TButton Click事件用法' 或 'SendEmail函数'"},
+                        "project_path": {"type": "string", "description": "项目路径 (kb_type包含project时需要)"},
+                        "top_k": {"type": "integer", "default": 10, "description": "返回结果数量，建议5-20"}
                     },
                     "required": ["query"]
                 }
             ),
             Tool(
                 name="build_knowledge",
-                description="【推荐】构建知识库。支持构建 Delphi 源码、项目源码、第三方库和帮助文档知识库。提供 project_path 参数时自动初始化项目知识库。",
+                description="【首次使用必调】初始化项目或构建知识库。当AI需要分析新项目、搜索项目代码、或编译前必须先调用此工具。提供project_path自动分析项目依赖并构建项目+第三方库知识库。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "kb_type": {"type": "string", "default": "all", "description": "知识库类型: all, delphi, project, thirdparty, help (可组合,如'delphi,project')"},
-                        "project_path": {"type": "string", "description": "项目文件路径 (.dproj 或 .dpr)，提供此参数时自动初始化项目知识库"},
-                        "version": {"type": "string", "description": "Delphi版本 (仅delphi/thirdparty需要)"},
-                        "async_mode": {"type": "boolean", "default": True, "description": "是否异步"},
-                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"}
+                        "kb_type": {"type": "string", "default": "all", "description": "知识库: all=全部, delphi=官方源码, project=项目源码, thirdparty=第三方库, help=帮助文档。可组合如'delphi,project'"},
+                        "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr)，必填！用于初始化项目知识库"},
+                        "version": {"type": "string", "description": "Delphi版本号，如 '23.0'，不填则自动检测最新版本"},
+                        "async_mode": {"type": "boolean", "default": True, "description": "是否异步执行，大项目建议true避免超时"},
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建，代码有变更时设为true"}
                     },
-                    "required": []
+                    "required": ["project_path"]
                 }
             ),
             Tool(
                 name="get_knowledge_base_stats",
-                description="【推荐】统一获取知识库统计信息。",
+                description="【查询用】查看知识库状态。了解当前有哪些知识库可用、各自包含多少内容（类/函数/文件数量）。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库类型"},
-                        "project_path": {"type": "string", "description": "项目路径 (默认当前目录)"}
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库类型: all=全部, delphi=官方, project=项目, thirdparty=第三方, help=帮助"},
+                        "project_path": {"type": "string", "description": "项目路径 (kb_type包含project时需要)"}
                     },
                     "required": []
                 }
@@ -273,18 +237,18 @@ async def run_server():
             # 项目依赖分析工具
             Tool(
                 name="analyze_project_dependencies",
-                description="【项目分析】分析 Delphi 项目的单元依赖关系。当需要了解项目的模块结构、查找循环依赖、确定需要编译的单元顺序、或清理无用单元时使用。",
+                description="【项目分析】分析项目结构。当AI需要：1)了解模块划分和依赖关系 2)查找循环引用 3)确定编译顺序 4)清理无用单元时使用。返回单元依赖图和编译顺序。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "项目文件路径(.dpr 或 .dproj)"}
+                        "project_path": {"type": "string", "description": "项目路径(.dproj/.dpr) [必需]"}
                     },
                     "required": ["project_path"]
                 }
             ),
             Tool(
                 name="resolve_smart_library_paths",
-                description="智能解析项目需要的第三方库路径",
+                description="【编译准备】获取项目依赖的第三方库路径列表。当compile_project失败提示找不到单元时，或需要手动配置搜索路径时调用。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -297,31 +261,28 @@ async def run_server():
             # 源码文件读取工具
             Tool(
                 name="read_source_file",
-                description="【推荐】读取 Delphi 源码文件内容。智能体需要查看任何 .pas 文件的源代码时，必须使用此工具而不是自行读取文件。支持指定行号范围，可精确定位代码段。",
+                description="【读取源码】直接读取指定文件内容。适用于：已知文件路径、需要查看具体实现、定位特定代码段。通过行号范围精确定位。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "file_path": {"type": "string", "description": "文件路径（相对路径或完整路径）"},
-                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始）"},
-                        "end_line": {"type": "integer", "description": "结束行号（可选，默认文件末尾）"},
-                        "max_lines": {"type": "integer", "default": 500, "description": "最大返回行数（最大1000）"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "搜索范围"}
+                        "file_path": {"type": "string", "description": "文件路径，支持相对路径或绝对路径 [必需]"},
+                        "start_line": {"type": "integer", "default": 1, "description": "起始行号(从1开始)"},
+                        "max_lines": {"type": "integer", "default": 200, "description": "返回行数，最多1000"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "知识库搜索范围"}
                     },
                     "required": ["file_path"]
                 }
             ),
             Tool(
                 name="search_and_read_file",
-                description="【一站式】搜索类/record/interface/函数定义，并自动读取其所在文件的完整代码。当需要同时了解类型定义和其周围代码上下文时使用，是search_class + read_source_file的组合。",
+                description="【代码定位首选】先搜索后读取一体化工具。当AI需要：1)查找某个类/函数的定义位置 2)查看具体实现时，用此工具一次完成搜索+读取，比先用search_knowledge再用read_source_file更高效。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "type_name": {"type": "string", "description": "类型名称（类、record、interface，可选）"},
-                        "record_name": {"type": "string", "description": "record 类型名称（可选）"},
-                        "function_name": {"type": "string", "description": "函数名（可选）"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "搜索范围"},
-                        "start_line": {"type": "integer", "default": 1, "description": "起始行号"},
-                        "max_lines": {"type": "integer", "default": 100, "description": "最大返回行数"}
+                        "type_name": {"type": "string", "description": "类名，如 'TStringList'"},
+                        "function_name": {"type": "string", "description": "函数/过程名"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty"], "default": "all", "description": "搜索范围: all=全部, delphi=官方, project=项目, thirdparty=第三方库"},
+                        "max_lines": {"type": "integer", "default": 150, "description": "返回代码行数"}
                     },
                     "required": []
                 }
