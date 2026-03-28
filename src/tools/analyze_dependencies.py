@@ -47,7 +47,7 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
         logger.info(f"分析项目依赖: {project_path}")
         result = analyze_project_units(project_path)
         
-        # 通过知识库查找未解析的单元
+        # 通过知识库和Delphi源码路径查找未解析的单元
         resolved_via_kb = {}
         if resolve_via_kb and result.get('missing_units'):
             logger.info(f"通过知识库查找 {len(result['missing_units'])} 个未解析单元...")
@@ -70,37 +70,56 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
                 
                 logger.info(f"知识库已加载 - 第三方库: {kb_thirdparty is not None}, Delphi: {kb_delphi is not None}")
                 
-                # 搜索每个未解析的单元
+                # 方法1: 通过知识库搜索类定义获取文件路径
                 for unit in result['missing_units']:
-                    # 搜索第三方库 (关键词搜索文件名)
-                    if kb_thirdparty:
-                        kb_results = kb_thirdparty.search_by_keyword(f"{unit}.pas")[:3]
+                    # 搜索第三方库
+                    if kb_thirdparty and unit not in resolved_via_kb:
+                        kb_results = kb_thirdparty.search_by_class_name(unit)[:3]
                         if kb_results:
                             for r in kb_results:
-                                path = r.get('full_path', '')
+                                path = r.get('file', {}).get('full_path', '') or r.get('full_path', '')
                                 if path and path.lower().endswith('.pas'):
-                                    resolved_via_kb[unit] = {
-                                        "source": "thirdparty",
-                                        "path": path
-                                    }
+                                    resolved_via_kb[unit] = {"source": "thirdparty", "path": path}
                                     break
-                            if unit in resolved_via_kb:
-                                continue
                     
-                    # 搜索Delphi库 (关键词搜索文件名)
+                    # 搜索Delphi官方库
                     if kb_delphi and unit not in resolved_via_kb:
-                        kb_results = kb_delphi.search_by_keyword(f"{unit}.pas")[:3]
+                        kb_results = kb_delphi.search_by_class_name(unit)[:3]
                         if kb_results:
                             for r in kb_results:
-                                path = r.get('full_path', '')
+                                path = r.get('file', {}).get('full_path', '') or r.get('full_path', '')
                                 if path and path.lower().endswith('.pas'):
-                                    resolved_via_kb[unit] = {
-                                        "source": "delphi",
-                                        "path": path
-                                    }
+                                    resolved_via_kb[unit] = {"source": "delphi", "path": path}
                                     break
-                            
-                logger.info(f"通过知识库解析了 {len(resolved_via_kb)} 个单元")
+                
+                # 方法2: 通过Delphi源码目录查找VCL/RTL单元
+                # Delphi单元文件有命名空间前缀: Vcl.Buttons, FMX.Controls, SysUtils 等
+                delphi_source_paths = [
+                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\common",
+                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\rtl\win",
+                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\vcl",
+                    r"C:\Program Files (x86)\Embarcadero\Studio\23.0\source\fmx",
+                ]
+                
+                import os
+                for base_path in delphi_source_paths:
+                    if not os.path.exists(base_path):
+                        continue
+                    for root, dirs, files in os.walk(base_path):
+                        for f in files:
+                            if f.endswith('.pas'):
+                                f_lower = f.lower()
+                                # 去掉命名空间前缀后匹配: Vcl.Buttons.pas -> buttons.pas
+                                name_without_ns = f.split('.', 1)[-1] if '.' in f else f
+                                for unit in result['missing_units']:
+                                    if unit not in resolved_via_kb:
+                                        # 精确匹配或去掉命名空间后匹配
+                                        if f_lower == f"{unit.lower()}.pas" or name_without_ns.lower() == f"{unit.lower()}.pas":
+                                            full_path = os.path.join(root, f)
+                                            resolved_via_kb[unit] = {"source": "delphi", "path": full_path}
+                                            break
+                
+                logger.info(f"通过知识库和Delphi源码解析了 {len(resolved_via_kb)} 个单元")
                 
             except Exception as kb_err:
                 import traceback
