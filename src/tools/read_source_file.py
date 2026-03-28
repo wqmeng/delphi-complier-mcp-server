@@ -238,26 +238,36 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
         is_record_search = record_name is not None
         
         # 在 Delphi 官方源码中搜索
-        if search_in in ["all", "delphi"] and delphi_kb_service and delphi_kb_service.kb_instance:
-            if search_name:
-                all_results = delphi_kb_service.search_by_class_name(search_name)
-                if is_record_search:
-                    # 过滤出 record 类型
-                    all_results = [r for r in all_results if r.get('class', {}).get('type_kind') == 'record']
-                results.extend(all_results)
-            if function_name:
-                results.extend(delphi_kb_service.search_by_function_name(function_name))
+        if search_in in ["all", "delphi"] and delphi_kb_service:
+            # 确保知识库已加载
+            if not delphi_kb_service.kb_instance:
+                delphi_kb_service.load_knowledge_base()
+            
+            if delphi_kb_service.kb_instance:
+                if search_name:
+                    all_results = delphi_kb_service.search_by_class_name(search_name)
+                    if is_record_search:
+                        # 过滤出 record 类型
+                        all_results = [r for r in all_results if r.get('class', {}).get('type_kind') == 'record']
+                    results.extend(all_results)
+                if function_name:
+                    results.extend(delphi_kb_service.search_by_function_name(function_name))
         
         # 在第三方库中搜索
-        if search_in in ["all", "thirdparty"] and thirdparty_kb_service and thirdparty_kb_service.kb_instance:
-            if search_name:
-                all_results = thirdparty_kb_service.search_by_class_name(search_name)
-                if is_record_search:
-                    # 过滤出 record 类型
-                    all_results = [r for r in all_results if r.get('class', {}).get('type_kind') == 'record']
-                results.extend(all_results)
-            if function_name:
-                results.extend(thirdparty_kb_service.search_by_function_name(function_name))
+        if search_in in ["all", "thirdparty"] and thirdparty_kb_service:
+            # 确保知识库已加载
+            if not thirdparty_kb_service.kb_instance:
+                thirdparty_kb_service.load_knowledge_base()
+            
+            if thirdparty_kb_service.kb_instance:
+                if search_name:
+                    all_results = thirdparty_kb_service.search_by_class_name(search_name)
+                    if is_record_search:
+                        # 过滤出 record 类型
+                        all_results = [r for r in all_results if r.get('class', {}).get('type_kind') == 'record']
+                    results.extend(all_results)
+                if function_name:
+                    results.extend(thirdparty_kb_service.search_by_function_name(function_name))
         
         if not results:
             search_term = search_name or function_name
