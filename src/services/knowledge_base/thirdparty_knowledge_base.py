@@ -26,6 +26,7 @@ try:
     from .scan_delphi_sources import DelphiSourceScanner
     from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
     from ...utils.logger import get_logger
+    from ...utils.delphi_env import expand_delphi_path_macros, get_delphi_version, get_catalog_repository_paths
     logger = get_logger(__name__)
 except ImportError:
     # 支持直接运行测试
@@ -151,6 +152,18 @@ class ThirdPartyKnowledgeBase:
         self.delphi_versions = versions
         return versions
 
+    def get_latest_version(self) -> Optional[Dict]:
+        """获取最新安装的 Delphi 版本"""
+        if not self.delphi_versions:
+            return None
+        # 按版本号排序，返回最新版本
+        sorted_versions = sorted(
+            self.delphi_versions,
+            key=lambda x: tuple(int(p) for p in x["version"].split('.')),
+            reverse=True
+        )
+        return sorted_versions[0]
+
     def _get_delphi_version_name(self, version_key: str) -> str:
         """获取 Delphi 版本名称"""
         version_names = {
@@ -235,20 +248,22 @@ class ThirdPartyKnowledgeBase:
 
         return re.sub(pattern, replace_var, path)
 
-    def _is_delphi_system_path(self, path: str) -> bool:
+    def _is_delphi_system_path(self, path: str, version_key: Optional[str] = None) -> bool:
         """
         检查路径是否是 Delphi 系统路径
 
         Args:
             path: 路径字符串
+            version_key: Delphi 版本号
 
         Returns:
             是否是系统路径
         """
+        import os
         path_lower = path.lower()
 
         # 检查是否包含 Delphi 系统路径变量
-        system_vars = ['$(bdsccommondir)', '$(bdslib)', '$(bds)']
+        system_vars = ['$(bdsccommondir)', '$(bdslib)', '$(bds)', '$(bdsbin)', '$(bdsuserdir)']
         for var in system_vars:
             if var in path_lower:
                 return True
@@ -258,6 +273,15 @@ class ThirdPartyKnowledgeBase:
             root_dir = version.get("root_dir", "")
             if root_dir and path_lower.startswith(root_dir.lower()):
                 return True
+
+        # 检查是否是公共文档下的 Delphi 系统目录
+        user_docs = os.path.expanduser("~\\Documents").lower()
+        delphi_common_dirs = ['imports', 'bpl', 'dcp', 'bpl\\win32', 'bpl\\win64', 'dcp\\win32', 'dcp\\win64']
+        if path_lower.startswith(user_docs + '\\embarcadero\\studio\\'):
+            relative = path_lower[len(user_docs + '\\embarcadero\\studio\\'):]
+            for sys_dir in delphi_common_dirs:
+                if relative.startswith(sys_dir):
+                    return True
 
         return False
 
@@ -279,7 +303,7 @@ class ThirdPartyKnowledgeBase:
             return []
 
         if version is None:
-            selected_version = self.delphi_versions[0]
+            selected_version = self.get_latest_version()
         else:
             selected_version = None
             for v in self.delphi_versions:
@@ -300,52 +324,23 @@ class ThirdPartyKnowledgeBase:
 
         all_paths = []
 
+        # 读取 BDS Library 路径
         try:
-            # 打开 Library 键
             library_key_path = rf"SOFTWARE\Embarcadero\BDS\{version_key}\Library"
             library_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, library_key_path)
-
-            # 遍历所有平台 (Win32, Win64, etc.)
-            i = 0
-            while True:
-                try:
-                    platform_name = winreg.EnumKey(library_key, i)
-                    i += 1
-
-                    platform_key = winreg.OpenKey(library_key, platform_name)
-
-                    try:
-                        # 读取 Browsing Path
-                        try:
-                            browsing_path = winreg.QueryValueEx(platform_key, "Browsing Path")[0]
-                            if browsing_path:
-                                paths = [p.strip() for p in browsing_path.split(';') if p.strip()]
-                                all_paths.extend(paths)
-                                logger.debug(f"平台 {platform_name} Browsing Path: {len(paths)} 个路径")
-                        except:
-                            pass
-
-                        # 读取 Search Path
-                        try:
-                            search_path = winreg.QueryValueEx(platform_key, "Search Path")[0]
-                            if search_path:
-                                paths = [p.strip() for p in search_path.split(';') if p.strip()]
-                                all_paths.extend(paths)
-                                logger.debug(f"平台 {platform_name} Search Path: {len(paths)} 个路径")
-                        except:
-                            pass
-
-                    finally:
-                        winreg.CloseKey(platform_key)
-
-                except WindowsError:
-                    break
-
+            all_paths.extend(self._read_library_paths(library_key, version_key))
             winreg.CloseKey(library_key)
-
         except Exception as e:
-            logger.error(f"读取 Library 路径失败: {e}")
-            return []
+            logger.debug(f"读取 BDS Library 路径失败: {e}")
+
+        # 读取 Studio Library 路径（公共库路径）
+        try:
+            studio_key_path = rf"SOFTWARE\Embarcadero\Studio\{version_key}\Library"
+            studio_key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, studio_key_path)
+            all_paths.extend(self._read_library_paths(studio_key, version_key))
+            winreg.CloseKey(studio_key)
+        except Exception as e:
+            logger.debug(f"读取 Studio Library 路径失败: {e}")
 
         # 去重并保持顺序
         seen = set()
@@ -365,15 +360,21 @@ class ThirdPartyKnowledgeBase:
                 logger.debug(f"跳过 Delphi 系统路径: {path}")
                 continue
 
-            # 展开环境变量
-            expanded_path = self._expand_path_variables(path, env_vars)
+            # 展开环境变量（使用 delphi_env 工具，支持更多宏）
+            try:
+                expanded_path = expand_delphi_path_macros(path, version=version_key)
+            except Exception:
+                # 回退到原有的展开方法
+                expanded_path = self._expand_path_variables(path, env_vars)
 
             # 检查路径是否存在
             path_obj = Path(expanded_path)
             if path_obj.exists():
                 thirdparty_paths.append(str(path_obj.resolve()))
             else:
-                logger.debug(f"路径不存在: {expanded_path}")
+                # 尝试展开 GetIt CatalogRepository 路径
+                if 'CatalogRepository' in expanded_path:
+                    logger.debug(f"GetIt 路径不存在: {expanded_path}")
 
         # 最终去重
         seen = set()
@@ -385,10 +386,65 @@ class ThirdPartyKnowledgeBase:
 
         logger.info(f"过滤后得到 {len(final_paths)} 个第三方库路径")
 
+        # 额外添加 GetIt CatalogRepository 中的组件源码路径
+        try:
+            getit_paths = get_catalog_repository_paths(version_key)
+            for getit_path in getit_paths:
+                if getit_path not in final_paths:
+                    final_paths.append(getit_path)
+                    logger.debug(f"添加 GetIt 组件路径: {getit_path}")
+        except Exception as e:
+            logger.warning(f"获取 GetIt 路径失败: {e}")
+
+        logger.info(f"最终得到 {len(final_paths)} 个第三方库路径")
+
         # 保存路径列表
         self._save_paths(final_paths, selected_version)
 
         return final_paths
+
+    def _read_library_paths(self, library_key, version_key: str) -> List[str]:
+        """从注册表 Library 键读取路径"""
+        import winreg
+        paths = []
+        
+        # 遍历所有平台 (Win32, Win64, etc.)
+        i = 0
+        while True:
+            try:
+                platform_name = winreg.EnumKey(library_key, i)
+                i += 1
+
+                platform_key = winreg.OpenKey(library_key, platform_name)
+
+                try:
+                    # 读取 Browsing Path
+                    try:
+                        browsing_path = winreg.QueryValueEx(platform_key, "Browsing Path")[0]
+                        if browsing_path:
+                            p_list = [p.strip() for p in browsing_path.split(';') if p.strip()]
+                            paths.extend(p_list)
+                            logger.debug(f"平台 {platform_name} Browsing Path: {len(p_list)} 个路径")
+                    except:
+                        pass
+
+                    # 读取 Search Path
+                    try:
+                        search_path = winreg.QueryValueEx(platform_key, "Search Path")[0]
+                        if search_path:
+                            p_list = [p.strip() for p in search_path.split(';') if p.strip()]
+                            paths.extend(p_list)
+                            logger.debug(f"平台 {platform_name} Search Path: {len(p_list)} 个路径")
+                    except:
+                        pass
+
+                finally:
+                    winreg.CloseKey(platform_key)
+
+            except WindowsError:
+                break
+        
+        return paths
 
     def _save_paths(self, paths: List[str], version_info: Dict):
         """保存路径列表"""
