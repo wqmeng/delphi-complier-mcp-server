@@ -5,6 +5,7 @@
 """
 
 from typing import Dict, Any, List, Optional
+from mcp.types import CallToolResult
 from ..services.config_manager import ConfigManager
 from ..utils.validator import Validator
 from ..utils.logger import get_logger
@@ -30,23 +31,21 @@ def set_thirdparty_kb_service(service):
     _thirdparty_kb_service = service
 
 
-async def check_environment() -> Dict[str, Any]:
+async def check_environment() -> CallToolResult:
     """
     检查编译器环境状态
 
     Returns:
-        环境状态字典
+        CallToolResult
     """
     logger.info("收到环境检查请求")
 
     if _config_manager is None:
         logger.error("配置管理器未初始化")
-        return {
-            "status": "unavailable",
-            "message": "配置管理器未初始化",
-            "compilers": [],
-            "default_compiler": None
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": "配置管理器未初始化，请先启动服务"}],
+            isError=True
+        )
 
     try:
         compilers = _config_manager.get_all_compilers()
@@ -80,23 +79,26 @@ async def check_environment() -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"获取第三方库路径失败: {e}")
 
-        return {
-            "status": status,
-            "message": f"共 {len(compilers)} 个编译器配置,{available_count} 个可用",
-            "compilers": compiler_infos,
-            "default_compiler": default_compiler.name if default_compiler else None,
-            "thirdparty_paths": thirdparty_paths
-        }
+        # 格式化输出
+        output = f"Delphi 编译器环境状态: {status}\n\n"
+        output += f"编译器数量: {len(compilers)} ({available_count} 个可用)\n"
+        if default_compiler:
+            output += f"默认编译器: {default_compiler.name} ({default_compiler.version})\n"
+        output += f"\n第三方库路径: {len(thirdparty_paths)} 个\n"
+        for i, path in enumerate(thirdparty_paths[:10], 1):
+            output += f"  {i}. {path}\n"
+        if len(thirdparty_paths) > 10:
+            output += f"  ... 还有 {len(thirdparty_paths) - 10} 个\n"
+
+        return CallToolResult(content=[{"type": "text", "text": output}])
 
     except Exception as e:
         error_msg = f"环境检查过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
-        return {
-            "status": "unavailable",
-            "message": error_msg,
-            "compilers": [],
-            "default_compiler": None
-        }
+        return CallToolResult(
+            content=[{"type": "text", "text": error_msg}],
+            isError=True
+        )
 
 
 async def get_compile_history(limit: int = 10) -> Dict[str, Any]:
