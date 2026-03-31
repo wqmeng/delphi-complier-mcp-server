@@ -10,6 +10,13 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 
 import os
 import sys
+
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 import json
 import time
 import hashlib
@@ -245,6 +252,12 @@ class DelphiKnowledgeBaseService:
             return []
         return self.kb_instance.search_by_keyword(keyword)
 
+    def search_by_unit_name(self, unit_name: str) -> List[Dict]:
+        """根据单元名搜索"""
+        if not self.load_knowledge_base():
+            return []
+        return self.kb_instance.search_by_unit_name(unit_name)
+
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
         """语义搜索类"""
         if not self.load_knowledge_base():
@@ -264,7 +277,7 @@ class DelphiKnowledgeBaseService:
 
         # 从数据库获取统计信息
         import sqlite3
-        db_file = self.kb_dir / "index" / "knowledge_base_vector.sqlite"
+        db_file = self.kb_dir / "knowledge.sqlite"
         if not db_file.exists():
             return {}
 
