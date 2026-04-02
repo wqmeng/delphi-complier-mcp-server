@@ -9,6 +9,7 @@ import json
 import sqlite3
 import math
 import struct
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import defaultdict, Counter
@@ -21,9 +22,9 @@ class SQLiteVectorKnowledgeBase:
     def __init__(self, kb_dir: str, force_rebuild: bool = False):
         self.kb_dir = Path(kb_dir)
         self.index_dir = self.kb_dir / "index"
+        self.db_file = self.kb_dir / "knowledge.sqlite"
+        # 用于构建时读取源数据
         self.source_index_file = self.index_dir / "source_index.json"
-        self.metadata_file = self.index_dir / "metadata.json"
-        self.db_file = self.index_dir / "knowledge_base_vector.sqlite"
         self.source_dir = None
 
         # 使用线程局部存储，每个线程独立的数据库连接
@@ -60,38 +61,24 @@ class SQLiteVectorKnowledgeBase:
     def load_index(self, force_rebuild: bool = False):
         """加载知识库索引"""
         try:
-            # 加载元数据
-            with open(self.metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
-                self.source_dir = metadata.get('source_directory')
-
-            print(f"知识库加载成功! 包含 {metadata['statistics']['total_files']} 个文件")
-
-            # 获取当前线程的数据库连接
             conn = self._get_connection()
-
-            # 检查是否需要重建索引
             cursor = conn.cursor()
+
+            # 检查表是否存在
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
             if not cursor.fetchone() or force_rebuild:
                 self.build_vector_index(incremental=False)
             else:
-                # 验证缓存是否有效
-                cursor.execute("SELECT hash FROM metadata")
-                cached_hash = cursor.fetchone()
-                if cached_hash:
-                    cached_hash = cached_hash['hash']
+                # 从 metadata 表读取（key-value 格式）
+                cursor.execute("SELECT value FROM metadata WHERE key = 'total_files'")
+                row = cursor.fetchone()
+                if row:
+                    print(f"知识库加载成功! 包含 {row[0]} 个文件")
                 else:
-                    cached_hash = None
+                    print("知识库加载成功!")
 
-                current_hash = self.get_index_hash()
-
-                if cached_hash != current_hash:
-                    print("缓存已过期,重新构建索引...")
-                    self.build_vector_index(incremental=True)
-                else:
-                    print("使用缓存的索引 (SQLite 向量扩展模式)")
-                    self.load_vocabulary()
+                print("使用缓存的索引")
+                self.load_vocabulary()
 
         except Exception as e:
             print(f"加载知识库失败: {e}")
@@ -99,12 +86,44 @@ class SQLiteVectorKnowledgeBase:
             raise
 
     def get_index_hash(self) -> str:
-        """计算原始索引的哈希值"""
-        index_stat = self.source_index_file.stat()
-        metadata_stat = self.metadata_file.stat()
+        """计算原始索引的哈希值 - 从SQLite获取"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT hash FROM metadata LIMIT 1")
+        row = cursor.fetchone()
+        if row:
+            return row['hash']
+        return ""
 
-        hash_str = f"{index_stat.st_mtime}_{index_stat.st_size}_{metadata_stat.st_mtime}_{metadata_stat.st_size}"
-        return hashlib.md5(hash_str.encode()).hexdigest()
+    def load_files_and_entities(self) -> Dict:
+        """从 files 和 entities 表加载数据"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        files = []
+        cursor.execute("SELECT * FROM files")
+        for row in cursor.fetchall():
+            file_id = row['id']
+            
+            cursor.execute("SELECT name, kind, parent, line, definition FROM entities WHERE file_id = ?", (file_id,))
+            entities = [{'name': r['name'], 'kind': r['kind'], 'parent': r['parent'], 'line': r['line'], 'definition': r['definition']} for r in cursor.fetchall()]
+            
+            files.append({
+                'path': row['path'],
+                'full_path': row['full_path'],
+                'extension': row['extension'],
+                'size': row['size'],
+                'line_count': row['line_count'],
+                'hash': row['hash'],
+                'last_modified': row['last_modified'],
+                'entities': entities
+            })
+        
+        cursor.execute("SELECT value FROM metadata WHERE key = 'total_lines'")
+        row = cursor.fetchone()
+        total_lines = int(row['value']) if row else 0
+        
+        return {'files': files, 'statistics': {'total_files': len(files), 'total_lines': total_lines}}
 
     def _load_existing_vectors(self) -> Tuple[Dict[str, bytes], Dict[str, bytes]]:
         """
@@ -283,6 +302,7 @@ class SQLiteVectorKnowledgeBase:
             cls['line'],
             full_path,
             desc,
+            cls.get('definition', ''),
             packed
         )
     
@@ -397,7 +417,8 @@ class SQLiteVectorKnowledgeBase:
                 timestamp REAL,
                 total_files INTEGER,
                 total_lines INTEGER,
-                vector_size INTEGER
+                vector_size INTEGER,
+                source_directory TEXT
             )
         """)
         cursor.execute("""
@@ -431,6 +452,7 @@ class SQLiteVectorKnowledgeBase:
                 line INTEGER,
                 file_path TEXT,
                 description TEXT,
+                definition TEXT,
                 vector BLOB,
                 FOREIGN KEY (file_path) REFERENCES files(full_path)
             )
@@ -469,6 +491,7 @@ class SQLiteVectorKnowledgeBase:
         """)
         # 创建索引
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_classes_name_lower ON classes(name_lower)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_classes_name ON classes(name)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_functions_name_lower ON functions(name_lower)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_units_name_lower ON units(name_lower)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_keywords_keyword_lower ON keywords(keyword_lower)")
@@ -500,9 +523,8 @@ class SQLiteVectorKnowledgeBase:
                 self._create_tables(cursor)
                 incremental = False  # 降级为完整构建
             else:
-                # 增量模式：加载源索引获取当前文件列表
-                with open(self.source_index_file, 'r', encoding='utf-8') as f:
-                    source_index = json.load(f)
+                # 增量模式：加载源索引获取当前文件列表 (从SQLite)
+                source_index = self.load_files_and_entities()
                 
                 current_files = {f['full_path'] for f in source_index['files']}
                 
@@ -544,13 +566,13 @@ class SQLiteVectorKnowledgeBase:
             
             # 完整模式需要创建索引
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_classes_name_lower ON classes(name_lower)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_classes_name ON classes(name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_functions_name_lower ON functions(name_lower)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_units_name_lower ON units(name_lower)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_keywords_keyword_lower ON keywords(keyword_lower)")
 
-        # 加载原始索引
-        with open(self.source_index_file, 'r', encoding='utf-8') as f:
-            source_index = json.load(f)
+        # 加载原始索引 (从SQLite)
+        source_index = self.load_files_and_entities()
 
         # 收集所有文档用于构建词汇表
         all_documents = []
@@ -635,26 +657,29 @@ class SQLiteVectorKnowledgeBase:
         conn.commit()
 
         # 插入/更新元数据
+        source_dir = source_index.get('source_directory', '')
         if incremental:
             cursor.execute("""
-                UPDATE metadata SET hash=?, timestamp=?, total_files=?, total_lines=?, vector_size=?
+                UPDATE metadata SET hash=?, timestamp=?, total_files=?, total_lines=?, vector_size=?, source_directory=?
             """, (
                 self.get_index_hash(),
                 time.time(),
                 source_index['statistics']['total_files'],
                 source_index['statistics']['total_lines'],
-                len(self.vocabulary)
+                len(self.vocabulary),
+                source_dir
             ))
         else:
             cursor.execute("""
-                INSERT INTO metadata (hash, timestamp, total_files, total_lines, vector_size)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO metadata (hash, timestamp, total_files, total_lines, vector_size, source_directory)
+                VALUES (?, ?, ?, ?, ?, ?)
             """, (
                 self.get_index_hash(),
                 time.time(),
                 source_index['statistics']['total_files'],
                 source_index['statistics']['total_lines'],
-                len(self.vocabulary)
+                len(self.vocabulary),
+                source_dir
             ))
 
         # 处理文件和插入数据 (批量插入,带进度显示)
@@ -786,14 +811,16 @@ class SQLiteVectorKnowledgeBase:
             print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
             
             # 更新元数据和时间戳
+            source_dir = source_index.get('source_directory', '')
             cursor.execute("""
-                UPDATE metadata SET hash = ?, timestamp = ?, total_files = ?, total_lines = ?, vector_size = ?
+                UPDATE metadata SET hash = ?, timestamp = ?, total_files = ?, total_lines = ?, vector_size = ?, source_directory = ?
             """, (
                 self.get_index_hash(),
                 time.time(),
                 source_index['statistics']['total_files'],
                 source_index['statistics']['total_lines'],
-                len(self.vocabulary)
+                len(self.vocabulary),
+                source_dir
             ))
             conn.commit()
             
@@ -831,6 +858,7 @@ class SQLiteVectorKnowledgeBase:
                 cls['line'],
                 full_path,
                 desc,
+                cls.get('definition', ''),
                 json.dumps(vector)
             )
         
@@ -872,8 +900,8 @@ class SQLiteVectorKnowledgeBase:
                 for cd in classes_data:
                     cursor.execute("DELETE FROM classes WHERE file_path=? AND name=?", (cd[5], cd[1]))
             cursor.executemany("""
-                INSERT INTO classes (name_lower, name, base_class, type_kind, line, file_path, description, vector)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO classes (name_lower, name, base_class, type_kind, line, file_path, description, definition, vector)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, classes_data)
             print(f"  - 类数据插入完成")
 
@@ -927,12 +955,16 @@ class SQLiteVectorKnowledgeBase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
-        cursor.execute("SELECT id, word, idf_weight FROM vocabulary")
-        for row in cursor.fetchall():
-            self.vocabulary[row['word']] = row['id']
-            self.idf_weights[row['word']] = row['idf_weight']
-
-        print(f"词汇表加载完成! 大小: {len(self.vocabulary)}")
+        # 检查 vocabulary 表是否存在
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vocabulary'")
+        if cursor.fetchone():
+            cursor.execute("SELECT id, word, idf_weight FROM vocabulary")
+            for row in cursor.fetchall():
+                self.vocabulary[row['word']] = row['id']
+                self.idf_weights[row['word']] = row['idf_weight']
+            print(f"词汇表加载完成! 大小: {len(self.vocabulary)}")
+        else:
+            print("词汇表不存在，跳过加载（精确查询仍可用）")
 
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List[Tuple[str, float]]:
         """语义搜索类"""
@@ -972,37 +1004,73 @@ class SQLiteVectorKnowledgeBase:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:top_k]
 
+    def search(self, query: str, search_type: str = 'all') -> List[Dict]:
+        """
+        统一搜索接口
+        
+        Args:
+            query: 搜索查询
+            search_type: 搜索类型 ('all', 'class', 'function', 'unit', 'keyword')
+        
+        Returns:
+            搜索结果列表
+        """
+        results = []
+        
+        if search_type in ('all', 'class'):
+            class_results = self.search_by_class_name(query)
+            for r in class_results:
+                r['result_type'] = 'class'
+                r['definition'] = r.get('class', {}).get('definition', '')
+            results.extend(class_results)
+        
+        if search_type in ('all', 'function'):
+            func_results = self.search_by_function_name(query)
+            for r in func_results:
+                r['result_type'] = 'function'
+            results.extend(func_results)
+        
+        if search_type in ('all', 'unit'):
+            unit_results = self.search_by_unit_name(query)
+            for r in unit_results:
+                r['result_type'] = 'unit'
+            results.extend(unit_results)
+        
+        return results
+
     def search_by_class_name(self, class_name: str) -> List[Dict]:
         """根据类名搜索 (精确匹配)"""
         class_name_lower = class_name.lower()
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # 使用 entities 表（3表结构）
         cursor.execute("""
-            SELECT c.name, c.base_class, c.type_kind, c.line, f.* FROM classes c
-            INNER JOIN files f ON c.file_path = f.full_path
-            WHERE c.name_lower = ?
+            SELECT e.name, e.kind, e.parent, e.line, e.definition, f.path, f.full_path, 
+                   f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
+            FROM entities e
+            INNER JOIN files f ON e.file_id = f.id
+            WHERE LOWER(e.name) = ? AND e.kind IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')
         """, (class_name_lower,))
 
         results = []
         for row in cursor.fetchall():
             results.append({
+                'name': row['name'],
+                'kind': row['kind'],
+                'parent': row['parent'],
+                'line': row['line'],
+                'definition': row['definition'] or '',
                 'file': {
-                    'path': row['path'],  # 相对路径
-                    'full_path': row['full_path'],  # 完整路径
+                    'path': row['path'],
+                    'full_path': row['full_path'],
                     'extension': row['extension'],
                     'size': row['size'],
                     'line_count': row['line_count'],
                     'hash': row['hash'],
                     'last_modified': row['last_modified'],
-                    'units': json.loads(row['units']),
-                    'uses': json.loads(row['uses'])
-                },
-                'class': {
-                    'name': row['name'],
-                    'base_class': row['base_class'],
-                    'type_kind': row['type_kind'],  # class/record/interface/enum
-                    'line': row['line']
+                    'units': json.loads(row['units']) if row['units'] else [],
+                    'uses': json.loads(row['uses']) if row['uses'] else []
                 }
             })
 
@@ -1014,62 +1082,422 @@ class SQLiteVectorKnowledgeBase:
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # 使用 entities 表（3表结构）
         cursor.execute("""
-            SELECT func.name, func.line, func.type, f.* FROM functions func
-            INNER JOIN files f ON func.file_path = f.full_path
-            WHERE func.name_lower = ?
+            SELECT e.name, e.kind, e.definition, e.line, f.path, f.full_path, 
+                   f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
+            FROM entities e
+            INNER JOIN files f ON e.file_id = f.id
+            WHERE LOWER(e.name) = ? AND e.kind IN ('FF', 'FP')
         """, (function_name_lower,))
 
         results = []
+        file_cache = {}
+        
         for row in cursor.fetchall():
+            file_path = row['full_path']
+            line_num = row['line']
+            
+            if file_path not in file_cache:
+                file_cache[file_path] = self._get_file_types(file_path)
+            
+            parent = self._find_parent_from_cache(file_path, line_num, file_cache[file_path])
+            
             results.append({
+                'name': row['name'],
+                'kind': row['kind'],
+                'definition': row['definition'] or '',
+                'line': row['line'],
+                'parent': parent,
                 'file': {
-                    'path': row['path'],  # 相对路径
-                    'full_path': row['full_path'],  # 完整路径
+                    'path': row['path'],
+                    'full_path': row['full_path'],
                     'extension': row['extension'],
                     'size': row['size'],
                     'line_count': row['line_count'],
                     'hash': row['hash'],
                     'last_modified': row['last_modified'],
-                    'units': json.loads(row['units']),
-                    'uses': json.loads(row['uses'])
-                },
-                'function': {
-                    'name': row['name'],
-                    'line': row['line'],
-                    'type': row['type']
+                    'units': json.loads(row['units']) if row['units'] else [],
+                    'uses': json.loads(row['uses']) if row['uses'] else []
                 }
             })
 
         return results
 
+    def search_by_keywords(self, keywords: List[str], kind_filter: str = None) -> List[Dict]:
+        """
+        多关键词模糊搜索 (使用反转字符串匹配)
+        
+        Args:
+            keywords: 关键词列表，如 ["create", "button"]
+            kind_filter: 可选的类型过滤 ('TC', 'FF', 'FP', etc.)
+        
+        Returns:
+            匹配的结果列表
+        """
+        if not keywords:
+            return []
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        rev_keywords = [k[::-1].lower() for k in keywords]
+        
+        conditions = ["name_lower_rev LIKE ?" for _ in rev_keywords]
+        where_clause = " AND ".join(conditions)
+        
+        if kind_filter:
+            if isinstance(kind_filter, list):
+                kind_list = "'" + "','".join(kind_filter) + "'"
+                where_clause += f" AND kind IN ({kind_list})"
+            else:
+                where_clause += f" AND kind = '{kind_filter}'"
+        
+        cursor.execute(f"""
+            SELECT e.name, e.kind, e.parent, e.definition, e.line, f.path, f.full_path,
+                   f.extension, f.size, f.line_count, f.hash, f.last_modified, f.units, f.uses
+            FROM entities e
+            INNER JOIN files f ON e.file_id = f.id
+            WHERE {where_clause}
+        """, tuple([f'%{k}%' for k in rev_keywords]))
+        
+        results = []
+        for row in cursor.fetchall():
+            results.append({
+                'name': row['name'],
+                'kind': row['kind'],
+                'parent': row['parent'],
+                'definition': row['definition'] or '',
+                'line': row['line'],
+                'file': {
+                    'path': row['path'],
+                    'full_path': row['full_path'],
+                    'extension': row['extension'],
+                    'size': row['size'],
+                    'line_count': row['line_count'],
+                    'hash': row['hash'],
+                    'last_modified': row['last_modified'],
+                    'units': json.loads(row['units']) if row['units'] else [],
+                    'uses': json.loads(row['uses']) if row['uses'] else []
+                }
+            })
+        
+        return results
+    
+    def _get_file_types(self, file_path: str) -> Optional[List[Dict]]:
+        """获取文件中的所有类型定义及其范围"""
+        if not file_path:
+            return None
+        
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT name, start_line, start_offset
+                FROM entities
+                WHERE file_id = (
+                    SELECT id FROM files WHERE full_path = ?
+                )
+                AND kind IN ('TC', 'TR', 'TI', 'TH')
+                AND start_line IS NOT NULL
+                AND start_offset IS NOT NULL
+                ORDER BY start_line
+            """, (file_path,))
+            
+            types = list(cursor.fetchall())
+            if not types:
+                return None
+            
+            if not os.path.exists(file_path):
+                return None
+            
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            type_ranges = []
+            for i, row in enumerate(types):
+                type_name = row['name']
+                start_line = row['start_line']
+                start_offset = row['start_offset']
+                
+                # 计算 end_line: 使用下一个类型的 start_line - 1
+                # 这样可以正确处理 interface (其内部的 end; 会导致错误范围)
+                if i + 1 < len(types):
+                    next_start_line = types[i + 1]['start_line']
+                else:
+                    next_start_line = float('inf')
+                
+                type_ranges.append((type_name, start_line, next_start_line - 1))
+            
+            return type_ranges
+            
+        except Exception:
+            return None
+    
+    def _find_parent_from_cache(self, file_path: str, line_num: int, type_ranges: Optional[List[tuple]]) -> Optional[str]:
+        """从缓存的类型范围中查找父类"""
+        if not type_ranges:
+            return None
+        
+        for type_name, start_line, end_line in reversed(type_ranges):
+            if start_line < line_num <= end_line:
+                return type_name
+        
+        return None
+
+    def _find_parent_by_line_fast(self, file_path: str, line_num: int) -> Optional[str]:
+        """快速查找父类 - 优先SQL"""
+        if not file_path:
+            return None
+            
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # 简单SQL查询：用start_line判断
+            cursor.execute("""
+                SELECT name, start_line
+                FROM entities
+                WHERE file_id = (
+                    SELECT id FROM files WHERE full_path = ?
+                )
+                AND kind IN ('TC', 'TR', 'TI', 'TH')
+                AND start_line IS NOT NULL
+                ORDER BY start_line
+            """, (file_path,))
+            
+            types = list(cursor.fetchall())
+            for i, row in enumerate(types):
+                if row['start_line'] < line_num:
+                    next_line = types[i + 1]['start_line'] if i + 1 < len(types) else float('inf')
+                    if line_num < next_line:
+                        return row['name']
+            
+        except Exception:
+            pass
+            
+        return None
+
+    def _find_parent_by_line(self, file_path: str, line_num: int) -> Optional[str]:
+        """
+        根据行号查找所属的类或记录
+        优化版本：一次读取文件，找到所有类型的end位置，精确判断嵌套关系
+        """
+        if not file_path:
+            return None
+        
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            
+            # 获取文件中所有类型定义及其偏移（按行号排序）
+            cursor.execute("""
+                SELECT name, start_line, start_offset
+                FROM entities
+                WHERE file_id = (
+                    SELECT id FROM files WHERE full_path = ?
+                )
+                AND kind IN ('TC', 'TR', 'TI', 'TH')
+                AND start_line IS NOT NULL
+                AND start_offset IS NOT NULL
+                ORDER BY start_line
+            """, (file_path,))
+            
+            types = list(cursor.fetchall())
+            if not types:
+                return None
+            
+            # 一次读取文件，找到所有类型的end位置
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            type_ranges = []
+            
+            for row in types:
+                type_name = row['name']
+                start_line = row['start_line']
+                start_offset = row['start_offset']
+                
+                # 从 start_offset 开始查找 end;
+                remaining = content[start_offset:]
+                
+                # 找到第一个 end; (可能嵌套)
+                end_pos = remaining.find('end;')
+                if end_pos >= 0:
+                    end_line = start_line + remaining[:end_pos].count('\n')
+                else:
+                    end_line = float('inf')
+                
+                type_ranges.append((type_name, start_line, end_line))
+            
+            # 从后向前查找：找到最后一个 start_line < method_line 的类型
+            for type_name, start_line, end_line in reversed(type_ranges):
+                if start_line < line_num <= end_line:
+                    return type_name
+            
+        except Exception:
+            pass
+            
+        return None
+
+    def search_by_unit_name(self, unit_name: str) -> List[Dict]:
+        """根据单元名搜索 (精确匹配)"""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # 搜索 files 表的 units JSON 字段
+        cursor.execute("""
+            SELECT path, full_path, extension, size, line_count, hash, last_modified, units, uses
+            FROM files
+            WHERE units LIKE ?
+        """, (f'%"{unit_name}"%',))
+
+        results = []
+        for row in cursor.fetchall():
+            units = json.loads(row['units']) if row['units'] else []
+            if unit_name.lower() in [u.lower() for u in units]:
+                results.append({
+                    'name': unit_name,
+                    'file': {
+                        'path': row['path'],
+                        'full_path': row['full_path'],
+                        'extension': row['extension'],
+                        'size': row['size'],
+                        'line_count': row['line_count'],
+                        'hash': row['hash'],
+                        'last_modified': row['last_modified'],
+                        'units': units,
+                        'uses': json.loads(row['uses']) if row['uses'] else []
+                    }
+                })
+
+        return results
+
     def search_by_keyword(self, keyword: str, search_in: Optional[List[str]] = None) -> List[Dict]:
-        """根据关键词搜索 (精确匹配)"""
+        """根据关键词搜索 (在实体名称中搜索)"""
         keyword_lower = keyword.lower()
         conn = self._get_connection()
         cursor = conn.cursor()
 
+        # 在 entities 表中搜索名称包含关键词的实体
         cursor.execute("""
-            SELECT DISTINCT f.* FROM files f
-            INNER JOIN keywords k ON f.full_path = k.file_path
-            WHERE k.keyword_lower = ?
-        """, (keyword_lower,))
+            SELECT e.name, e.kind, e.definition, e.line, f.path, f.full_path
+            FROM entities e
+            INNER JOIN files f ON e.file_id = f.id
+            WHERE LOWER(e.name) LIKE ?
+            LIMIT 100
+        """, (f'%{keyword_lower}%',))
 
         results = []
         for row in cursor.fetchall():
             results.append({
-                'path': row['path'],  # 相对路径
-                'full_path': row['full_path'],  # 完整路径
-                'extension': row['extension'],
-                'size': row['size'],
-                'line_count': row['line_count'],
-                'hash': row['hash'],
-                'last_modified': row['last_modified'],
-                'units': json.loads(row['units']),
-                'uses': json.loads(row['uses'])
+                'name': row['name'],
+                'kind': row['kind'],
+                'definition': row['definition'],
+                'line': row['line'],
+                'file': row['full_path']
             })
 
         return results
+
+    def search_members(self, class_name: str, include_inherited: bool = False) -> List[Dict]:
+        """
+        搜索类的成员（按需解析）
+        
+        Args:
+            class_name: 类名
+            include_inherited: 是否包含继承的成员
+        
+        Returns:
+            成员列表
+        """
+        import re
+        from pathlib import Path
+        from src.utils.delphi_parser import extract_class_members
+        
+        if not hasattr(self, '_member_cache'):
+            self._member_cache = {}
+        
+        if class_name in self._member_cache:
+            cached_members = self._member_cache[class_name]
+            if include_inherited:
+                return cached_members
+            else:
+                own_members = [m for m in cached_members if m.get('source_class') == class_name]
+                return own_members
+        
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT name, file_path, definition, base_class, type_kind 
+            FROM classes WHERE name = ?
+        """, (class_name,))
+        
+        row = cursor.fetchone()
+        if not row:
+            return []
+        
+        file_path = row['file_path']
+        definition = row['definition']
+        
+        members = []
+        parsed_classes = set()
+        
+        def parse_and_get_members(cls_name: str):
+            if cls_name in parsed_classes:
+                return []
+            parsed_classes.add(cls_name)
+            
+            cursor.execute("""
+                SELECT name, file_path, definition, base_class 
+                FROM classes WHERE name = ?
+            """, (cls_name,))
+            
+            row = cursor.fetchone()
+            if not row:
+                return []
+            
+            fp = row['file_path']
+            defn = row['definition']
+            parent = row['base_class']
+            
+            cache_key = (fp, cls_name)
+            if cache_key in self._member_cache:
+                return self._member_cache[cache_key]
+            
+            try:
+                with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            except:
+                return []
+            
+            class_members = extract_class_members(content)
+            cls_members = class_members.get(cls_name, [])
+            
+            for m in cls_members:
+                m['source_class'] = cls_name
+                m['source_file'] = fp
+            
+            self._member_cache[cache_key] = cls_members
+            
+            result = list(cls_members)
+            
+            if parent and include_inherited:
+                parent_members = parse_and_get_members(parent)
+                result.extend(parent_members)
+            
+            return result
+        
+        all_members = parse_and_get_members(class_name)
+        
+        self._member_cache[class_name] = all_members
+        
+        if not include_inherited:
+            return [m for m in all_members if m.get('source_class') == class_name]
+        
+        return all_members
 
     def close(self):
         """关闭数据库连接"""
