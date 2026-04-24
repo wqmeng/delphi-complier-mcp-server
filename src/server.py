@@ -70,6 +70,7 @@ from src.tools import analyze_dependencies as dep_tools
 from src.tools import coding_rules
 from src.tools import async_tasks as async_tools
 from src.tools import pasfmt
+from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
 from src.utils.logger import init_default_logger, get_logger
 from src.__version__ import __version__, __copyright__
 
@@ -112,6 +113,7 @@ async def run_server():
     sp1(compiler_service)
     sp2(compiler_service)
     sp3(compiler_service)
+    sip(compiler_service)
     scm(config_manager)
     stks(thirdparty_kb_service)
     set_knowledge_base_service(kb_service)
@@ -231,6 +233,30 @@ async def run_server():
                     },
                     "required": []
                 }
+            ),
+            Tool(
+                name="install_package",
+                description="【组件安装】编译并安装 Delphi 组件包到 IDE。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "package_path": {"type": "string", "description": "包文件路径(.dproj/.dpk/.groupproj)"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台"},
+                        "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置"},
+                        "timeout": {"type": "integer", "default": 300, "description": "超时秒数"},
+                        "install": {"type": "boolean", "default": True, "description": "是否自动安装到IDE"}
+                    },
+                    "required": ["package_path"]
+                }
+            ),
+            Tool(
+                name="list_installed_packages",
+                description="【已安装包列表】列出已安装到 IDE 的 Delphi 组件包。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
             )
         ]
 
@@ -257,7 +283,7 @@ async def run_server():
                     result = await get_compiler_args(**arguments)
                 else:
                     # 项目模式：编译
-                    result = await compile_project.compile_project(**arguments)
+                    result = await compile_project(**arguments)
             
             elif name == "search_knowledge":
                 action = arguments.get("action", "search")
@@ -330,6 +356,18 @@ async def run_server():
                     result = await help_kb_tools.cancel_task(arguments)
                 else:
                     result = {"error": f"未知action: {action}"}
+            
+            elif name == "install_package":
+                result = await install_package(
+                    package_path=arguments.get("package_path", ""),
+                    target_platform=arguments.get("target_platform", "win32"),
+                    build_configuration=arguments.get("build_configuration", "Debug"),
+                    timeout=arguments.get("timeout", 300),
+                    install=arguments.get("install", True)
+                )
+            
+            elif name == "list_installed_packages":
+                result = await list_installed_packages()
             
             else:
                 raise ValueError(f"未知工具: {name}")

@@ -131,11 +131,19 @@ async def search_class(arguments: Any) -> CallToolResult:
         # 格式化结果
         output = f"找到 {len(results)} 个类 '{class_name}':\n\n"
         for i, result in enumerate(results, 1):
-            output += f"{i}. 文件: {result['file']['path']}\n"
-            output += f"   类名: {result['class']['name']}\n"
-            output += f"   基类: {result['class']['base_class']}\n"
-            output += f"   行号: {result['class']['line']}\n"
-            output += f"   完整路径: {result['file']['full_path']}\n\n"
+            file_info = result.get('file', {})
+            output += f"{i}. 文件: {file_info.get('path', 'unknown')}\n"
+            
+            if 'class' in result:
+                output += f"   类名: {result['class'].get('name', class_name)}\n"
+                output += f"   基类: {result['class'].get('base_class', '')}\n"
+                output += f"   行号: {result['class'].get('line', '')}\n"
+            else:
+                output += f"   类名: {result.get('name', class_name)}\n"
+                output += f"   基类: {result.get('parent', '')}\n"
+                output += f"   行号: {result.get('line', '')}\n"
+            
+            output += f"   完整路径: {file_info.get('full_path', '')}\n\n"
 
         return CallToolResult(content=[{"type": "text", "text": output}])
 

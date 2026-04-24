@@ -67,12 +67,10 @@ class ThirdPartyKnowledgeBase:
 
         # 创建必要的目录
         self.kb_dir.mkdir(parents=True, exist_ok=True)
-        (self.kb_dir / "index").mkdir(exist_ok=True)
-        (self.kb_dir / "data").mkdir(exist_ok=True)
 
         # 元数据文件
         self.metadata_file = self.kb_dir / "thirdparty_metadata.json"
-        self.paths_file = self.kb_dir / "index" / "thirdparty_paths.json"
+        self.paths_file = self.kb_dir / "thirdparty_paths.json"
 
         # 加载元数据
         self.metadata = self._load_metadata()
@@ -471,6 +469,8 @@ class ThirdPartyKnowledgeBase:
         Returns:
             是否构建成功
         """
+        import sqlite3
+        
         # 获取第三方库路径
         thirdparty_paths = self.get_library_paths(version)
 
@@ -485,6 +485,7 @@ class ThirdPartyKnowledgeBase:
 
         # 合并所有路径进行扫描
         all_source_files = []
+        all_help_docs = []
         total_files = 0
         total_lines = 0
 
@@ -492,42 +493,50 @@ class ThirdPartyKnowledgeBase:
             logger.info(f"扫描路径: {path}")
 
             try:
-                # 创建临时扫描器
-                scanner = DelphiSourceScanner(path, self.kb_dir)
+                # 直接单线程扫描 (避免多进程问题)
+                source_dir = Path(path)
+                if not source_dir.exists():
+                    continue
+                    
+                for file_path in source_dir.rglob('*.pas'):
+                    try:
+                        scanner = DelphiSourceScanner(str(file_path.parent), self.kb_dir)
+                        file_info = scanner.analyze_file(file_path)
+                        if file_info:
+                            all_source_files.append(file_info)
+                            total_files += 1
+                            total_lines += file_info.get('line_count', 0)
+                    except Exception as e:
+                        logger.debug(f"分析文件失败: {file_path}, {e}")
+                        
+                logger.info(f"  找到 {total_files} 个源文件")
 
-                # 扫描目录
-                result = scanner.scan_directory()
-
-                if result and result.get('files'):
-                    file_count = len(result['files'])
-                    total_files += file_count
-                    # 计算总行数
-                    for file_info in result['files']:
-                        total_lines += file_info.get('line_count', 0)
-                    all_source_files.extend(result['files'])
-                    logger.info(f"  找到 {file_count} 个源文件")
+                # 扫描帮助文档
+                help_docs = self._scan_help_documents(path)
+                if help_docs:
+                    all_help_docs.extend(help_docs)
+                    logger.info(f"  找到 {len(help_docs)} 个帮助文档")
 
             except Exception as e:
                 logger.warning(f"扫描路径失败 {path}: {e}")
                 continue
 
         logger.info(f"总共找到 {total_files} 个源文件, {total_lines} 行代码")
+        logger.info(f"总共找到 {len(all_help_docs)} 个帮助文档")
 
-        if not all_source_files:
-            logger.warning("未找到任何源文件")
+        if not all_source_files and not all_help_docs:
+            logger.warning("未找到任何源文件或帮助文档")
             return False
 
-        # 去重：使用相对路径(path)作为唯一标识（因为SQLite中path是主键）
+        # 去重：使用相对路径(path)作为唯一标识
         seen_paths = set()
         unique_files = []
         for file_info in all_source_files:
-            # 使用相对路径作为唯一标识
             rel_path = file_info.get('path', '')
             if rel_path and rel_path not in seen_paths:
                 seen_paths.add(rel_path)
                 unique_files.append(file_info)
             elif not rel_path:
-                # 如果没有相对路径，使用完整路径
                 full_path = file_info.get('full_path', '')
                 if full_path and full_path not in seen_paths:
                     seen_paths.add(full_path)
@@ -537,56 +546,245 @@ class ThirdPartyKnowledgeBase:
         if unique_count < total_files:
             logger.info(f"去重后剩余 {unique_count} 个唯一文件")
 
-        # 保存合并的索引 (使用 source_index.json 以兼容 SQLiteVectorKnowledgeBase)
-        scan_result = {
-            'files': unique_files,
-            'statistics': {
-                'total_files': unique_count,
-                'total_lines': total_lines,
-                'total_paths': len(thirdparty_paths),
-                'scan_time': datetime.now().isoformat()
-            }
-        }
+        # 直接保存到 SQLite (统一Schema)
+        db_file = self.kb_dir / "knowledge.sqlite"
+        conn = sqlite3.connect(str(db_file))
+        cursor = conn.cursor()
+        
+        current_time = datetime.now().timestamp()
+        
+        # 确保表存在
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_path TEXT,
+                relative_path TEXT,
+                extension TEXT,
+                size INTEGER,
+                line_count INTEGER,
+                hash TEXT,
+                last_modified TEXT,
+                category TEXT,
+                units_defined TEXT,
+                units_imported TEXT,
+                description TEXT,
+                scan_timestamp REAL,
+                created_at REAL,
+                updated_at REAL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS vocabularies (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT,
+                name TEXT,
+                name_lower TEXT,
+                file_id INTEGER,
+                line INTEGER,
+                base_class TEXT,
+                description TEXT,
+                vector BLOB,
+                vector_status TEXT,
+                attributes TEXT,
+                created_at REAL,
+                updated_at REAL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at REAL
+            )
+        """)
+        
+        # 插入源文件
+        logger.info("保存源文件到数据库...")
+        batch_size = 1000
+        for i, file_info in enumerate(unique_files):
+            # 转换 units 和 uses 为字符串
+            units = file_info.get('units', [])
+            if isinstance(units, list):
+                units = ','.join(units)
+            uses = file_info.get('uses', [])
+            if isinstance(uses, list):
+                uses = ','.join(uses)
+            
+            cursor.execute("""
+                INSERT INTO files (full_path, relative_path, extension, size, line_count, hash, 
+                    last_modified, category, units_defined, units_imported, description, 
+                    scan_timestamp, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                file_info.get('full_path', ''),
+                file_info.get('path', ''),
+                file_info.get('extension', '.pas'),
+                file_info.get('size', 0),
+                file_info.get('line_count', 0),
+                file_info.get('hash', ''),
+                file_info.get('last_modified', ''),
+                'source',
+                str(units) if units else '',
+                str(uses) if uses else '',
+                file_info.get('description', '')[:500],
+                current_time,
+                current_time,
+                current_time
+            ))
+            
+            file_id = cursor.lastrowid
+            
+            # 插入 vocabularies (类)
+            for cls in file_info.get('classes', []):
+                cursor.execute("""
+                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                    file_id, cls.get('line', 0), cls.get('base_class', ''), cls.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+            
+            # 插入 vocabularies (函数)
+            for func in file_info.get('functions', []):
+                cursor.execute("""
+                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                    file_id, func.get('line', 0), '', func.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+            
+            # 插入 vocabularies (常量)
+            for const in file_info.get('constants', []):
+                cursor.execute("""
+                    INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                        description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    'constant', const.get('name', ''), const.get('name', '').lower() if const.get('name') else '',
+                    file_id, const.get('line', 0), '', const.get('definition', ''),
+                    None, 'pending', None, current_time, current_time
+                ))
+            
+            if (i + 1) % batch_size == 0:
+                conn.commit()
+                logger.info(f"  已处理 {i+1}/{len(unique_files)} 源文件")
 
-        # 保存索引 (使用标准文件名)
-        index_file = self.kb_dir / "index" / "source_index.json"
-        with open(index_file, 'w', encoding='utf-8') as f:
-            json.dump(scan_result, f, ensure_ascii=False, indent=2)
+        # 插入帮助文档
+        if all_help_docs:
+            logger.info("保存帮助文档到数据库...")
+            for help_doc in all_help_docs:
+                cursor.execute("""
+                    INSERT INTO files (full_path, relative_path, extension, size, line_count, hash, 
+                        last_modified, category, units_defined, units_imported, description, 
+                        scan_timestamp, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    help_doc.get('full_path', ''),
+                    help_doc.get('path', ''),
+                    help_doc.get('extension', '.html'),
+                    help_doc.get('size', 0),
+                    help_doc.get('line_count', 0),
+                    '',
+                    help_doc.get('last_modified', ''),
+                    'help',
+                    '',
+                    '',
+                    help_doc.get('title', ''),
+                    current_time,
+                    current_time,
+                    current_time
+                ))
+                
+                file_id = cursor.lastrowid
+                
+                # 插入 vocabularies (类)
+                for cls in help_doc.get('classes', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'class', cls.get('name', ''), cls.get('name', '').lower() if cls.get('name') else '',
+                        file_id, 0, cls.get('base_class', ''), cls.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
+                
+                # 插入 vocabularies (函数)
+                for func in help_doc.get('functions', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'function', func.get('name', ''), func.get('name', '').lower() if func.get('name') else '',
+                        file_id, 0, '', func.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
+                
+                # 插入 vocabularies (属性)
+                for prop in help_doc.get('properties', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'property', prop.get('name', ''), prop.get('name', '').lower() if prop.get('name') else '',
+                        file_id, 0, '', prop.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
+                
+                # 插入 vocabularies (事件)
+                for event in help_doc.get('events', []):
+                    cursor.execute("""
+                        INSERT INTO vocabularies (type, name, name_lower, file_id, line, base_class, 
+                            description, vector, vector_status, attributes, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'event', event.get('name', ''), event.get('name', '').lower() if event.get('name') else '',
+                        file_id, 0, '', event.get('description', ''),
+                        None, 'pending', None, current_time, current_time
+                    ))
 
-        logger.info(f"索引已保存到: {index_file}")
-
-        # 创建 metadata.json (SQLiteVectorKnowledgeBase 需要)
-        metadata = {
-            "name": "Delphi ThirdParty Knowledge Base",
-            "version": version if version else (self.delphi_versions[0]["version"] if self.delphi_versions else "unknown"),
-            "created_at": datetime.now().isoformat(),
-            "last_updated": datetime.now().isoformat(),
-            "source_directory": str(self.kb_dir / "data"),
-            "source_type": "thirdparty",
-            "statistics": {
-                "total_files": total_files,
-                "total_paths": len(thirdparty_paths),
-                "scan_time": datetime.now().isoformat()
-            }
-        }
-
-        metadata_file = self.kb_dir / "index" / "metadata.json"
-        with open(metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-
-        logger.info(f"元数据已保存到: {metadata_file}")
-
-        # 构建 SQLite 向量索引
-        logger.info("开始构建 SQLite 向量索引...")
-        start_time = time.time()
-
-        try:
-            self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), force_rebuild=force_rebuild)
-            elapsed = (time.time() - start_time) * 1000
-            logger.info(f"索引构建完成! 耗时: {elapsed:.2f}ms")
-        except Exception as e:
-            logger.error(f"构建向量索引失败: {e}")
-            return False
+            conn.commit()
+        
+        # 统计
+        cursor.execute("SELECT COUNT(*) FROM files WHERE category='source'")
+        source_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM files WHERE category='help'")
+        help_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='class'")
+        class_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='function'")
+        func_count = cursor.fetchone()[0]
+        
+        # 保存元数据
+        cursor.execute("DELETE FROM metadata")
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('total_files', str(source_count + help_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('source_files', str(source_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('help_docs', str(help_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('total_classes', str(class_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('total_functions', str(func_count), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
+            ('build_time', datetime.now().isoformat(), current_time))
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"知识库构建完成!")
+        logger.info(f"  源文件: {source_count}")
+        logger.info(f"  帮助文档: {help_count}")
+        logger.info(f"  类: {class_count}")
+        logger.info(f"  函数: {func_count}")
 
         # 更新元数据
         self.metadata["total_paths"] = len(thirdparty_paths)
@@ -594,6 +792,159 @@ class ThirdPartyKnowledgeBase:
         self._save_metadata()
 
         return True
+
+    def _scan_help_documents(self, base_path: str) -> List[Dict]:
+        """
+        扫描帮助文档 (HTML/CHM)
+        
+        Args:
+            base_path: 基础路径
+            
+        Returns:
+            帮助文档列表
+        """
+        help_docs = []
+        
+        # 扫描 HTML 文件 - 更宽松的扫描
+        for root, dirs, files in os.walk(base_path):
+            # 跳过隐藏目录和常见无关目录
+            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in [
+                'node_modules', 'vendor', 'lib', 'dist', 'bin', 'obj', '__pycache__'
+            ]]
+            
+            for file in files:
+                if file.lower().endswith(('.html', '.htm')):
+                    # 跳过索引文件
+                    if file.lower() in ['index.html', 'index.htm', 'toc.html', 'contents.html']:
+                        continue
+                    
+                    file_path = os.path.join(root, file)
+                    try:
+                        # 只处理较小的文件 (帮助文档通常不会太大)
+                        if os.path.getsize(file_path) > 5 * 1024 * 1024:  # 5MB
+                            continue
+                            
+                        doc = self._parse_html_help(file_path, base_path)
+                        if doc and (doc.get('classes') or doc.get('functions')):
+                            help_docs.append(doc)
+                    except Exception as e:
+                        logger.debug(f"解析帮助文档失败: {file_path}, {e}")
+        
+        return help_docs
+
+    def _parse_html_help(self, file_path: str, base_path: str) -> Optional[Dict]:
+        """
+        解析 HTML 帮助文档
+        
+        Args:
+            file_path: 文件路径
+            base_path: 基础路径
+            
+        Returns:
+            解析后的文档
+        """
+        try:
+            from bs4 import BeautifulSoup
+            
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+            
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # 提取标题
+            title = ''
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text().strip()
+            if not title:
+                title_elem = soup.find('title')
+                if title_elem:
+                    title = title_elem.get_text().strip()
+            if not title:
+                title = os.path.basename(file_path)
+            
+            # 提取类名 (从标题或内容中)
+            classes = []
+            functions = []
+            properties = []
+            events = []
+            
+            # 常见模式: TClassName, TInterfaceName
+            import re
+            class_pattern = re.compile(r'\b(T[A-Z][A-Za-z0-9_]+)\b')
+            
+            # 从标题提取
+            if title:
+                matches = class_pattern.findall(title)
+                for match in matches:
+                    if match not in [c['name'] for c in classes]:
+                        classes.append({
+                            'name': match,
+                            'base_class': '',
+                            'description': title
+                        })
+            
+            # 从内容提取
+            text = soup.get_text()
+            matches = class_pattern.findall(text)
+            for match in matches:
+                if match not in [c['name'] for c in classes]:
+                    classes.append({
+                        'name': match,
+                        'base_class': '',
+                        'description': ''
+                    })
+            
+            # 提取函数/方法
+            func_pattern = re.compile(r'\b([A-Z][a-zA-Z0-9_]+)\s*\([^)]*\)\s*(?:of\s+object)?;?', re.IGNORECASE)
+            func_matches = func_pattern.findall(text)
+            for func_name in func_matches[:20]:  # 限制数量
+                if func_name not in [f['name'] for f in functions]:
+                    functions.append({
+                        'name': func_name,
+                        'description': ''
+                    })
+            
+            # 提取属性
+            prop_pattern = re.compile(r'\bproperty\s+([A-Za-z_][A-Za-z0-9_]*)', re.IGNORECASE)
+            prop_matches = prop_pattern.findall(text)
+            for prop_name in prop_matches[:20]:
+                if prop_name not in [p['name'] for p in properties]:
+                    properties.append({
+                        'name': prop_name,
+                        'description': ''
+                    })
+            
+            # 提取事件
+            event_pattern = re.compile(r'\bOn([A-Z][a-zA-Z0-9_]+)', re.IGNORECASE)
+            event_matches = event_pattern.findall(text)
+            for event_name in event_matches[:20]:
+                full_name = 'On' + event_name
+                if full_name not in [e['name'] for e in events]:
+                    events.append({
+                        'name': full_name,
+                        'description': ''
+                    })
+            
+            stat = os.stat(file_path)
+            
+            return {
+                'full_path': file_path,
+                'path': os.path.relpath(file_path, base_path),
+                'extension': '.html',
+                'size': stat.st_size,
+                'line_count': content.count('\n'),
+                'last_modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                'title': title,
+                'classes': classes,
+                'functions': functions,
+                'properties': properties,
+                'events': events
+            }
+            
+        except Exception as e:
+            logger.debug(f"解析HTML失败: {file_path}, {e}")
+            return None
 
     def load_knowledge_base(self) -> bool:
         """
@@ -636,10 +987,11 @@ class ThirdPartyKnowledgeBase:
 
     def get_statistics(self) -> Dict:
         """获取知识库统计信息"""
+        import sqlite3
+        
         if not self.load_knowledge_base():
             return {}
 
-        import sqlite3
         db_file = self.kb_dir / "knowledge.sqlite"
         if not db_file.exists():
             return {}
@@ -649,17 +1001,28 @@ class ThirdPartyKnowledgeBase:
 
         stats = {}
         try:
-            cursor.execute("SELECT COUNT(*) FROM classes")
-            stats["classes"] = cursor.fetchone()[0]
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+            tables = {row[0] for row in cursor.fetchall()}
+            
+            if 'classes' in tables:
+                cursor.execute("SELECT COUNT(*) FROM classes")
+                stats["classes"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM functions")
-            stats["functions"] = cursor.fetchone()[0]
+            if 'functions' in tables:
+                cursor.execute("SELECT COUNT(*) FROM functions")
+                stats["functions"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM files")
-            stats["files"] = cursor.fetchone()[0]
+            if 'files' in tables:
+                cursor.execute("SELECT COUNT(*) FROM files")
+                stats["files"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM vocabulary")
-            stats["vocabulary_size"] = cursor.fetchone()[0]
+            if 'vocabulary' in tables:
+                cursor.execute("SELECT COUNT(*) FROM vocabulary")
+                stats["vocabulary_size"] = cursor.fetchone()[0]
+            
+            if 'entities' in tables:
+                cursor.execute("SELECT COUNT(*) FROM entities")
+                stats["entities"] = cursor.fetchone()[0]
 
             stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
 

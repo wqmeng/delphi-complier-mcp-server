@@ -100,10 +100,16 @@ def test_search_class():
     if results:
         print(f"\n找到 {len(results)} 个类 '{class_name}':")
         for i, result in enumerate(results, 1):
-            print(f"\n{i}. 文件: {result['file']['path']}")
-            print(f"   类名: {result['class']['name']}")
-            print(f"   基类: {result['class']['base_class']}")
-            print(f"   行号: {result['class']['line']}")
+            file_info = result.get('file', {})
+            if 'class' in result:
+                class_info = result['class']
+            else:
+                class_info = {'name': result.get('name', class_name), 'base_class': result.get('parent', ''), 'line': result.get('line', '')}
+            
+            print(f"\n{i}. 文件: {file_info.get('path', 'unknown')}")
+            print(f"   类名: {class_info.get('name', class_name)}")
+            print(f"   基类: {class_info.get('base_class', '')}")
+            print(f"   行号: {class_info.get('line', '')}")
         return True
     else:
         print(f"\n未找到类 '{class_name}'")
