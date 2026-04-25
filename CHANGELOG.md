@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026.04.25] - 2026-04-25
 
+### Added
+
+#### 安装脚本
+- 新增 `install.ps1` 安装脚本
+- 自动检测已安装的 AI Agent（Claude Desktop, Trae, CodeArts, Cursor, OpenCode, Windsurf, Cline, 通义灵码, 豆包, Kimi 等）
+- 自动配置 MCP Server 到相应的 AI Agent
+- 支持强制重新配置 `-Force` 参数
+
+#### 组件包安装工具
+- 新增 `install_package` 工具：编译并安装 .dproj/.dpk/.groupproj 组件包到 IDE
+- 新增 `list_installed_packages` 工具：列出已安装到 IDE 的组件包
+- 识别运行时包(RuntimeOnlyPackage)和设计时包，只安装设计时包
+- 修复注册表键名使用完整路径而非文件名
+
 ### Changed
 
 #### 编码规范优化
@@ -18,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 预声明规则去重合并
 - 验证代码正确性改为"根据项目实际情况选择使用"
 - 自动更新机制添加必检/可选标记
+
+#### AI Agent 检测增强
+- CodeArts Agent: 添加 AppData\Roaming\codearts-agent 检测
+- OpenCode: 添加 ai.opencode.desktop 桌面版和 npm 全局安装检测
+- Cursor/Windsurf/通义灵码: 添加 AppData 目录检测
+- 所有 AI Agent 现在支持多种安装方式检测
 
 ## [2026.04.02] - 2026-04-02
 

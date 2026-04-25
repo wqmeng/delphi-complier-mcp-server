@@ -336,15 +336,22 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ### v2026.04.25 (2026-04-25)
 
-- 优化编码规范，补充缺失规则和完善描述
-  - 类型命名添加 `class of` 类型规则
-  - 公开字段描述修正
-  - 泛型格式化添加具体问题说明（嵌套泛型、继承链）
-  - "关键词"改为"Delphi 关键字"
-  - 空格规则添加括号内侧
-  - 预声明规则去重合并
-  - 验证代码正确性改为"根据项目实际情况选择使用"
-  - 自动更新机制添加必检/可选标记
+- 新增安装脚本 `install.ps1`
+  - 自动检测已安装的 AI Agent（Claude Desktop, Trae, CodeArts, Cursor, OpenCode, Windsurf, Cline, 通义灵码, 豆包, Kimi 等）
+  - 自动配置 MCP Server 到相应的 AI Agent
+  - 支持强制重新配置
+
+- 完善 AI Agent 检测逻辑
+  - CodeArts Agent: 添加 AppData\Roaming\codearts-agent 检测
+  - OpenCode: 添加 ai.opencode.desktop 桌面版和 npm 全局安装检测
+  - Cursor/Windsurf/通义灵码: 添加 AppData 目录检测
+
+- 新增组件包安装工具
+  - `install_package`: 编译并安装 .dproj/.dpk/.groupproj 组件包到 IDE
+  - `list_installed_packages`: 列出已安装到 IDE 的组件包
+  - 识别运行时包(RuntimeOnlyPackage)和设计时包，只安装设计时包
+
+- 优化编码规范（见上文）
 
 ### v2026.03.29 (2026-03-29)
 
