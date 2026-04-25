@@ -348,14 +348,27 @@ function Test-OpenCode {
     # OpenCode 配置文件在项目目录下
     $configPath = Join-Path $ScriptDir "opencode.json"
     
-    # 检查 OpenCode 是否安装（检查全局配置）
-    $opencodeGlobalConfig = Join-Path $env:USERPROFILE ".opencode\config.json"
-    $opencodeInstalled = Test-Path $opencodeGlobalConfig
+    # 检查 OpenCode 是否安装（多种方式）
+    # 1. npm 全局安装
+    $opencodeNpm = Get-Command opencode -ErrorAction SilentlyContinue
+    # 2. AppData\Local 安装
+    $opencodeLocal = Join-Path $env:LOCALAPPDATA "opencode\OpenCode.exe"
+    $opencodeCli = Join-Path $env:LOCALAPPDATA "opencode\opencode-cli.exe"
+    # 3. AppData\Roaming 安装
+    $opencodeRoaming = Join-Path $env:APPDATA "opencode"
+    
+    $opencodeInstalled = $opencodeNpm -or 
+                         (Test-Path $opencodeLocal) -or 
+                         (Test-Path $opencodeCli) -or 
+                         (Test-Path $opencodeRoaming)
     
     if (Test-Path $configPath) {
         return @{
             Installed = $true
-            Path = if ($opencodeInstalled) { "OpenCode CLI" } else { "Unknown" }
+            Path = if ($opencodeNpm) { $opencodeNpm.Source } 
+                   elseif (Test-Path $opencodeLocal) { $opencodeLocal }
+                   elseif (Test-Path $opencodeCli) { $opencodeCli }
+                   else { "OpenCode CLI" }
             ConfigPath = $configPath
             Name = "OpenCode"
             ConfigType = "OpenCode"
@@ -366,7 +379,10 @@ function Test-OpenCode {
     if ($opencodeInstalled) {
         return @{
             Installed = $true
-            Path = "OpenCode CLI"
+            Path = if ($opencodeNpm) { $opencodeNpm.Source } 
+                   elseif (Test-Path $opencodeLocal) { $opencodeLocal }
+                   elseif (Test-Path $opencodeCli) { $opencodeCli }
+                   else { "OpenCode CLI" }
             ConfigPath = $configPath
             Name = "OpenCode"
             ConfigType = "OpenCode"
