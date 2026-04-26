@@ -180,6 +180,209 @@ function Test-PythonVersion {
 }
 
 # ============================================================
+# 检查依赖项
+# ============================================================
+
+function Test-GitInstalled {
+    try {
+        $git = Get-Command git -ErrorAction SilentlyContinue
+        if ($git) {
+            $version = & git --version 2>&1
+            Write-Info "Git 已安装: $version"
+            return $true
+        }
+        
+        # 检查常见安装路径
+        $gitPaths = @(
+            "${env:ProgramFiles}\Git\bin\git.exe",
+            "${env:ProgramFiles(x86)}\Git\bin\git.exe",
+            "${env:LOCALAPPDATA}\Programs\Git\bin\git.exe"
+        )
+        
+        foreach ($path in $gitPaths) {
+            if (Test-Path $path) {
+                $version = & $path --version 2>&1
+                Write-Info "Git 已安装: $version"
+                return $true
+            }
+        }
+        
+        return $false
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-SevenZipInstalled {
+    try {
+        $7z = Get-Command 7z -ErrorAction SilentlyContinue
+        if ($7z) {
+            Write-Info "7-Zip 已安装"
+            return $true
+        }
+        
+        # 检查常见安装路径
+        $7zPaths = @(
+            "${env:ProgramFiles}\7-Zip\7z.exe",
+            "${env:ProgramFiles(x86)}\7-Zip\7z.exe"
+        )
+        
+        foreach ($path in $7zPaths) {
+            if (Test-Path $path) {
+                Write-Info "7-Zip 已安装: $path"
+                return $true
+            }
+        }
+        
+        return $false
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-PythonPackages {
+    param(
+        [string]$PythonExe,
+        [string]$RequirementsFile
+    )
+    
+    $missingPackages = @()
+    $installedPackages = @()
+    
+    # 读取 requirements.txt
+    if (-not (Test-Path $RequirementsFile)) {
+        Write-Warning "未找到 requirements.txt: $RequirementsFile"
+        return @{ Success = $false; Missing = @(); Installed = @() }
+    }
+    
+    $requirements = Get-Content $RequirementsFile | Where-Object { 
+        $_ -and $_ -notmatch "^\s*#" -and $_ -notmatch "^\s*$"
+    }
+    
+    foreach ($req in $requirements) {
+        # 解析包名（去掉版本要求）
+        if ($req -match "^([a-zA-Z0-9_-]+)") {
+            $packageName = $matches[1]
+            
+            # 检查包是否已安装
+            $checkCmd = "& '$PythonExe' -c `"import $packageName`" 2>&1"
+            $result = Invoke-Expression $checkCmd 2>$null
+            
+            if ($LASTEXITCODE -eq 0) {
+                $installedPackages += $packageName
+            }
+            else {
+                $missingPackages += $packageName
+            }
+        }
+    }
+    
+    return @{
+        Success = ($missingPackages.Count -eq 0)
+        Missing = $missingPackages
+        Installed = $installedPackages
+    }
+}
+
+function Install-PythonPackages {
+    param(
+        [string]$PythonExe,
+        [string]$RequirementsFile
+    )
+    
+    Write-Info "正在安装 Python 依赖包..."
+    
+    # 使用国内镜像源加速
+    $mirrors = @(
+        "https://pypi.tuna.tsinghua.edu.cn/simple",
+        "https://mirrors.aliyun.com/pypi/simple/",
+        "https://pypi.mirrors.ustc.edu.cn/simple/"
+    )
+    
+    $installed = $false
+    foreach ($mirror in $mirrors) {
+        try {
+            Write-Info "尝试使用镜像: $mirror"
+            & $PythonExe -m pip install -r $RequirementsFile -i $mirror --quiet 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "依赖包安装成功"
+                $installed = $true
+                break
+            }
+        }
+        catch {
+            Write-Warning "镜像 $mirror 安装失败，尝试下一个..."
+        }
+    }
+    
+    if (-not $installed) {
+        # 尝试不使用镜像
+        try {
+            Write-Info "尝试使用默认源安装..."
+            & $PythonExe -m pip install -r $RequirementsFile --quiet 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "依赖包安装成功"
+                $installed = $true
+            }
+        }
+        catch {
+            Write-ErrorMsg "依赖包安装失败: $_"
+        }
+    }
+    
+    return $installed
+}
+
+function Test-VirtualEnvironment {
+    param([string]$ScriptDir)
+    
+    $venvPath = Join-Path $ScriptDir "venv"
+    $venvPython = Join-Path $venvPath "Scripts\python.exe"
+    $venvPip = Join-Path $venvPath "Scripts\pip.exe"
+    
+    if ((Test-Path $venvPython) -and (Test-Path $venvPip)) {
+        return @{
+            Exists = $true
+            PythonPath = $venvPython
+            PipPath = $venvPip
+        }
+    }
+    
+    return @{
+        Exists = $false
+        PythonPath = $null
+        PipPath = $null
+    }
+}
+
+function New-VirtualEnvironment {
+    param(
+        [string]$PythonExe,
+        [string]$ScriptDir
+    )
+    
+    $venvPath = Join-Path $ScriptDir "venv"
+    
+    Write-Info "正在创建虚拟环境..."
+    
+    try {
+        & $PythonExe -m venv $venvPath 2>&1 | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            $venvPython = Join-Path $venvPath "Scripts\python.exe"
+            Write-Success "虚拟环境创建成功: $venvPython"
+            return $venvPython
+        }
+    }
+    catch {
+        Write-ErrorMsg "虚拟环境创建失败: $_"
+    }
+    
+    return $null
+}
+
+# ============================================================
 # AI Agent 检测函数
 # ============================================================
 
@@ -1067,10 +1270,37 @@ function Main {
 
     Write-Info "MCP Server 路径: $McpServerScript"
 
+    # ============================================================
+    # 检查依赖项
+    # ============================================================
+    Write-Separator "检查依赖项"
+
+    $depsOk = $true
+
+    # 检查 Git
+    Write-Info "检查 Git..."
+    if (-not (Test-GitInstalled)) {
+        Write-Warning "Git 未安装"
+        Write-Info "  下载地址: https://git-scm.com/download/win"
+        Write-Info "  或使用: winget install Git.Git"
+        $depsOk = $false
+    }
+
+    # 检查 7-Zip（可选）
+    Write-Info "检查 7-Zip (可选)..."
+    if (-not (Test-SevenZipInstalled)) {
+        Write-Warning "7-Zip 未安装（可选，用于解压 CHM 帮助文件）"
+        Write-Info "  下载地址: https://www.7-zip.org/download.html"
+        Write-Info "  或使用: winget install 7zip.7zip"
+    }
+
     # 检测 Python
+    Write-Info "检查 Python..."
     $pythonExe = Get-PythonExecutable -PreferredPath $PythonPath
     if (-not $pythonExe) {
         Write-ErrorMsg "未找到 Python，请安装 Python 3.10+ 或使用 -PythonPath 参数指定路径"
+        Write-Info "  下载地址: https://www.python.org/downloads/"
+        Write-Info "  或使用: winget install Python.Python.3.12"
         exit 1
     }
 
@@ -1080,6 +1310,56 @@ function Main {
     }
 
     Write-Success "Python 检测通过: $pythonExe"
+
+    # 检查虚拟环境
+    Write-Info "检查虚拟环境..."
+    $venv = Test-VirtualEnvironment -ScriptDir $ScriptDir
+    
+    if (-not $venv.Exists) {
+        Write-Warning "虚拟环境不存在，正在创建..."
+        $venvPython = New-VirtualEnvironment -PythonExe $pythonExe -ScriptDir $ScriptDir
+        if ($venvPython) {
+            $pythonExe = $venvPython
+        }
+        else {
+            Write-ErrorMsg "虚拟环境创建失败"
+            exit 1
+        }
+    }
+    else {
+        Write-Success "虚拟环境已存在: $($venv.PythonPath)"
+        $pythonExe = $venv.PythonPath
+    }
+
+    # 检查 Python 依赖包
+    Write-Info "检查 Python 依赖包..."
+    $requirementsFile = Join-Path $ScriptDir "requirements.txt"
+    $packages = Test-PythonPackages -PythonExe $pythonExe -RequirementsFile $requirementsFile
+    
+    if ($packages.Installed.Count -gt 0) {
+        Write-Info "已安装的包: $($packages.Installed -join ', ')"
+    }
+    
+    if ($packages.Missing.Count -gt 0) {
+        Write-Warning "缺少依赖包: $($packages.Missing -join ', ')"
+        Write-Info "正在安装缺少的依赖包..."
+        
+        $installResult = Install-PythonPackages -PythonExe $pythonExe -RequirementsFile $requirementsFile
+        if (-not $installResult) {
+            Write-ErrorMsg "依赖包安装失败，请手动执行: pip install -r requirements.txt"
+            exit 1
+        }
+    }
+    else {
+        Write-Success "所有依赖包已安装"
+    }
+
+    # 依赖检查完成
+    Write-Separator "依赖检查完成"
+    if (-not $depsOk) {
+        Write-Warning "部分依赖项未安装，可能影响部分功能"
+        Write-Info "建议安装上述缺失的依赖项"
+    }
 
     # 检测 AI Agent
     Write-Info "正在检测已安装的 AI Agent..."

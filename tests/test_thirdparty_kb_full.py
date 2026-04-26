@@ -77,8 +77,7 @@ def test_search_class(kb):
     
     for class_name in test_classes:
         print(f"搜索类 '{class_name}':")
-        results = kb.search_by_name(class_name)
-        results = [r for r in results if r.get('kind_code', '') == 'TC']
+        results = kb.search_by_class_name(class_name)
         
         if results:
             print(f"  ✓ 找到 {len(results)} 个结果")
@@ -102,8 +101,7 @@ def test_search_function(kb):
     
     for func_name in test_functions:
         print(f"搜索函数 '{func_name}':")
-        results = kb.search_by_name(func_name)
-        results = [r for r in results if r.get('kind_code', '') in ('FF', 'FP')]
+        results = kb.search_by_function_name(func_name)
         
         if results:
             print(f"  ✓ 找到 {len(results)} 个结果")

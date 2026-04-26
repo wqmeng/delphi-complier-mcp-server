@@ -22,34 +22,15 @@ from typing import Dict, List, Optional, Tuple, Callable, Set
 from datetime import datetime
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from multiprocessing import cpu_count
-
-# BeautifulSoup 延迟导入 - 避免子进程启动时导入重模块
-# from bs4 import BeautifulSoup  # 不要在顶层导入！
+from bs4 import BeautifulSoup
 
 from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
-from ...utils.logger import get_logger, get_default_logger
+from ...utils.logger import get_logger
 
-# 使用默认logger确保日志输出
-logger = get_default_logger()
+logger = get_logger(__name__)
 
 
 # 全局处理函数（用于多进程，必须是模块级函数才能被pickle）
-def _init_worker_process():
-    """子进程初始化函数 - 轻量初始化，重模块延迟导入"""
-    import logging
-    import os
-    
-    # 初始化子进程日志（轻量操作）
-    pid = os.getpid()
-    worker_logger = logging.getLogger('delphi_mcp')
-    if not worker_logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-        worker_logger.addHandler(handler)
-        worker_logger.setLevel(logging.INFO)
-    worker_logger.info(f"[PID={pid}] 子进程初始化完成")
-
-
 def _process_html_file_worker(args: Tuple) -> Optional[Dict]:
     """
     处理单个 HTML 文件的worker函数（用于多进程）
@@ -119,78 +100,8 @@ def _process_html_file_worker(args: Tuple) -> Optional[Dict]:
             'markdown_path': markdown_file_path
         }
 
-    except Exception as e:
-        # 记录错误以便调试
-        print(f"处理HTML文件失败 {html_file_path}: {e}")
+    except Exception:
         return None
-
-
-def _process_html_file_batch_worker(args: Tuple) -> List[Dict]:
-    """
-    批量处理 HTML 文件的worker函数（用于多进程）
-
-    每个worker接收一批文件，按文件大小均匀分配，保证各进程负载均衡。
-
-    Args:
-        args: (file_args_list,) 其中 file_args_list 是 [(html_file_path, directory_path, save_markdown, markdown_dir_path), ...]
-
-    Returns:
-        文档字典列表
-    """
-    import os
-    import logging
-    
-    pid = os.getpid()
-    file_args_list = args[0]
-    total = len(file_args_list)
-    
-    # 在子进程中初始化日志（多进程无法继承主进程的logger配置）
-    worker_logger = logging.getLogger(f'delphi_mcp.worker.{pid}')
-    if not worker_logger.handlers:
-        formatter = logging.Formatter('%(asctime)s - delphi_mcp - %(levelname)s - %(message)s')
-        # 添加文件handler - 写入同一个日志文件
-        try:
-            log_path = Path('logs/delphi_mcp.log')
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(str(log_path), encoding='utf-8')
-            file_handler.setFormatter(formatter)
-            file_handler.setLevel(logging.INFO)
-            worker_logger.addHandler(file_handler)
-        except Exception:
-            pass
-        worker_logger.setLevel(logging.INFO)
-    
-    worker_logger.info(f"[PID={pid}] 开始处理 {total} 个文件")
-    
-    # 延迟导入重模块并缓存到进程全局变量（只导入一次，避免每次chunk都重新导入）
-    if not globals().get('_worker_heavy_modules_loaded'):
-        try:
-            from bs4 import BeautifulSoup  # noqa: F401
-            worker_logger.info(f"[PID={pid}] BeautifulSoup 已加载")
-        except ImportError:
-            pass
-        try:
-            from html2text import HTML2Text  # noqa: F401
-            worker_logger.info(f"[PID={pid}] html2text 已加载")
-        except ImportError:
-            pass
-        globals()['_worker_heavy_modules_loaded'] = True
-    
-    results = []
-    for i, file_args in enumerate(file_args_list):
-        file_path = file_args[0]  # html_file_path
-        file_name = Path(file_path).name
-        
-        # 每100个文件或第1个文件输出日志
-        if i == 0 or (i + 1) % 100 == 0 or (i + 1) == total:
-            worker_logger.info(f"[PID={pid}] ({i+1}/{total}) 处理: {file_name}")
-        
-        result = _process_html_file_worker(file_args)
-        if result:
-            results.append(result)
-    
-    worker_logger.info(f"[PID={pid}] 完成, 成功提取 {len(results)}/{total} 个文档")
-    return results
 
 
 class HTMLToMarkdownConverter:
@@ -199,8 +110,6 @@ class HTMLToMarkdownConverter:
     def __init__(self):
         # 延迟导入 html2text，避免 MCP 服务器启动时导入失败
         import html2text
-        from bs4 import BeautifulSoup
-        self.BeautifulSoup = BeautifulSoup
         self.converter = html2text.HTML2Text()
         self.converter.ignore_links = False
         self.converter.ignore_images = True
@@ -226,7 +135,7 @@ class HTMLToMarkdownConverter:
         """将 HTML 转换为 Markdown"""
         try:
             # 先使用 BeautifulSoup 清理 HTML (使用更快的解析器)
-            soup = self.BeautifulSoup(html_content, self.parser)
+            soup = BeautifulSoup(html_content, self.parser)
 
             # 移除脚本和样式
             for element in soup(['script', 'style', 'nav', 'footer', 'header']):
@@ -296,7 +205,7 @@ class HTMLToMarkdownConverter:
     def _extract_text_fallback(self, html_content: str) -> str:
         """备用文本提取方法"""
         try:
-            soup = self.BeautifulSoup(html_content, self.parser)
+            soup = BeautifulSoup(html_content, self.parser)
             return soup.get_text(separator='\n', strip=True)
         except:
             return ""
@@ -306,9 +215,6 @@ class HTMLContentExtractor:
     """HTML 内容提取器 - 增强版"""
 
     def __init__(self):
-        # 延迟导入 BeautifulSoup
-        from bs4 import BeautifulSoup
-        self.BeautifulSoup = BeautifulSoup
         self.md_converter = HTMLToMarkdownConverter()
         # 使用与HTMLToMarkdownConverter相同的解析器
         self.parser = self.md_converter.parser
@@ -349,7 +255,7 @@ class HTMLContentExtractor:
     def _extract_title(self, html_content: str, markdown_content: str) -> str:
         """提取文档标题"""
         try:
-            soup = self.BeautifulSoup(html_content, self.parser)
+            soup = BeautifulSoup(html_content, self.parser)
             if soup.title:
                 return soup.title.get_text(strip=True)
             if soup.h1:
@@ -382,7 +288,7 @@ class HTMLContentExtractor:
         }
 
         try:
-            soup = self.BeautifulSoup(html_content, self.parser)
+            soup = BeautifulSoup(html_content, self.parser)
 
             # 提取 Classes
             classes_header = soup.find(id='Classes') or soup.find(string=re.compile('^Classes$', re.I))
@@ -576,7 +482,7 @@ class HTMLContentExtractor:
 
         return result
 
-    def _extract_method_signature(self, soup, method_name: str) -> Dict:
+    def _extract_method_signature(self, soup: BeautifulSoup, method_name: str) -> Dict:
         """提取方法签名、参数和返回值信息（改进版，支持 Delphi 和 C++ 语法）"""
         result = {
             'signature': '',
@@ -672,7 +578,7 @@ class HTMLContentExtractor:
 
         return ''
 
-    def _extract_code_examples_from_html(self, soup) -> List[Dict]:
+    def _extract_code_examples_from_html(self, soup: BeautifulSoup) -> List[Dict]:
         """从 HTML 提取代码示例（优先使用，格式更可靠）"""
         examples = []
         try:
@@ -723,7 +629,7 @@ class HTMLContentExtractor:
 
         return examples
 
-    def _extract_code_description_from_html(self, soup, code_block) -> str:
+    def _extract_code_description_from_html(self, soup: BeautifulSoup, code_block) -> str:
         """从 HTML 提取代码示例前的描述"""
         try:
             # 查找代码块前的标题
@@ -841,69 +747,7 @@ class DelphiHelpKnowledgeBase:
         # Delphi 帮助目录
         self.delphi_help_dir = self._find_delphi_help_dir()
 
-        # 进程池（复用，避免每次scan_html_files都重新创建）
-        self._process_pool: Optional[ProcessPoolExecutor] = None
-        self._pool_max_workers: int = 0
-
         logger.info(f"帮助文档知识库初始化: {self.kb_dir}")
-
-    def _get_or_create_pool(self, max_workers: int) -> ProcessPoolExecutor:
-        """获取或创建进程池（复用，避免每次scan_html_files都重新创建）"""
-        if self._process_pool is None or self._pool_max_workers != max_workers:
-            # 关闭旧池
-            if self._process_pool is not None:
-                logger.info("关闭旧进程池...")
-                try:
-                    self._process_pool.shutdown(wait=True, cancel_futures=True)
-                except TypeError:
-                    self._process_pool.shutdown(wait=True)
-            
-            # 设置环境变量,让子进程(server.py)检测到自己是worker,跳过MCP服务导入
-            os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
-            
-            logger.info(f"创建进程池, max_workers={max_workers}...")
-            self._process_pool = ProcessPoolExecutor(
-                max_workers=max_workers,
-                initializer=_init_worker_process
-            )
-            self._pool_max_workers = max_workers
-            logger.info(f"进程池创建完成, max_workers={max_workers}")
-        
-        return self._process_pool
-    
-    def shutdown_pool(self):
-        """关闭进程池并释放子进程"""
-        if self._process_pool is not None:
-            logger.info("关闭进程池...")
-            pool = self._process_pool
-            self._process_pool = None
-            self._pool_max_workers = 0
-            
-            # 先尝试正常关闭
-            try:
-                pool.shutdown(wait=True, cancel_futures=True)
-            except TypeError:
-                try:
-                    pool.shutdown(wait=True)
-                except Exception:
-                    pass
-            
-            # 强制终止残留的worker进程
-            try:
-                if hasattr(pool, '_processes'):
-                    for pid, proc in list(pool._processes.items()):
-                        try:
-                            proc.kill()
-                            logger.info(f"终止残留worker进程 PID={pid}")
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            
-            logger.info("进程池已关闭")
-            
-            # 清理环境变量
-            os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
 
     def _should_process_file(self, file_path: Path) -> bool:
         """
@@ -1113,104 +957,34 @@ class DelphiHelpKnowledgeBase:
         except Exception:
             return None
 
-    def _save_chm_signatures(self, extract_results: Dict[str, bool], hash_mode: str = 'mtime_size'):
-        """保存CHM文件签名到metadata表,用于增量构建比较"""
-        if not self.delphi_help_dir:
-            return
-        db_file = self.kb_dir / "knowledge.sqlite"
-        if not db_file.exists():
-            return
-        try:
-            conn = sqlite3.connect(str(db_file))
-            cursor = conn.cursor()
-            cursor.execute("""CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )""")
-            for name, success in extract_results.items():
-                if not success:
-                    continue
-                chm_path = Path(self.delphi_help_dir) / f"{name}.chm"
-                if not chm_path.exists():
-                    continue
-                chm_stat = chm_path.stat()
-                if hash_mode == 'md5':
-                    sig = hashlib.md5(open(chm_path, 'rb').read()).hexdigest()
-                else:
-                    sig = f"{chm_stat.st_mtime}:{chm_stat.st_size}"
-                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
-                    (f"chm_signature_{name}", sig))
-            conn.commit()
-            conn.close()
-            logger.info(f"已保存 {len([v for v in extract_results.values() if v])} 个CHM签名 (mode={hash_mode})")
-        except Exception as e:
-            logger.warning(f"保存CHM签名失败: {e}")
-
-    def _check_chm_needs_extraction(self, name: str, chm_path: Path, hash_mode: str = 'mtime_size') -> bool:
+    def _check_chm_needs_extraction(self, name: str, chm_path: Path) -> bool:
         """
         检查CHM是否需要重新解压（增量构建核心）
         
         Args:
             name: 帮助文件名称
             chm_path: CHM文件路径
-            hash_mode: hash模式 'mtime_size' 或 'md5'
             
         Returns:
             是否需要解压
         """
         extracted_dir = self.kb_dir / "files" / name
         
+        # 检查解压目录是否存在
         if not extracted_dir.exists():
             return True
             
+        # 检查CHM文件是否存在
         if not chm_path.exists():
             return False
         
-        # 比较CHM文件签名(mtime+size 或 md5)
-        db_file = self.kb_dir / "knowledge.sqlite"
-        if db_file.exists():
-            try:
-                conn = sqlite3.connect(str(db_file))
-                cursor = conn.cursor()
-                cursor.execute("""CREATE TABLE IF NOT EXISTS metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )""")
-                cursor.execute("SELECT value FROM metadata WHERE key = ?", (f"chm_signature_{name}",))
-                row = cursor.fetchone()
-                conn.close()
-                
-                if row:
-                    stored_sig = row[0]
-                    chm_stat = chm_path.stat()
-                    if hash_mode == 'md5':
-                        current_sig = hashlib.md5(open(chm_path, 'rb').read()).hexdigest()
-                    else:
-                        current_sig = f"{chm_stat.st_mtime}:{chm_stat.st_size}"
-                    
-                    if stored_sig == current_sig:
-                        # CHM文件未变化，检查解压目录完整性
-                        chm_files = self._get_chm_file_list(str(chm_path))
-                        if chm_files:
-                            existing_files = set()
-                            for f in extracted_dir.rglob('*'):
-                                if f.is_file():
-                                    rel = f.relative_to(extracted_dir)
-                                    existing_files.add(str(rel).replace('\\', '/'))
-                            if not (chm_files - existing_files) and len(existing_files) >= len(chm_files):
-                                logger.info(f"CHM {name} 未变化且解压目录完整，跳过解压")
-                                return False
-                        else:
-                            logger.info(f"CHM {name} 未变化，跳过解压")
-                            return False
-            except Exception as e:
-                logger.warning(f"CHM签名比较失败: {e}")
-        
-        # 无签名或签名不匹配，检查解压目录完整性
+        # 获取CHM文件列表
         chm_files = self._get_chm_file_list(str(chm_path))
         if not chm_files:
+            # 无法获取CHM列表，假设需要解压
             return True
         
+        # 检查解压目录中的文件
         try:
             existing_files = set()
             for f in extracted_dir.rglob('*'):
@@ -1218,23 +992,27 @@ class DelphiHelpKnowledgeBase:
                     rel = f.relative_to(extracted_dir)
                     existing_files.add(str(rel).replace('\\', '/'))
             
+            # 检查是否有文件被删除
             missing_files = chm_files - existing_files
             if missing_files:
+                # 有文件缺失，需要重新解压
                 if len(missing_files) <= 10:
                     print(f"    发现 {len(missing_files)} 个缺失文件: {list(missing_files)[:5]}...")
                 else:
                     print(f"    发现 {len(missing_files)} 个缺失文件...")
                 return True
             
+            # 检查是否有新增文件（解压目录文件少于CHM文件）
             if len(existing_files) < len(chm_files):
                 print(f"    文件数量不足: {len(existing_files)} < {len(chm_files)}")
                 return True
             
+            # 文件完整，不需要解压
             return False
             
         except Exception as e:
             print(f"    检查解压目录失败: {e}")
-            return True
+            return True  # 出错时假设需要解压
 
     def extract_chm(self, chm_path: str, output_dir: str, progress_callback: Optional[Callable] = None) -> bool:
         """
@@ -1282,8 +1060,7 @@ class DelphiHelpKnowledgeBase:
 
     def extract_all_chm(self, help_names: Optional[List[str]] = None,
                        progress_callback: Optional[Callable] = None,
-                       max_workers: Optional[int] = None,
-                       hash_mode: str = 'mtime_size') -> Dict[str, bool]:
+                       max_workers: Optional[int] = None) -> Dict[str, bool]:
         """
         解压所有 CHM 文件 (并行优化版本)
 
@@ -1291,7 +1068,6 @@ class DelphiHelpKnowledgeBase:
             help_names: 要解压的帮助文件列表，None表示全部
             progress_callback: 进度回调函数(current, total, name, status)
             max_workers: 最大并行解压数,None表示自动计算
-            hash_mode: hash模式 'mtime_size' 或 'md5'
 
         Returns:
             每个帮助文件的解压结果
@@ -1314,7 +1090,7 @@ class DelphiHelpKnowledgeBase:
                 chm_path = Path(self.delphi_help_dir) / f"{name}.chm"
                 if chm_path.exists():
                     # 增量构建: 检查是否需要重新解压
-                    if not self._check_chm_needs_extraction(name, chm_path, hash_mode=hash_mode):
+                    if not self._check_chm_needs_extraction(name, chm_path):
                         print(f"跳过 {desc} (无需解压)")
                         results[name] = True
                         continue
@@ -1423,8 +1199,7 @@ class DelphiHelpKnowledgeBase:
     def scan_html_files(self, directory: str, max_files: Optional[int] = None,
                        progress_callback: Optional[Callable] = None,
                        save_markdown: bool = False,
-                       max_workers: Optional[int] = None,
-                       skip_paths: Optional[set] = None) -> List[Dict]:
+                       max_workers: Optional[int] = None) -> List[Dict]:
         """
         Scan HTML files in directory (parallel processing)
 
@@ -1434,7 +1209,6 @@ class DelphiHelpKnowledgeBase:
             progress_callback: Progress callback function
             save_markdown: Whether to save as Markdown
             max_workers: Number of parallel workers (default: cpu_count//2)
-            skip_paths: Set of full_path strings to skip (incremental mode)
 
         Returns:
             Document list
@@ -1443,13 +1217,6 @@ class DelphiHelpKnowledgeBase:
 
         # Filter unnecessary files
         html_files = [f for f in html_files if self._should_process_file(f)]
-
-        # 增量模式：跳过未变化的文件
-        if skip_paths:
-            before = len(html_files)
-            html_files = [f for f in html_files if str(f) not in skip_paths]
-            skipped = before - len(html_files)
-            logger.info(f"增量模式: 跳过 {skipped} 个未变化文件, 需处理 {len(html_files)} 个文件")
 
         if max_files:
             html_files = html_files[:max_files]
@@ -1473,63 +1240,34 @@ class DelphiHelpKnowledgeBase:
             markdown_dir.mkdir(parents=True, exist_ok=True)
             logger.info("Markdown conversion enabled")
 
-        # 按文件大小排序，然后分chunk，保证每个chunk的总大小相近
-        # 算法：
-        #   1. 按文件大小降序排列
-        #   2. 计算chunkSize = max(1, total_files // (max_workers * 4))
-        #      即chunk数量 = max_workers * 4，保证每个worker有多个chunk可取
-        #   3. 用贪心法将文件分配到各chunk，每次把文件放入当前总大小最小的chunk
-        #   4. ProcessPoolExecutor.map 自动将chunk分配给空闲worker（工作窃取）
-        html_files_with_size = [(f, f.stat().st_size) for f in html_files]
-        html_files_with_size.sort(key=lambda x: x[1], reverse=True)  # 按大小降序
-        
-        # 计算chunk数量：每个worker分配4个chunk，保证负载均衡
-        num_chunks = max(max_workers, min(total, max_workers * 4))
-        chunk_size = max(1, total // num_chunks)  # 每个chunk的文件数（近似值）
-        
-        # 贪心法分配文件到各chunk，保证各chunk总大小相近
-        chunks = [[] for _ in range(num_chunks)]
-        chunk_sizes = [0] * num_chunks
-        for f, size in html_files_with_size:
-            min_idx = chunk_sizes.index(min(chunk_sizes))
-            chunks[min_idx].append(f)
-            chunk_sizes[min_idx] += size
-        
-        # 过滤空chunk
-        chunks = [c for c in chunks if c]
-        
         # 准备参数
         directory_path = Path(directory)
         markdown_dir_str = str(markdown_dir) if markdown_dir else None
         
-        # 构建每个chunk的参数列表
-        args_list = []
-        for chunk_files in chunks:
-            args_list.append((
-                [(str(f), str(directory_path), save_markdown, markdown_dir_str) for f in chunk_files],
-            ))
+        # 准备所有文件参数
+        args_list = [
+            (str(html_file), str(directory_path), save_markdown, markdown_dir_str)
+            for html_file in html_files
+        ]
         
-        logger.info(f"文件分 {len(args_list)} 个chunk, chunkSize≈{chunk_size}, "
-                    f"每chunk文件数: {[len(c) for c in chunks]}")
+        # 动态计算chunksize
+        chunk_size = max(50, total // (max_workers * 4))
         
-        # 并行处理 - 使用ProcessPoolExecutor多进程并行
-        # Windows spawn模式下子进程启动较慢(需重新导入模块),但处理速度远快于多线程
+        # 并行处理
         documents = []
         processed = 0
         
-        # 获取或创建进程池
-        pool = self._get_or_create_pool(max_workers)
-        
-        results = pool.map(_process_html_file_batch_worker, args_list)
-        
-        for result in results:
-            if result:
-                documents.extend(result)
-            processed += 1
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(_process_html_file_worker, args_list, chunksize=chunk_size)
             
-            # Update progress periodically
-            if progress_callback:
-                    progress_callback(len(documents), total, f"Processed {len(documents)}/{total}")
+            for result in results:
+                if result:
+                    documents.append(result)
+                processed += 1
+                
+                # Update progress periodically
+                if progress_callback and processed % 50 == 0:
+                    progress_callback(processed, total, f"Processed {processed}/{total}")
 
         if progress_callback:
             progress_callback(total, total, "Done")
@@ -1542,8 +1280,7 @@ class DelphiHelpKnowledgeBase:
     def scan_extracted_directory(self, help_name: str, max_files: Optional[int] = None,
                                  progress_callback: Optional[Callable] = None,
                                  source_dir: Optional[str] = None,
-                                 save_markdown: bool = False,
-                                 skip_paths: Optional[set] = None) -> List[Dict]:
+                                 save_markdown: bool = False) -> List[Dict]:
         """
         扫描已解压的目录
 
@@ -1553,7 +1290,6 @@ class DelphiHelpKnowledgeBase:
             progress_callback: 进度回调函数
             source_dir: 源目录路径，默认使用 self.kb_dir / "files"
             save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
-            skip_paths: Set of full_path strings to skip (incremental mode)
 
         Returns:
             文档列表
@@ -1563,16 +1299,12 @@ class DelphiHelpKnowledgeBase:
         else:
             source_path = Path(source_dir) / help_name
 
-        logger.info(f"扫描目录: {source_path}, 存在={source_path.exists()}")
-        
         if not source_path.exists():
             logger.error(f"目录不存在: {source_path}")
             return []
 
-        logger.info(f"开始扫描HTML文件...")
-        documents = self.scan_html_files(str(source_path), max_files, progress_callback, save_markdown, skip_paths=skip_paths)
-        
-        logger.info(f"HTML扫描完成，提取 {len(documents)} 个文档")
+        logger.info(f"扫描目录: {source_path}")
+        documents = self.scan_html_files(str(source_path), max_files, progress_callback, save_markdown)
 
         # 添加来源信息
         for doc in documents:
@@ -1584,15 +1316,13 @@ class DelphiHelpKnowledgeBase:
     # ==================== 步骤3: 构建向量索引 ====================
 
     def build_vector_index(self, documents: List[Dict],
-                          progress_callback: Optional[Callable] = None,
-                          incremental: bool = False) -> bool:
+                          progress_callback: Optional[Callable] = None) -> bool:
         """
         构建向量索引 - 纯SQLite存储 (统一Schema)
 
         Args:
             documents: 文档列表
             progress_callback: 进度回调函数(percent, message)
-            incremental: 是否增量构建(跳过未变化的文件)
 
         Returns:
             是否成功
@@ -1601,11 +1331,7 @@ class DelphiHelpKnowledgeBase:
             if progress_callback:
                 progress_callback(0, "准备构建索引...")
 
-            logger.info(f"开始构建向量索引，文档数量: {len(documents)}, 增量模式: {incremental}")
-            
             db_file = self.kb_dir / "knowledge.sqlite"
-            logger.info(f"数据库文件路径: {db_file}")
-            
             conn = sqlite3.connect(str(db_file))
             cursor = conn.cursor()
 
@@ -1647,22 +1373,6 @@ class DelphiHelpKnowledgeBase:
                 )
             """)
 
-            # 增量模式：加载已有文件的 (full_path, hash) 映射，跳过未变化的文件
-            existing_files = {}
-            if incremental:
-                cursor.execute("SELECT id, full_path, hash FROM files")
-                for row in cursor.fetchall():
-                    existing_files[row[1]] = (row[0], row[2])
-                logger.info(f"增量模式: 数据库中已有 {len(existing_files)} 个文件记录")
-            else:
-                cursor.execute("DELETE FROM vocabularies")
-                cursor.execute("DELETE FROM files")
-                conn.commit()
-                logger.info("全量模式: 已清空旧数据")
-
-            skipped = 0
-            updated = 0
-
             if progress_callback:
                 progress_callback(10, "写入文件数据...")
 
@@ -1673,25 +1383,7 @@ class DelphiHelpKnowledgeBase:
                 if progress_callback and i % 1000 == 0:
                     progress_callback(int(10 + i / len(documents) * 40), f"处理文档 {i}/{len(documents)}")
 
-                # 增量模式：跳过未变化的文件
-                doc_full_path = doc.get('full_path', '')
-                doc_hash = doc.get('hash', '')
-                if incremental and doc_full_path in existing_files:
-                    existing_id, existing_hash = existing_files[doc_full_path]
-                    if existing_hash == doc_hash:
-                        skipped += 1
-                        continue
-                    else:
-                        # 文件已修改：删除旧记录后重新插入
-                        cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (existing_id,))
-                        cursor.execute("DELETE FROM files WHERE id = ?", (existing_id,))
-                        updated += 1
-
                 content = doc.get('content', '')
-                # 确保content是字符串
-                if not isinstance(content, str):
-                    content = str(content) if content else ''
-                    
                 uses_list = doc.get('uses', [])
                 if isinstance(uses_list, list):
                     uses_str = ','.join(uses_list)
@@ -1795,9 +1487,6 @@ class DelphiHelpKnowledgeBase:
 
             conn.commit()
 
-            if incremental:
-                logger.info(f"增量构建完成: 跳过 {skipped} 个未变化文件, 更新 {updated} 个已修改文件, 处理 {len(documents) - skipped - updated} 个新文件")
-
             if progress_callback:
                 progress_callback(100, "完成")
 
@@ -1807,11 +1496,14 @@ class DelphiHelpKnowledgeBase:
         except Exception as e:
             logger.error(f"构建向量索引失败: {e}")
             return False
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
+
+        except Exception as e:
+            logger.error(f"构建向量索引失败: {e}")
+            return False
+
+        except Exception as e:
+            logger.error(f"构建向量索引失败: {e}")
+            return False
 
     # ==================== 完整构建流程 ====================
 
@@ -1855,9 +1547,6 @@ class DelphiHelpKnowledgeBase:
         if not any(extract_results.values()):
             logger.error("没有成功解压任何 CHM 文件")
             return False
-
-        # 保存CHM签名到metadata(用于增量构建比较)
-        self._save_chm_signatures(extract_results)
 
         # 步骤2: 扫描 HTML 并转换为 Markdown
         check_cancelled()
@@ -1916,18 +1605,13 @@ class DelphiHelpKnowledgeBase:
                 if progress_callback:
                     progress_callback('cleanup', 1, 1, "清理失败（已跳过）")
 
-        # 构建完成，关闭进程池
-        self.shutdown_pool()
-
         return success
 
     def build_knowledge_base_incremental(self, help_names: Optional[List[str]] = None,
                                         max_files_per_help: Optional[int] = None,
                                         progress_callback: Optional[Callable] = None,
                                         source_dir: Optional[str] = None,
-                                        save_markdown: bool = False,
-                                        is_cancelled_check: Optional[Callable[[], bool]] = None,
-                                        hash_mode: str = 'mtime_size') -> bool:
+                                        save_markdown: bool = False) -> bool:
         """
         增量构建帮助文档知识库（跳过解压，直接扫描已解压的 HTML）
 
@@ -1937,8 +1621,6 @@ class DelphiHelpKnowledgeBase:
             progress_callback: 进度回调函数
             source_dir: 源目录路径，默认使用 self.kb_dir / "files"
             save_markdown: 是否保存为 Markdown 文件（默认False，提升性能）
-            is_cancelled_check: 取消检查函数
-            hash_mode: hash模式 'mtime_size' 或 'md5'
 
         Returns:
             是否成功
@@ -1948,86 +1630,13 @@ class DelphiHelpKnowledgeBase:
         else:
             extracted_dir = Path(source_dir)
 
-        logger.info(f"增量构建: 源目录={extracted_dir}, 存在={extracted_dir.exists()}")
-        
         if not extracted_dir.exists():
             logger.error(f"已解压目录不存在: {extracted_dir}")
             return False
 
-        # 从数据库加载已有文件的 (full_path, hash)，用于在扫描阶段跳过未变化的文件
-        existing_file_hashes = {}
-        db_file = self.kb_dir / "knowledge.sqlite"
-        if db_file.exists():
-            try:
-                conn = sqlite3.connect(str(db_file))
-                cursor = conn.cursor()
-                cursor.execute("SELECT full_path, hash FROM files")
-                for row in cursor.fetchall():
-                    existing_file_hashes[row[0]] = row[1]
-                conn.close()
-                logger.info(f"增量构建: 数据库中已有 {len(existing_file_hashes)} 个文件记录")
-            except Exception as e:
-                logger.warning(f"读取已有文件记录失败: {e}, 将全量扫描")
-
-        # 构建 skip_paths: 先按CHM粒度跳过(如果CHM未变化，跳过整个目录)，再按HTML粒度跳过
-        skip_paths = set()
-        chm_unchanged = set()
-        if db_file.exists():
-            try:
-                conn = sqlite3.connect(str(db_file))
-                cursor = conn.cursor()
-                cursor.execute("""CREATE TABLE IF NOT EXISTS metadata (
-                    key TEXT PRIMARY KEY,
-                    value TEXT
-                )""")
-                # 检查每个CHM是否未变化
-                for help_name_iter in (help_names or list(self.HELP_FILES.keys())):
-                    chm_path = Path(self.delphi_help_dir) / f"{help_name_iter}.chm" if self.delphi_help_dir else None
-                    if chm_path and chm_path.exists():
-                        cursor.execute("SELECT value FROM metadata WHERE key = ?", (f"chm_signature_{help_name_iter}",))
-                        row = cursor.fetchone()
-                        if row:
-                            chm_stat = chm_path.stat()
-                            if hash_mode == 'md5':
-                                current_sig = hashlib.md5(open(chm_path, 'rb').read()).hexdigest()
-                            else:
-                                current_sig = f"{chm_stat.st_mtime}:{chm_stat.st_size}"
-                            if row[0] == current_sig:
-                                chm_unchanged.add(help_name_iter)
-                conn.close()
-                
-                # CHM未变化的: 跳过该目录下所有已在DB中的HTML
-                for help_name_iter in chm_unchanged:
-                    help_dir = extracted_dir / help_name_iter
-                    if not help_dir.exists():
-                        continue
-                    for f in help_dir.rglob("*"):
-                        if f.is_file() and f.suffix.lower() in ('.html', '.htm', '.xhtml'):
-                            fp = str(f)
-                            if existing_file_hashes and fp in existing_file_hashes:
-                                skip_paths.add(fp)
-                
-                # CHM有变化的: 不跳过任何HTML(需重新扫描)
-                logger.info(f"增量构建: {len(chm_unchanged)} 个CHM未变化, {len((help_names or list(self.HELP_FILES.keys()))) - len(chm_unchanged)} 个CHM有变化")
-                logger.info(f"增量构建: 将跳过 {len(skip_paths)} 个未变化HTML文件的扫描")
-            except Exception as e:
-                logger.warning(f"CHM签名检查失败: {e}, 将按HTML粒度跳过")
-                # 回退: 按HTML粒度跳过(DB中有记录的)
-                for help_name_iter in (help_names or list(self.HELP_FILES.keys())):
-                    help_dir = extracted_dir / help_name_iter
-                    if not help_dir.exists():
-                        continue
-                    for f in help_dir.rglob("*"):
-                        if f.is_file() and f.suffix.lower() in ('.html', '.htm', '.xhtml'):
-                            fp = str(f)
-                            if existing_file_hashes and fp in existing_file_hashes:
-                                skip_paths.add(fp)
-
         # 确定要处理的文件
         if help_names is None:
             help_names = list(self.HELP_FILES.keys())
-            
-        logger.info(f"要处理的帮助文件: {help_names}")
 
         # 扫描 HTML
         if progress_callback:
@@ -2043,19 +1652,10 @@ class DelphiHelpKnowledgeBase:
             if progress_callback:
                 progress_callback('scan', i, len(help_names), f"扫描 {self.HELP_FILES.get(help_name, help_name)}...")
 
-            documents = self.scan_extracted_directory(help_name, max_files_per_help, source_dir=str(extracted_dir), save_markdown=save_markdown, skip_paths=skip_paths)
-            logger.info(f"扫描 {help_name} 完成，提取 {len(documents)} 个文档")
+            documents = self.scan_extracted_directory(help_name, max_files_per_help, source_dir=str(extracted_dir), save_markdown=save_markdown)
             all_documents.extend(documents)
 
-        logger.info(f"总共提取 {len(all_documents)} 个文档")
-        
         if not all_documents:
-            if skip_paths:
-                logger.info("增量构建: 所有文件均未变化，无需更新")
-                if progress_callback:
-                    progress_callback('index', 100, 100, "所有文件均未变化，构建完成")
-                self.shutdown_pool()
-                return True
             logger.error("未提取到任何文档")
             return False
 
@@ -2067,16 +1667,7 @@ class DelphiHelpKnowledgeBase:
             progress_callback('index', 0, 100, "开始构建向量索引...")
 
         success = self.build_vector_index(all_documents,
-            lambda percent, msg: progress_callback('index', percent, 100, msg) if progress_callback else None,
-            incremental=True)
-
-        # 构建完成，关闭进程池
-        self.shutdown_pool()
-
-        # 保存CHM签名(增量构建也需更新)
-        if success:
-            all_helps = {name: True for name in help_names}
-            self._save_chm_signatures(all_helps, hash_mode=hash_mode)
+            lambda percent, msg: progress_callback('index', percent, 100, msg) if progress_callback else None)
 
         return success
 

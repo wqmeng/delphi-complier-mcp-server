@@ -483,6 +483,19 @@ class ThirdPartyKnowledgeBase:
             logger.info("知识库已存在,使用 force_rebuild=true 强制重建")
             return True
 
+        # force_rebuild时删除旧数据库
+        if force_rebuild:
+            if self.kb_instance is not None:
+                self.kb_instance.close()
+                self.kb_instance = None
+            db_file = self.kb_dir / "knowledge.sqlite"
+            if db_file.exists():
+                try:
+                    db_file.unlink()
+                    logger.info("已删除旧知识库数据库")
+                except PermissionError:
+                    logger.warning("无法删除旧数据库(文件被占用),将清空旧数据后重建")
+
         # 合并所有路径进行扫描
         all_source_files = []
         all_help_docs = []
@@ -553,6 +566,18 @@ class ThirdPartyKnowledgeBase:
         
         current_time = datetime.now().timestamp()
         
+        # force_rebuild时清空旧数据
+        if force_rebuild:
+            try:
+                cursor.execute("DELETE FROM files")
+                cursor.execute("DELETE FROM vocabularies")
+                cursor.execute("DELETE FROM vocabulary")
+                cursor.execute("DELETE FROM metadata")
+                conn.commit()
+                logger.info("已清空旧知识库数据")
+            except Exception:
+                pass
+        
         # 确保表存在
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS files (
@@ -597,11 +622,6 @@ class ThirdPartyKnowledgeBase:
                 updated_at REAL
             )
         """)
-        
-        # 全量构建: 清空旧数据
-        cursor.execute("DELETE FROM vocabularies")
-        cursor.execute("DELETE FROM files")
-        conn.commit()
         
         # 插入源文件
         logger.info("保存源文件到数据库...")
@@ -782,15 +802,14 @@ class ThirdPartyKnowledgeBase:
         cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
             ('build_time', datetime.now().isoformat(), current_time))
         
-            conn.commit()
-            
+        conn.commit()
+        conn.close()
+        
         logger.info(f"知识库构建完成!")
         logger.info(f"  源文件: {source_count}")
         logger.info(f"  帮助文档: {help_count}")
         logger.info(f"  类: {class_count}")
         logger.info(f"  函数: {func_count}")
-        
-        conn.close()
 
         # 更新元数据
         self.metadata["total_paths"] = len(thirdparty_paths)
@@ -971,13 +990,15 @@ class ThirdPartyKnowledgeBase:
         """根据类名搜索"""
         if not self.load_knowledge_base():
             return []
-        return self.kb_instance.search_by_class_name(class_name)
+        results = self.kb_instance.search_by_name(class_name)
+        return [r for r in results if r.get('kind_code', '') == 'TC']
 
     def search_by_function_name(self, function_name: str) -> List[Dict]:
         """根据函数名搜索"""
         if not self.load_knowledge_base():
             return []
-        return self.kb_instance.search_by_function_name(function_name)
+        results = self.kb_instance.search_by_name(function_name)
+        return [r for r in results if r.get('kind_code', '') in ('FF', 'FP')]
 
     def semantic_search_classes(self, query: str, top_k: int = 10) -> List:
         """语义搜索类"""

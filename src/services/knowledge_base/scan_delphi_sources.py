@@ -77,38 +77,22 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
 
 
 # Kind 常量（两字母代码）
-# ============== 类型定义 ==============
 KIND_CLASS = 'TC'      # class
 KIND_RECORD = 'TR'     # record
 KIND_INTERFACE = 'TI'  # interface
 KIND_ENUM = 'TE'       # enum
 KIND_SET = 'TS'        # set of
 KIND_TYPE_ALIAS = 'TY' # type alias
-
-# ============== 成员 ==============
-KIND_FIELD = 'MF'       # field (class/record field)
-KIND_PROPERTY = 'MP'  # property
-KIND_METHOD = 'MM'    # method (class/record method)
-KIND_EVENT = 'ME'     # event (TNotifyEvent etc)
-
-# ============== 过程/函数 ==============
+KIND_FIELD = 'MF'      # field
+KIND_PROPERTY = 'MP'   # property
+KIND_METHOD = 'MM'     # method
+KIND_EVENT = 'ME'      # event
 KIND_FUNC = 'FF'       # function
-KIND_PROC = 'FP'      # procedure
-KIND_PROC_TYPE = 'PT' # procedure type (TProc = procedure of object)
-
-# ============== 其他 ==============
+KIND_PROC = 'FP'       # procedure
 KIND_CONST = 'CC'      # const
-KIND_RESOURCE = 'CR'  # resourcestring
+KIND_RESOURCE = 'CR'   # resourcestring
 KIND_UNIT = 'UI'       # unit in uses
 KIND_HELPER = 'TH'     # class helper for / record helper for
-
-# ============== 扩展类型 (smart_cache 兼容) ==============
-KIND_ATTRIBUTE = 'AT'     # attribute
-KIND_GENERIC = 'GT'       # generic type
-KIND_VAR = 'VR'           # var parameter
-
-# ============== 向量化索引专用 ==============
-KIND_UNIT_REF = 'UR'     # unit reference (in uses clause)
 
 
 def _extract_all_entities(content: str) -> List[Dict]:
@@ -768,9 +752,6 @@ class DelphiSourceScanner:
             # Calculate optimal chunk size for IPC efficiency
             chunk_size = max(50, len(changed_files) // (max_workers * 4))
             
-            # 设置环境变量,让子进程(server.py)检测到自己是worker,跳过MCP服务导入
-            os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
-            
             # Use ProcessPoolExecutor with larger chunksize to reduce IPC overhead
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 results = executor.map(_analyze_file_worker, changed_files, chunksize=chunk_size)
@@ -783,9 +764,6 @@ class DelphiSourceScanner:
                         
                         if tracker and file_count % 100 == 0:
                             tracker.update(file_count, f"Scanning: {file_count}/{len(changed_files)}")
-            
-            # 清理环境变量
-            os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
         
         if tracker:
             tracker.update(len(changed_files), f"Scanning completed: {file_count} files")
