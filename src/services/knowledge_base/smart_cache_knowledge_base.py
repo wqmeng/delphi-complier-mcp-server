@@ -144,14 +144,6 @@ class SmartCacheKnowledgeBase:
     # 反向映射
     TYPE_REVERSE_MAP = {v: k for k, v in TYPE_MAP.items()}
     
-    # 单字母到双字母的映射 (兼容旧数据)
-    SINGLE_TO_DOUBLE = {
-        'c': 'TC', 'r': 'TR', 'i': 'TI', 'e': 'TE', 's': 'TS', 'y': 'TY',
-        'f': 'FF', 'p': 'FP', 'pt': 'PT',
-        'g': 'MM', 'm': 'MF', 'v': 'MP', 'z': 'ME',
-        'k': 'CC', 'u': 'UI', 'a': 'AT', 't': 'GT'
-    }
-    
     def __init__(self, kb_dir: str, config: Dict = None, progress_callback: callable = None):
         self.kb_dir = Path(kb_dir)
         self.config = config or self._load_config()
