@@ -38,7 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 删除 18 个废弃函数：build_knowledge_base, search_class, search_function, semantic_search, get_knowledge_base_stats, list_delphi_versions, detect_compilers, search_delphi_compilers, set_compiler_config, get_compiler_list, remove_compiler_config, get_compile_history, search_by_keywords, search_members, 2 个 main() CLI 入口等
 - 删除 SINGLE_TO_DOUBLE 旧数据兼容映射
 - 清理 __init__.py 中 21 个废弃导出
-- 从 git 追踪中移除 logs/delphi_mcp.log、config/compilers.json、config/history.json
+- 从 git 追踪中移除 logs/、data/、config/compilers.json、config/history.json
 
 ## [2026.04.25] - 2026-04-25
 
