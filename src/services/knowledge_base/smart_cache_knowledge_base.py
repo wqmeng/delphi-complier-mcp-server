@@ -221,6 +221,18 @@ class SmartCacheKnowledgeBase:
     
     def _create_tables(self, cursor):
         """创建数据库表"""
+        # 检测旧schema并删除旧表(force_rebuild时由调用方处理)
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='files'")
+        if cursor.fetchone():
+            cursor.execute("PRAGMA table_info(files)")
+            files_columns = [row[1] for row in cursor.fetchall()]
+            if 'relative_path' not in files_columns:
+                cursor.execute("DROP TABLE IF EXISTS build_queue")
+                cursor.execute("DROP TABLE IF EXISTS vocabularies")
+                cursor.execute("DROP TABLE IF EXISTS vocabulary")
+                cursor.execute("DROP TABLE IF EXISTS metadata")
+                cursor.execute("DROP TABLE IF EXISTS files")
+        
         # files表
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS files (

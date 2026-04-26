@@ -7,7 +7,6 @@
 import sys
 import os
 
-# 切换到 MCP 服务器目录
 mcp_server_dir = os.path.join(os.path.dirname(__file__), '..', 'src')
 os.chdir(mcp_server_dir)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -74,19 +73,20 @@ def test_search_class(kb):
     print("=" * 70)
     print()
     
-    # 测试搜索常见的第三方库类
     test_classes = ['TUniButton', 'TfrxReport', 'TChart', 'THTMLLabel']
     
     for class_name in test_classes:
         print(f"搜索类 '{class_name}':")
-        results = kb.search_by_class_name(class_name)
+        results = kb.search_by_name(class_name)
+        results = [r for r in results if r.get('kind_code', '') == 'TC']
         
         if results:
             print(f"  ✓ 找到 {len(results)} 个结果")
-            for i, result in enumerate(results[:3], 1):  # 只显示前3个
-                print(f"    {i}. {result['class']['name']}")
-                print(f"       文件: {result['file']['path']}")
-                print(f"       基类: {result['class']['base_class']}")
+            for i, result in enumerate(results[:3], 1):
+                file_info = result.get('file', {})
+                print(f"    {i}. {result.get('name', '')}")
+                print(f"       文件: {file_info.get('path', 'N/A')}")
+                print(f"       基类: {result.get('parent', '')}")
         else:
             print(f"  - 未找到")
         print()
@@ -98,19 +98,20 @@ def test_search_function(kb):
     print("=" * 70)
     print()
     
-    # 测试搜索常见的函数
     test_functions = ['Create', 'Destroy', 'LoadFromFile', 'SaveToFile']
     
     for func_name in test_functions:
         print(f"搜索函数 '{func_name}':")
-        results = kb.search_by_function_name(func_name)
+        results = kb.search_by_name(func_name)
+        results = [r for r in results if r.get('kind_code', '') in ('FF', 'FP')]
         
         if results:
             print(f"  ✓ 找到 {len(results)} 个结果")
-            for i, result in enumerate(results[:3], 1):  # 只显示前3个
-                print(f"    {i}. {result['function']['name']}")
-                print(f"       文件: {result['file']['path']}")
-                print(f"       类型: {result['function']['type']}")
+            for i, result in enumerate(results[:3], 1):
+                file_info = result.get('file', {})
+                print(f"    {i}. {result.get('name', '')}")
+                print(f"       文件: {file_info.get('path', 'N/A')}")
+                print(f"       类型: {result.get('kind', '')}")
         else:
             print(f"  - 未找到")
         print()
@@ -122,7 +123,6 @@ def test_semantic_search(kb):
     print("=" * 70)
     print()
     
-    # 测试语义搜索
     test_queries = [
         'database connection',
         'chart component',
@@ -133,14 +133,12 @@ def test_semantic_search(kb):
     for query in test_queries:
         print(f"语义搜索 '{query}':")
         
-        # 搜索类
         class_results = kb.semantic_search_classes(query, top_k=5)
         if class_results:
             print(f"  相关类 (Top {len(class_results)}):")
             for class_name, score in class_results[:3]:
                 print(f"    - {class_name} (相似度: {score:.3f})")
         
-        # 搜索函数
         func_results = kb.semantic_search_functions(query, top_k=5)
         if func_results:
             print(f"  相关函数 (Top {len(func_results)}):")
@@ -164,10 +162,8 @@ def test_get_paths(kb):
     print(f"总共找到 {len(paths)} 个第三方库路径:")
     print()
     
-    # 按库分组显示
     libs = {}
     for path in paths:
-        # 提取库名（从路径中）
         parts = path.split('\\')
         if 'Libs' in parts:
             idx = parts.index('Libs')
@@ -179,47 +175,9 @@ def test_get_paths(kb):
     
     for lib_name, lib_paths in sorted(libs.items()):
         print(f"  {lib_name}: {len(lib_paths)} 个路径")
-        for path in lib_paths[:2]:  # 只显示前2个
+        for path in lib_paths[:2]:
             print(f"    - {path}")
         if len(lib_paths) > 2:
             print(f"    ... 等共 {len(lib_paths)} 个路径")
     
     print()
-
-def main():
-    """主测试函数"""
-    print("\n" + "=" * 70)
-    print("全局第三方库知识库完整功能测试")
-    print("=" * 70)
-    print()
-    
-    # 测试1: 构建知识库
-    kb = test_build_knowledge_base()
-    if not kb:
-        print("构建知识库失败，停止后续测试")
-        return
-    
-    # 测试2: 获取统计
-    test_get_stats(kb)
-    
-    # 测试3: 搜索类
-    test_search_class(kb)
-    
-    # 测试4: 搜索函数
-    test_search_function(kb)
-    
-    # 测试5: 语义搜索
-    test_semantic_search(kb)
-    
-    # 测试6: 获取路径
-    test_get_paths(kb)
-    
-    # 关闭知识库
-    kb.close()
-    
-    print("=" * 70)
-    print("所有测试完成!")
-    print("=" * 70)
-
-if __name__ == "__main__":
-    main()
