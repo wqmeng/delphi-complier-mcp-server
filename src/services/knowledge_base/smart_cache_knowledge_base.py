@@ -975,7 +975,7 @@ class SmartCacheKnowledgeBase:
                 
                 unit_name = file_path.stem
                 items_data.append((
-                    'u',
+                    'UI',
                     unit_name,
                     unit_name.lower(),
                     file_id,
