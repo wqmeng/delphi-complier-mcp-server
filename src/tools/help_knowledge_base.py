@@ -34,6 +34,9 @@ def get_help_knowledge_base() -> DelphiHelpKnowledgeBase:
 def _build_kb_task(help_names: Optional[List[str]] = None,
                    max_files_per_help: Optional[int] = None,
                    save_markdown: bool = False,
+                   incremental: bool = False,
+                   source_dir: Optional[str] = None,
+                   hash_mode: str = 'mtime_size',
                    _progress_callback: Optional[Callable] = None,
                    _task_id: Optional[str] = None) -> bool:
     """
@@ -99,13 +102,24 @@ def _build_kb_task(help_names: Optional[List[str]] = None,
         )
 
     try:
-        return help_kb.build_knowledge_base(
-            help_names=help_names,
-            max_files_per_help=max_files_per_help,
-            save_markdown=save_markdown,
-            progress_callback=internal_progress_callback if _progress_callback else None,
-            is_cancelled_check=is_cancelled
-        )
+        if incremental:
+            return help_kb.build_knowledge_base_incremental(
+                help_names=help_names,
+                max_files_per_help=max_files_per_help,
+                source_dir=source_dir,
+                save_markdown=save_markdown,
+                progress_callback=internal_progress_callback if _progress_callback else None,
+                is_cancelled_check=is_cancelled,
+                hash_mode=hash_mode
+            )
+        else:
+            return help_kb.build_knowledge_base(
+                help_names=help_names,
+                max_files_per_help=max_files_per_help,
+                save_markdown=save_markdown,
+                progress_callback=internal_progress_callback if _progress_callback else None,
+                is_cancelled_check=is_cancelled
+            )
     except KeyboardInterrupt:
         logger.info(f"任务 {_task_id} 已被取消")
         return False
@@ -134,7 +148,12 @@ async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
     max_files_per_help = arguments.get("max_files_per_help")
     incremental = arguments.get("incremental", False)
     source_dir = arguments.get("source_dir")
-    save_markdown = arguments.get("save_markdown", False)  # 默认不转换Markdown，提升性能
+    save_markdown = arguments.get("save_markdown", False)
+    hash_mode = arguments.get("hash_mode", "mtime_size")
+    
+    # 确保参数类型正确
+    if max_files_per_help is not None:
+        max_files_per_help = int(max_files_per_help)
 
     try:
         help_kb = get_help_knowledge_base()
@@ -184,6 +203,12 @@ async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
                 task_kwargs["max_files_per_help"] = max_files_per_help
             if save_markdown:
                 task_kwargs["save_markdown"] = save_markdown
+            if incremental:
+                task_kwargs["incremental"] = incremental
+            if source_dir:
+                task_kwargs["source_dir"] = source_dir
+            if hash_mode:
+                task_kwargs["hash_mode"] = hash_mode
 
             task_id = task_manager.submit_task(
                 "build_help_kb",
@@ -218,7 +243,8 @@ async def build_help_knowledge_base(arguments: Any) -> CallToolResult:
                     help_names=help_names,
                     max_files_per_help=max_files_per_help,
                     source_dir=source_dir,
-                    save_markdown=save_markdown
+                    save_markdown=save_markdown,
+                    hash_mode=hash_mode
                 )
             else:
                 success = help_kb.build_knowledge_base(

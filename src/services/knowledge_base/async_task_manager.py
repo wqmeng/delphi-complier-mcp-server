@@ -16,9 +16,10 @@ from typing import Dict, Optional, Callable, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from ...utils.logger import get_logger
+from ...utils.logger import get_logger, get_default_logger
 
-logger = get_logger(__name__)
+# 使用默认logger确保日志输出
+logger = get_default_logger()
 
 
 class TaskStatus(Enum):
@@ -162,7 +163,9 @@ class AsyncTaskManager:
                     task_info.message = "任务已取消"
 
             except Exception as e:
-                logger.error(f"任务 {task_id} ({name}) 失败: {e}", exc_info=True)
+                import traceback
+                error_trace = traceback.format_exc()
+                logger.error(f"任务 {task_id} ({name}) 失败: {e}\n{error_trace}")
                 with self._lock:
                     task_info.status = TaskStatus.FAILED
                     task_info.completed_at = datetime.now()

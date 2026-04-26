@@ -52,10 +52,11 @@ async def start_async_task(arguments: Any) -> CallToolResult:
         def build_kb_task(**kwargs):
             version = kwargs.get("version")
             force_rebuild = kwargs.get("force_rebuild", False)
+            incremental = kwargs.get("incremental", False)
             progress_callback = kwargs.get("_progress_callback")
 
             service = DelphiKnowledgeBaseService(progress_callback=progress_callback)
-            return service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
+            return service.build_knowledge_base(version=version, force_rebuild=force_rebuild, incremental=incremental)
 
         task_name = f"构建Delphi知识库 (版本: {params.get('version', '最新')})"
 

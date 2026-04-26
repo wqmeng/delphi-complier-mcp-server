@@ -417,9 +417,36 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty", "help"]
     results["kb_types_debug"] = str(kb_types)
     
+    # 符号类型映射
+    type_map = {
+        "class": "TC",
+        "record": "TR",
+        "interface": "TI",
+        "enum": "TE",
+        "set": "TS",
+        "type": "TY",
+        "function": "FF",
+        "procedure": "FP",
+        "const": "CC",
+        "resourcestring": "CR",
+        "property": "MP",
+        "field": "MF",
+        "method": "MM",
+        "unit": "u"
+    }
+    
     for kb in kb_types:
         try:
             if kb == "delphi" and _delphi_kb_service:
+                # 处理特定类型搜索
+                if search_type in type_map:
+                    symbol_type = type_map[search_type]
+                    results["delphi_symbols"] = _delphi_kb_service.search_by_name(query, symbol_type)[:top_k]
+                elif search_type == "all":
+                    # 搜索所有类型
+                    results["delphi_all"] = _delphi_kb_service.search_by_name(query)[:top_k]
+                
+                # 保留原有的类和函数搜索
                 if search_type in ["class", "all"]:
                     results["delphi_classes"] = _delphi_kb_service.search_by_class_name(query)[:top_k]
                 if search_type in ["function", "all"]:
@@ -438,6 +465,36 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     
     output = f"搜索 '{query}' (类型: {search_type}, 知识库: {kb_type}):\n\n"
     has_results = False
+    
+    # 显示符号搜索结果
+    if "delphi_symbols" in results and results["delphi_symbols"]:
+        output += f"Delphi 符号 ({len(results['delphi_symbols'])}):\n"
+        for r in results["delphi_symbols"][:top_k]:
+            type_desc = {
+                'TC': '类', 'TR': '记录', 'TI': '接口', 'TE': '枚举', 'TS': '集合',
+                'TY': '类型别名', 'FF': '函数', 'FP': '过程', 'CC': '常量',
+                'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'u': '单元'
+            }.get(r.get('type', ''), r.get('type', ''))
+            output += f"  - {r.get('name', 'N/A')} ({type_desc})\n"
+            output += f"    文件: {r.get('file_path', 'N/A')}\n"
+            output += f"    行号: {r.get('line', 'N/A')}\n"
+            if r.get('description'):
+                output += f"    描述: {r.get('description')}\n"
+        output += "\n"
+        has_results = True
+    
+    # 显示所有类型搜索结果
+    if "delphi_all" in results and results["delphi_all"]:
+        output += f"Delphi 所有符号 ({len(results['delphi_all'])}):\n"
+        for r in results["delphi_all"][:top_k]:
+            type_desc = {
+                'TC': '类', 'TR': '记录', 'TI': '接口', 'TE': '枚举', 'TS': '集合',
+                'TY': '类型别名', 'FF': '函数', 'FP': '过程', 'CC': '常量',
+                'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'u': '单元'
+            }.get(r.get('type', ''), r.get('type', ''))
+            output += f"  - {r.get('name', 'N/A')} ({type_desc})\n"
+        output += "\n"
+        has_results = True
     
     if "delphi_classes" in results and results["delphi_classes"]:
         output += f"Delphi 类 ({len(results['delphi_classes'])}):\n"

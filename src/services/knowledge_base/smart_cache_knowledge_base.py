@@ -9,6 +9,7 @@
 """
 
 import json
+import os
 import sqlite3
 import math
 import struct
@@ -114,24 +115,47 @@ class SourcePathResolver:
 class SmartCacheKnowledgeBase:
     """智能缓存知识库"""
     
-    # 类型编码映射
+    # 类型编码映射 (统一使用双字母代码)
     TYPE_MAP = {
-        'c': 'class',
-        'e': 'enum',
-        'r': 'record',
-        'i': 'interface',
-        's': 'const',
-        'f': 'function',
-        'p': 'procedure',
-        'u': 'unit',
-        'k': 'keyword',
-        't': 'type'
+        # 类型定义
+        'TC': 'class',
+        'TR': 'record', 
+        'TI': 'interface',
+        'TE': 'enum',
+        'TS': 'set of',
+        'TY': 'type alias',
+        # 过程/函数
+        'FF': 'function',
+        'FP': 'procedure',
+        'PT': 'procedure type',
+        # 成员
+        'MM': 'method',
+        'MF': 'field',
+        'MP': 'property',
+        'ME': 'event',
+        # 其他
+        'CC': 'const',
+        'CR': 'resourcestring',
+        'UI': 'unit',
+        'TH': 'helper',
+        'AT': 'attribute',
+        'GT': 'generic type',
     }
+    # 反向映射
     TYPE_REVERSE_MAP = {v: k for k, v in TYPE_MAP.items()}
     
-    def __init__(self, kb_dir: str, config: Dict = None):
+    # 单字母到双字母的映射 (兼容旧数据)
+    SINGLE_TO_DOUBLE = {
+        'c': 'TC', 'r': 'TR', 'i': 'TI', 'e': 'TE', 's': 'TS', 'y': 'TY',
+        'f': 'FF', 'p': 'FP', 'pt': 'PT',
+        'g': 'MM', 'm': 'MF', 'v': 'MP', 'z': 'ME',
+        'k': 'CC', 'u': 'UI', 'a': 'AT', 't': 'GT'
+    }
+    
+    def __init__(self, kb_dir: str, config: Dict = None, progress_callback: callable = None):
         self.kb_dir = Path(kb_dir)
         self.config = config or self._load_config()
+        self.progress_callback = progress_callback
         
         # 数据库
         self.db_path = self.kb_dir / self.config['database']['file']
@@ -387,8 +411,12 @@ class SmartCacheKnowledgeBase:
         
         return dot_product / (norm1 * norm2)
     
-    def rebuild_async(self):
-        """异步重建知识库"""
+    def rebuild_async(self, incremental: bool = False):
+        """异步重建知识库
+        
+        Args:
+            incremental: 是否增量构建(跳过未变化的文件)
+        """
         if self._building:
             print("构建已在进行中...")
             return
@@ -399,11 +427,11 @@ class SmartCacheKnowledgeBase:
         
         # 阶段1：初始化（同步）
         print("\n阶段1：初始化...")
-        self._rebuild_init(source_paths)
+        self._rebuild_init(source_paths, incremental=incremental)
         
         # 阶段2：启动异步构建
         print("\n阶段2：启动异步向量构建...")
-        self._start_async_build()
+        self._start_async_build(self.progress_callback)
         
         print("\n知识库已可用，向量正在后台构建中...")
     
@@ -431,7 +459,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'c',  # class
+                    'type': 'TC',  # class
                     'name': class_name,
                     'line': line_num,
                     'base_class': base_class,
@@ -445,7 +473,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'r',  # record
+                    'type': 'TR',  # record
                     'name': record_name,
                     'line': line_num,
                     'base_class': None,
@@ -460,7 +488,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'i',  # interface
+                    'type': 'TI',  # interface
                     'name': interface_name,
                     'line': line_num,
                     'base_class': base_interface,
@@ -477,7 +505,7 @@ class SmartCacheKnowledgeBase:
                     line_num = content[:match.start()].count('\n') + 1
                     
                     items.append({
-                        'type': 'e',  # enum
+                        'type': 'TE',  # enum
                         'name': enum_name,
                         'line': line_num,
                         'base_class': None,
@@ -492,7 +520,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 's',  # set
+                    'type': 'TS',  # set
                     'name': set_name,
                     'line': line_num,
                     'base_class': None,
@@ -510,7 +538,7 @@ class SmartCacheKnowledgeBase:
                 desc = f"Array {array_name} = array[{array_range}] of {array_type}" if array_range else f"Array {array_name} = array of {array_type}"
                 
                 items.append({
-                    'type': 'a',  # array
+                    'type': 'AT',  # array
                     'name': array_name,
                     'line': line_num,
                     'base_class': None,
@@ -526,7 +554,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'g',  # range (subrange)
+                    'type': 'MF',  # range (subrange)
                     'name': subrange_name,
                     'line': line_num,
                     'base_class': None,
@@ -541,7 +569,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'p',  # pointer
+                    'type': 'PT',  # pointer
                     'name': pointer_name,
                     'line': line_num,
                     'base_class': None,
@@ -556,7 +584,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 't',  # type alias
+                    'type': 'TY',  # type alias
                     'name': alias_name,
                     'line': line_num,
                     'base_class': None,
@@ -571,7 +599,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'am',  # anonymous method
+                    'type': 'MM',  # anonymous method
                     'name': method_name,
                     'line': line_num,
                     'base_class': None,
@@ -586,7 +614,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'mp',  # method pointer
+                    'type': 'MM',  # method pointer
                     'name': method_name,
                     'line': line_num,
                     'base_class': None,
@@ -606,7 +634,7 @@ class SmartCacheKnowledgeBase:
                     line_num = content[:match.start()].count('\n') + 1
                     
                     items.append({
-                        'type': 'pt',  # procedure/function type
+                        'type': 'PT',  # procedure/function type
                         'name': proc_name,
                         'line': line_num,
                         'base_class': None,
@@ -629,7 +657,7 @@ class SmartCacheKnowledgeBase:
                     line_num = line_start + const_block[:item_match.start()].count('\n')
                     
                     items.append({
-                        'type': 'k',  # constant
+                        'type': 'CC',  # constant
                         'name': const_name,
                         'line': line_num,
                         'base_class': None,
@@ -644,10 +672,10 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 # 检查是否已在const块中处理
-                already_added = any(i['type'] == 'k' and i['name'] == const_name and i['line'] == line_num for i in items)
+                already_added = any(i['type'] == 'CC' and i['name'] == const_name and i['line'] == line_num for i in items)
                 if not already_added:
                     items.append({
-                        'type': 'k',  # constant
+                        'type': 'CC',  # constant
                         'name': const_name,
                         'line': line_num,
                         'base_class': None,
@@ -667,7 +695,7 @@ class SmartCacheKnowledgeBase:
                     line_num = line_start + res_block[:item_match.start()].count('\n')
                     
                     items.append({
-                        'type': 'z',  # resource string
+                        'type': 'CR',  # resource string
                         'name': res_name,
                         'line': line_num,
                         'base_class': None,
@@ -688,7 +716,7 @@ class SmartCacheKnowledgeBase:
                 if func_name in ['Create', 'Destroy', 'AfterConstruction', 'BeforeDestruction']:
                     continue
                 
-                type_code = 'p' if func_type == 'procedure' else 'f'
+                type_code = 'FP' if func_type == 'procedure' else 'FF'
                 
                 items.append({
                     'type': type_code,
@@ -727,7 +755,7 @@ class SmartCacheKnowledgeBase:
                 
                 if is_event:
                     items.append({
-                        'type': 'v',  # event
+                        'type': 'MP',  # event
                         'name': prop_name,
                         'line': line_num,
                         'base_class': None,
@@ -735,7 +763,7 @@ class SmartCacheKnowledgeBase:
                     })
                 else:
                     items.append({
-                        'type': 'y',  # property
+                        'type': 'TY',  # property
                         'name': prop_name,
                         'line': line_num,
                         'base_class': None,
@@ -767,7 +795,7 @@ class SmartCacheKnowledgeBase:
                 # 如果在type块内，且不在var/const/resourcestring块内，则为成员字段
                 if in_type_block and not (in_var_block or in_const_block or in_res_block):
                     items.append({
-                        'type': 'm',  # member/field
+                        'type': 'MF',  # member/field
                         'name': field_name,
                         'line': line_num,
                         'base_class': None,
@@ -793,7 +821,7 @@ class SmartCacheKnowledgeBase:
                         # 跳过成员变量（以F开头）
                         if not var_name.startswith('F'):
                             items.append({
-                                'type': 'g',  # global variable
+                                'type': 'MF',  # global variable
                                 'name': var_name,
                                 'line': line_num,
                                 'base_class': None,
@@ -869,7 +897,7 @@ class SmartCacheKnowledgeBase:
                 line_num = content[:match.start()].count('\n') + 1
                 
                 items.append({
-                    'type': 'c',  # class
+                    'type': 'TC',  # class
                     'name': class_name,
                     'line': line_num,
                     'base_class': base_class,
@@ -887,7 +915,7 @@ class SmartCacheKnowledgeBase:
                 if func_name in ['Create', 'Destroy', 'AfterConstruction', 'BeforeDestruction']:
                     continue
                 
-                type_code = 'p' if func_type == 'procedure' else 'f'
+                type_code = 'FP' if func_type == 'procedure' else 'FF'
                 
                 items.append({
                     'type': type_code,
@@ -902,90 +930,167 @@ class SmartCacheKnowledgeBase:
         
         return items
     
-    def _rebuild_init(self, source_paths: List[Path]):
-        """重建初始化阶段"""
+    def _rebuild_init(self, source_paths: List[Path], incremental: bool = False):
+        """重建初始化阶段
+        
+        Args:
+            source_paths: 源码路径列表
+            incremental: 是否增量构建(跳过未变化的文件)
+        """
         conn = self._get_connection()
         cursor = conn.cursor()
         
-        # 清空表
-        cursor.execute("DELETE FROM vocabularies")
-        cursor.execute("DELETE FROM files")
-        cursor.execute("DELETE FROM vocabulary")
-        cursor.execute("DELETE FROM build_queue")
-        cursor.execute("DELETE FROM metadata")
-        conn.commit()
-        
-        # 扫描文件
-        print("  扫描文件...")
-        files_data = []
-        items_data = []
-        
-        extensions = self.config['source'].get('extensions', ['.pas'])
-        
-        for source_path in source_paths:
-            if not source_path.exists():
-                print(f"  警告: 路径不存在 {source_path}")
-                continue
+        try:
+            if incremental:
+                cursor.execute("DELETE FROM vocabulary")
+                cursor.execute("DELETE FROM build_queue")
+                cursor.execute("DELETE FROM metadata")
+                conn.commit()
+                cursor.execute("SELECT id, full_path, hash FROM files")
+                existing_files = {row[1]: (row[0], row[2]) for row in cursor.fetchall()}
+                print(f"  增量模式: 数据库中已有 {len(existing_files)} 个文件记录")
+            else:
+                cursor.execute("DELETE FROM vocabularies")
+                cursor.execute("DELETE FROM files")
+                cursor.execute("DELETE FROM vocabulary")
+                cursor.execute("DELETE FROM build_queue")
+                cursor.execute("DELETE FROM metadata")
+                conn.commit()
+                existing_files = {}
             
-            category = source_path.name
+            print("  扫描文件...")
             
-            for file_path in source_path.rglob('*'):
-                if file_path.is_file() and file_path.suffix in extensions:
-                    try:
-                        stat = file_path.stat()
-                        rel_path = file_path.relative_to(source_path)
-                        
-                        files_data.append((
-                            str(file_path),
-                            str(rel_path),
-                            file_path.suffix,
-                            stat.st_size,
-                            0,  # line_count
-                            '',  # hash
-                            '',  # last_modified
-                            category,
-                            '[]',  # units_defined
-                            '[]',  # units_imported
-                            str(file_path)
-                        ))
-                    except Exception as e:
-                        pass
-        
-        print(f"  扫描到 {len(files_data)} 个文件")
-        
-        # 插入files表
-        if files_data:
-            cursor.executemany("""
-                INSERT INTO files (full_path, relative_path, extension, size,
-                                  line_count, hash, last_modified, category,
-                                  units_defined, units_imported, description)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, files_data)
+            if self.progress_callback:
+                self.progress_callback(0, "阶段1/2: 初始化...")
             
-            # 解析文件，提取类、函数等（使用多进程并行）
+            files_data = []
+            changed_file_ids = []
+            skipped = 0
+            updated = 0
+            
+            extensions = self.config['source'].get('extensions', ['.pas'])
+            hash_mode = self.config.get('build', {}).get('incremental_hash_mode', 'mtime_size')
+            
+            total_files = 0
+            for source_path in source_paths:
+                if not source_path.exists():
+                    print(f"  警告: 路径不存在 {source_path}")
+                    continue
+                
+                category = source_path.name
+                file_count = sum(1 for f in source_path.rglob('*') if f.is_file() and f.suffix in extensions)
+                total_files += file_count
+                
+                for file_path in source_path.rglob('*'):
+                    if file_path.is_file() and file_path.suffix in extensions:
+                        try:
+                            stat = file_path.stat()
+                            rel_path = file_path.relative_to(source_path)
+                            fp = str(file_path)
+                            
+                            if incremental and fp in existing_files:
+                                old_id, old_hash = existing_files[fp]
+                                if hash_mode == 'md5':
+                                    file_hash = hashlib.md5(open(file_path, 'rb').read()).hexdigest()
+                                else:
+                                    file_hash = f"{stat.st_mtime}:{stat.st_size}"
+                                if old_hash == file_hash:
+                                    skipped += 1
+                                    continue
+                                else:
+                                    cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_id,))
+                                    cursor.execute("""UPDATE files SET size=?, hash=?, last_modified=?,
+                                        updated_at=julianday('now') WHERE id=?""",
+                                        (stat.st_size, file_hash, '', old_id))
+                                    changed_file_ids.append((old_id, fp))
+                                    updated += 1
+                                    continue
+                            
+                            # 计算hash用于后续增量比较
+                            if hash_mode == 'md5':
+                                new_hash = hashlib.md5(open(file_path, 'rb').read()).hexdigest()
+                            else:
+                                new_hash = f"{stat.st_mtime}:{stat.st_size}"
+                            
+                            files_data.append((
+                                fp,
+                                str(rel_path),
+                                file_path.suffix,
+                                stat.st_size,
+                                0,
+                                new_hash,
+                                '',
+                                category,
+                                '[]',
+                                '[]',
+                                str(file_path)
+                            ))
+                        except Exception as e:
+                            pass
+            
+            if incremental:
+                print(f"  增量模式: 跳过 {skipped} 个未变化文件, 更新 {updated} 个已修改文件, 新增 {len(files_data)} 个文件")
+            else:
+                print(f"  扫描到 {len(files_data)} 个文件")
+            
+            if self.progress_callback:
+                self.progress_callback(15, f"扫描完成: {len(files_data) + len(changed_file_ids)} 个文件需处理，开始解析...")
+            
+            # 插入新文件到files表
+            if files_data:
+                cursor.executemany("""
+                    INSERT OR IGNORE INTO files (full_path, relative_path, extension, size,
+                                      line_count, hash, last_modified, category,
+                                      units_defined, units_imported, description)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, files_data)
+            
+            # 收集需要解析的文件路径
+            all_files_to_parse = [f[0] for f in files_data]
+            all_files_to_parse.extend(fp for _, fp in changed_file_ids)
+            
+            if not all_files_to_parse:
+                if incremental:
+                    print("  增量模式: 所有文件均未变化，无需更新")
+                    conn.commit()
+                    return
+            
+            # 获取文件路径到ID的映射
+            cursor.execute("SELECT id, full_path FROM files")
+            file_path_to_id = {row[1]: row[0] for row in cursor.fetchall()}
+            
+            # 解析文件
             print("  并行解析文件...")
             
-            # 动态计算worker数和chunksize（参考已有实现）
+            if self.progress_callback:
+                self.progress_callback(10, "阶段1/2: 解析文件...")
+            
             n_workers = max(2, cpu_count() - 1)
-            file_chunksize = max(500, len(files_data) // n_workers)
+            file_chunksize = max(500, len(all_files_to_parse) // n_workers)
             
             print(f"  使用 {n_workers} 进程并行解析 (chunksize={file_chunksize})...")
             
-            # 准备文件路径列表
-            file_paths = [file_data[0] for file_data in files_data]
+            os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
             
-            # 使用多进程并行解析
             with ProcessPoolExecutor(max_workers=n_workers) as executor:
                 parsed_results = list(executor.map(
                     self._parse_delphi_file_static,
-                    file_paths,
+                    all_files_to_parse,
                     chunksize=file_chunksize
                 ))
             
+            os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
+            
+            if self.progress_callback:
+                self.progress_callback(55, f"解析完成: {len(all_files_to_parse)} 个文件，正在入库...")
+            
             # 合并解析结果
-            for i, (file_data, (file_path_str, parsed_items)) in enumerate(zip(files_data, parsed_results)):
-                file_id = i + 1
-                file_path = Path(file_data[0])
+            items_data = []
+            for file_path_str, parsed_items in parsed_results:
+                file_id = file_path_to_id.get(file_path_str, 0)
+                if file_id == 0:
+                    continue
+                file_path = Path(file_path_str)
                 
                 for item in parsed_items:
                     items_data.append((
@@ -999,43 +1104,47 @@ class SmartCacheKnowledgeBase:
                         'pending'
                     ))
                 
-                # 添加unit类型
                 unit_name = file_path.stem
                 items_data.append((
-                    'u',  # type: unit
+                    'u',
                     unit_name,
                     unit_name.lower(),
                     file_id,
-                    0,  # line
-                    None,  # base_class
-                    f"Unit {unit_name} in {file_data[1]}",
+                    0,
+                    None,
+                    f"Unit {unit_name}",
                     'pending'
                 ))
-        
-        print(f"  提取到 {len(items_data)} 个词汇项目")
-        
-        # 插入vocabularies表
-        if items_data:
-            cursor.executemany("""
-                INSERT INTO vocabularies (type, name, name_lower, file_id, line,
-                                         base_class, description, vector_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, items_data)
-        
-        # 构建词汇表
-        print("  构建词汇表...")
-        self._build_vocabulary_table(cursor, items_data)
-        
-        # 更新元数据
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('build_status', 'pending')")
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('build_progress', '0')")
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_files', ?)", (str(len(files_data)),))
-        cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_items', ?)", (str(len(items_data)),))
-        
-        conn.commit()
-        conn.close()
-        
-        print(f"  初始化完成：{len(files_data)}个文件，{len(items_data)}个项目")
+            
+            print(f"  提取到 {len(items_data)} 个词汇项目")
+            
+            if items_data:
+                cursor.executemany("""
+                    INSERT OR IGNORE INTO vocabularies (type, name, name_lower, file_id, line,
+                                             base_class, description, vector_status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, items_data)
+            
+            print("  构建词汇表...")
+            
+            if self.progress_callback:
+                self.progress_callback(70, "阶段1/2: 构建词汇表...")
+            
+            self._build_vocabulary_table(cursor, items_data)
+            
+            if self.progress_callback:
+                self.progress_callback(91, "阶段1/2: 完成，准备启动向量构建...")
+            
+            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('build_status', 'pending')")
+            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('build_progress', '0')")
+            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_files', ?)", (str(total_files),))
+            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_items', ?)", (str(len(items_data)),))
+            
+            conn.commit()
+            
+            print(f"  初始化完成：{len(all_files_to_parse)}个文件需处理，{len(items_data)}个项目")
+        finally:
+            conn.close()
     
     def _build_vocabulary_table(self, cursor, items_data: List):
         """构建词汇表"""
@@ -1068,13 +1177,13 @@ class SmartCacheKnowledgeBase:
         # 插入vocabulary表
         if vocab_data:
             cursor.executemany("""
-                INSERT INTO vocabulary (id, word, idf_weight, document_frequency)
+                INSERT OR REPLACE INTO vocabulary (id, word, idf_weight, document_frequency)
                 VALUES (?, ?, ?, ?)
             """, vocab_data)
         
         print(f"  词汇表大小: {len(vocab_data)}")
     
-    def _start_async_build(self):
+    def _start_async_build(self, progress_callback: callable = None):
         """启动异步构建线程"""
         self._building = True
         
@@ -1084,11 +1193,15 @@ class SmartCacheKnowledgeBase:
         conn.commit()
         conn.close()
         
-        # 启动构建线程
-        self._build_thread = threading.Thread(target=self._async_build_worker, daemon=True)
+        # 启动构建线程，传递进度回调
+        self._build_thread = threading.Thread(
+            target=self._async_build_worker, 
+            daemon=True,
+            args=(progress_callback,)
+        )
         self._build_thread.start()
     
-    def _async_build_worker(self):
+    def _async_build_worker(self, progress_callback: callable = None):
         """异步构建工作线程（使用多进程并行计算向量）"""
         conn = self._get_connection()
         cursor = conn.cursor()
@@ -1114,6 +1227,10 @@ class SmartCacheKnowledgeBase:
             processed = 0
             vocab = self.vocabulary
             idf_weights = self.idf_weights
+            
+            # 报告向量构建开始（映射到90-100%范围）
+            if progress_callback:
+                progress_callback(92, f"阶段2/2: 开始构建向量...")
             
             # 使用多进程并行计算向量
             from functools import partial
@@ -1142,12 +1259,14 @@ class SmartCacheKnowledgeBase:
                 )
                 
                 # 并行计算向量
+                os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
                 with ProcessPoolExecutor(max_workers=n_workers) as executor:
                     results = list(executor.map(
                         compute_func,
                         compute_items,
                         chunksize=vector_chunksize
                     ))
+                os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
                 
                 # 更新数据库
                 for item_id, packed_vector in results:
@@ -1158,10 +1277,14 @@ class SmartCacheKnowledgeBase:
                     """, (packed_vector, item_id))
                     processed += 1
                 
-                # 更新进度
-                progress = int(processed / total * 100)
+# 更新进度（映射到92-100%范围）
+                progress = int(92 + (processed / total * 8))
                 cursor.execute("UPDATE metadata SET value=? WHERE key='build_progress'", (str(progress),))
                 conn.commit()
+                
+                # 调用进度回调（向任务管理器报告进度，每批次更新）
+                if progress_callback:
+                    progress_callback(progress, f"构建向量中：{processed}/{total}")
                 
                 if processed % 1000 == 0 or processed == total:
                     print(f"  构建进度：{processed}/{total} ({progress}%)")

@@ -12,10 +12,6 @@ import os
 import sys
 
 os.environ['PYTHONIOENCODING'] = 'utf-8'
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
 
 import json
 import time
@@ -50,11 +46,11 @@ class DelphiKnowledgeBaseService:
             # 默认路径: MCP 服务器目录下的 data/delphi-knowledge-base
             # 获取 MCP 服务器根目录 (src/services/knowledge_base -> ../../../)
             server_root = Path(__file__).parent.parent.parent.parent
-            kb_dir = server_root / "data" / "delphi-knowledge-base"
+            kb_dir = str(server_root / "data" / "delphi-knowledge-base")
         else:
-            kb_dir = Path(kb_dir)
+            kb_dir = str(kb_dir)
 
-        self.kb_dir = kb_dir
+        self.kb_dir: Path = Path(kb_dir)
         self.kb_instance = None
         self.source_dir = None
         self.delphi_versions = []
@@ -173,13 +169,14 @@ class DelphiKnowledgeBaseService:
 
         return None
 
-    def build_knowledge_base(self, version: Optional[str] = None, force_rebuild: bool = False) -> bool:
+    def build_knowledge_base(self, version: Optional[str] = None, force_rebuild: bool = False, incremental: bool = False) -> bool:
         """
         构建知识库
 
         Args:
             version: Delphi 版本,如果为 None 则选择最新版本
             force_rebuild: 是否强制重建
+            incremental: 是否增量构建
 
         Returns:
             是否构建成功
@@ -201,14 +198,17 @@ class DelphiKnowledgeBaseService:
 
         if self.use_smart_cache:
             # 使用智能缓存方案
-            return self._build_with_smart_cache(force_rebuild)
+            return self._build_with_smart_cache(force_rebuild, incremental=incremental)
         else:
             # 使用原有方案
             return self._build_with_legacy(force_rebuild)
     
-    def _build_with_smart_cache(self, force_rebuild: bool = False) -> bool:
+    def _build_with_smart_cache(self, force_rebuild: bool = False, incremental: bool = False) -> bool:
         """使用智能缓存方案构建知识库"""
-        print("使用智能缓存方案构建知识库...")
+        if incremental and not force_rebuild:
+            print("使用智能缓存方案增量构建知识库...")
+        else:
+            print("使用智能缓存方案构建知识库...")
         
         # 创建配置文件
         config = {
@@ -231,6 +231,7 @@ class DelphiKnowledgeBaseService:
             "build": {
                 "auto_rebuild": False,
                 "incremental": not force_rebuild,
+                "incremental_hash_mode": "mtime_size",
                 "parallel_workers": 4,
                 "batch_size": 1000
             }
@@ -242,10 +243,10 @@ class DelphiKnowledgeBaseService:
         
         # 初始化智能缓存知识库
         start_time = time.time()
-        self.kb_instance = SmartCacheKnowledgeBase(str(self.kb_dir), config)
+        self.kb_instance = SmartCacheKnowledgeBase(str(self.kb_dir), config, progress_callback=self.progress_callback)
         
         # 异步重建
-        self.kb_instance.rebuild_async()
+        self.kb_instance.rebuild_async(incremental=incremental and not force_rebuild)
         
         elapsed = (time.time() - start_time) * 1000
         print(f"知识库初始化完成! 耗时: {elapsed:.2f}ms")
@@ -286,12 +287,24 @@ class DelphiKnowledgeBaseService:
         """
         try:
             if self.kb_instance is None:
+                # 读取 config.json 获取数据库文件名
+                config_path = self.kb_dir / "config.json"
+                db_file = "knowledge.sqlite"  # 默认值
+                if config_path.exists():
+                    import json
+                    try:
+                        with open(config_path, encoding='utf-8') as f:
+                            config = json.load(f)
+                        db_file = config.get('database', {}).get('file', 'knowledge.sqlite')
+                    except Exception as e:
+                        print(f"[WARNING] 读取config.json失败: {e}, 使用默认数据库")
+                
                 if self.use_smart_cache:
                     # 智能缓存方案：使用 SQLiteVectorKnowledgeBase 直接查询
-                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
+                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file=db_file)
                 else:
                     # 使用原有方案
-                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
+                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file=db_file)
             return True
         except Exception as e:
             print(f"加载知识库失败: {e}")
@@ -312,6 +325,81 @@ class DelphiKnowledgeBaseService:
         
         # 使用 SQLiteVectorKnowledgeBase 直接搜索
         return self.kb_instance.search_by_function_name(function_name)
+    
+    def search_by_name(self, name: str, symbol_type: Optional[str] = None) -> List[Dict]:
+        """
+        根据名称搜索符号(支持所有类型)
+        
+        Args:
+            name: 符号名称
+            symbol_type: 符号类型(可选),如:
+                - TC: 类
+                - TR: 记录
+                - TI: 接口
+                - TE: 枚举
+                - TS: 集合
+                - TY: 类型别名
+                - FF: 函数
+                - FP: 过程
+                - CC: 常量
+                - CR: 资源字符串
+                - MP: 属性
+                - MF: 字段
+                - MM: 方法
+                - u: 单元
+                如果为None,则搜索所有类型
+        
+        Returns:
+            搜索结果列表
+        """
+        if not self.load_knowledge_base():
+            return []
+        
+        import sqlite3
+        config_path = self.kb_dir / "config.json"
+        db_file_name = "knowledge.sqlite"
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                db_file_name = config.get("database", {}).get("file", "knowledge.sqlite")
+            except:
+                pass
+        
+        db_file = self.kb_dir / db_file_name
+        conn = sqlite3.connect(str(db_file))
+        cursor = conn.cursor()
+        
+        try:
+            if symbol_type:
+                cursor.execute("""
+                    SELECT v.name, v.type, f.full_path, v.line, v.base_class, v.description
+                    FROM vocabularies v
+                    JOIN files f ON v.file_id = f.id
+                    WHERE v.name = ? AND v.type = ?
+                """, (name, symbol_type))
+            else:
+                cursor.execute("""
+                    SELECT v.name, v.type, f.full_path, v.line, v.base_class, v.description
+                    FROM vocabularies v
+                    JOIN files f ON v.file_id = f.id
+                    WHERE v.name = ?
+                """, (name,))
+            
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    'name': row[0],
+                    'type': row[1],
+                    'file_path': row[2],
+                    'line': row[3],
+                    'base_class': row[4],
+                    'description': row[5]
+                })
+            
+            return results
+        finally:
+            conn.close()
 
     def search_by_keyword(self, keyword: str) -> List[Dict]:
         """根据关键词搜索"""
@@ -351,12 +439,23 @@ class DelphiKnowledgeBaseService:
 
     def get_statistics(self) -> Dict:
         """获取知识库统计信息"""
+        # 读取 config.json 获取数据库文件名
+        import sqlite3
+        config_path = self.kb_dir / "config.json"
+        db_file_name = "knowledge.sqlite"
+        if config_path.exists():
+            try:
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                db_file_name = config.get("database", {}).get("file", "knowledge.sqlite")
+            except:
+                pass
+        
+        db_file = self.kb_dir / db_file_name
+        
         if not self.load_knowledge_base():
             return {}
         
-        # 从数据库获取统计信息
-        import sqlite3
-        db_file = self.kb_dir / "knowledge.sqlite"
         if not db_file.exists():
             return {}
 
@@ -364,23 +463,32 @@ class DelphiKnowledgeBaseService:
         cursor = conn.cursor()
         stats = {}
         try:
-            cursor.execute("SELECT COUNT(*) FROM files")
-            stats["files"] = cursor.fetchone()[0]
+            # 检查表结构
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='files'")
+            has_files = cursor.fetchone() is not None
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='vocabularies'")
+            has_vocab = cursor.fetchone() is not None
 
-            cursor.execute("SELECT COUNT(*) FROM vocabularies")
-            stats["vocabulary_size"] = cursor.fetchone()[0]
+            if has_files:
+                cursor.execute("SELECT COUNT(*) FROM files")
+                stats["files"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
-            stats["classes"] = cursor.fetchone()[0]
+            if has_vocab:
+                cursor.execute("SELECT COUNT(*) FROM vocabularies")
+                stats["vocabulary_size"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FF'")
-            stats["functions"] = cursor.fetchone()[0]
+                # 使用统一双字母类型代码
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')")
+                stats["classes"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='FP'")
-            stats["procedures"] = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type = 'FF'")
+                stats["functions"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='CC'")
-            stats["constants"] = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type = 'FP'")
+                stats["procedures"] = cursor.fetchone()[0]
+
+                cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type IN ('CC', 'CR')")
+                stats["constants"] = cursor.fetchone()[0]
 
             # 获取文件大小
             stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)

@@ -31,51 +31,69 @@ project_root = Path(__file__).parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, TextContent
-
-from src.services.config_manager import ConfigManager
-from src.services.compiler_service import CompilerService
-from src.services.knowledge_base import DelphiKnowledgeBaseService
-from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
-from src.tools.compile_project import set_compiler_service as sp1, compile_project
-from src.tools.compile_file import set_compiler_service as sp2, compile_file
-from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
-from src.tools.config import set_compiler_config, set_config_manager, search_compilers
-from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
-from src.tools.knowledge_base import (
-    set_knowledge_base_service,
-    set_delphi_kb_service,
-    set_project_kb_service,
-    set_thirdparty_kb_service,
-    set_help_kb_service,
-    build_knowledge_base,
-    search_class,
-    search_function,
-    semantic_search,
-    get_knowledge_base_stats,
-    list_delphi_versions,
-    search_knowledge,
-    build_unified_knowledge_base,
-    get_unified_knowledge_stats
+# ============================================================
+# multiprocessing 子进程保护
+# Windows spawn模式下,子进程会重新导入 __main__ 模块(即本文件),
+# 导致所有服务模块被重新导入(885个模块),启动极慢。
+# 检测到是子进程时,跳过所有服务导入,只保留必要的模块。
+# ============================================================
+_is_multiprocessing_child = (
+    '--multiprocessing-fork' in sys.argv or
+    os.environ.get('_IN_PROCESS_POOL_WORKER') == '1' or
+    __name__ == '__mp_main__'
 )
-from src.services.knowledge_base.help_knowledge_base import DelphiHelpKnowledgeBase
-from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
-from src.tools import knowledge_base as kb_tools
-from src.tools import project_knowledge_base as project_kb_tools
-from src.tools import help_knowledge_base as help_kb_tools
-from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
-from src.tools import analyze_dependencies as dep_tools
-from src.tools import coding_rules
-from src.tools import async_tasks as async_tools
-from src.tools import pasfmt
-from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
-from src.utils.logger import init_default_logger, get_logger
-from src.__version__ import __version__, __copyright__
 
-# 初始化日志
-logger = init_default_logger()
+if _is_multiprocessing_child:
+    # 子进程不需要任何MCP服务,直接跳过
+    # ProcessPoolExecutor的worker只需要能pickle/unpickle函数即可
+    pass
+else:
+
+    from mcp.server import Server
+    from mcp.server.stdio import stdio_server
+    from mcp.types import CallToolResult, TextContent
+
+    from src.services.config_manager import ConfigManager
+    from src.services.compiler_service import CompilerService
+    from src.services.knowledge_base import DelphiKnowledgeBaseService
+    from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
+    from src.tools.compile_project import set_compiler_service as sp1, compile_project
+    from src.tools.compile_file import set_compiler_service as sp2, compile_file
+    from src.tools.get_args import set_compiler_service as sp3, get_compiler_args
+    from src.tools.config import set_compiler_config, set_config_manager, search_compilers
+    from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
+    from src.tools.knowledge_base import (
+        set_knowledge_base_service,
+        set_delphi_kb_service,
+        set_project_kb_service,
+        set_thirdparty_kb_service,
+        set_help_kb_service,
+        build_knowledge_base,
+        search_class,
+        search_function,
+        semantic_search,
+        get_knowledge_base_stats,
+        list_delphi_versions,
+        search_knowledge,
+        build_unified_knowledge_base,
+        get_unified_knowledge_stats
+    )
+    from src.services.knowledge_base.help_knowledge_base import DelphiHelpKnowledgeBase
+    from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
+    from src.tools import knowledge_base as kb_tools
+    from src.tools import project_knowledge_base as project_kb_tools
+    from src.tools import help_knowledge_base as help_kb_tools
+    from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
+    from src.tools import analyze_dependencies as dep_tools
+    from src.tools import coding_rules
+    from src.tools import async_tasks as async_tools
+    from src.tools import pasfmt
+    from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
+    from src.utils.logger import init_default_logger, get_logger
+    from src.__version__ import __version__, __copyright__
+
+    # 初始化日志
+    logger = init_default_logger()
 
 
 async def run_server():
@@ -152,18 +170,20 @@ async def run_server():
             ),
             Tool(
                 name="search_knowledge",
-                description="【搜索首选】搜索代码/API/文档的统一入口。支持：类/函数/属性搜索、语义搜索、查看统计。",
+                description="【搜索/统计/构建】搜索代码/API/文档。action=build 时自动使用异步任务，立即返回 task_id，AI 需要使用 async_task(action=status/result) 轮询进度。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "操作: search=搜索, stats=查看统计, build=构建知识库"},
+                        "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "操作: search=搜索(快速), stats=查看统计(快速), build=构建知识库(自动异步，立即返回task_id)"},
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库: all=全部, delphi=官方, project=项目, thirdparty=第三方, help=帮助"},
-                        "search_type": {"type": "string", "enum": ["all", "class", "function", "semantic", "fuzzy", "record", "filename", "property", "method", "field", "event", "uses", "const"], "default": "semantic", "description": "搜索类型: fuzzy=模糊匹配(反转字符串), 支持中英文关键词"},
+                        "search_type": {"type": "string", "enum": ["all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "semantic", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "搜索类型: class=类, record=记录, interface=接口, enum=枚举, set=集合, type=类型别名, function=函数, procedure=过程, const=常量, resourcestring=资源字符串, property=属性, field=字段, method=方法, unit=单元, semantic=语义搜索, fuzzy=模糊匹配"},
                         "query": {"type": "string", "description": "搜索内容，如 'TStringList' 或 'TButton Click事件'"},
                         "project_path": {"type": "string", "description": "项目路径 (action=build 或 kb_type包含project时需要)"},
                         "version": {"type": "string", "description": "Delphi版本，如 '23.0'"},
                         "async_mode": {"type": "boolean", "default": True, "description": "是否异步执行"},
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"},
+                        "incremental": {"type": "boolean", "default": False, "description": "增量构建(跳过解压CHM,仅help知识库支持)"},
+                        "hash_mode": {"type": "string", "default": "mtime_size", "description": "增量hash模式: mtime_size(默认,快速) 或 md5(准确)"},
                         "top_k": {"type": "integer", "default": 10, "description": "返回结果数量"}
                     },
                     "required": []
@@ -221,14 +241,14 @@ async def run_server():
             ),
             Tool(
                 name="async_task",
-                description="【后台任务】管理异步任务，如构建大型知识库。",
+                description="【推荐】管理长时间运行的后台任务，如构建知识库。action=build 时自动启动异步任务，AI 使用 status/result 轮询进度。",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list", "description": "操作: start=启动, status=查状态, result=查结果, list=列表, cancel=取消"},
-                        "task_type": {"type": "string", "enum": ["build_knowledge", "build_project_knowledge"], "description": "任务类型 (action=start时需要)"},
-                        "task_params": {"type": "object", "description": "任务参数"},
-                        "task_id": {"type": "string", "description": "任务ID"},
+                        "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list", "description": "操作: start=启动后台任务, status=查状态(含进度), result=查结果, list=列表, cancel=取消"},
+                        "task_type": {"type": "string", "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base"], "description": "任务类型 (action=start时需要)"},
+                        "task_params": {"type": "object", "description": "任务参数: version(Delphi版本), force_rebuild, project_path 等"},
+                        "task_id": {"type": "string", "description": "任务ID (action=status/result/cancel时需要)"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"}
                     },
                     "required": []
@@ -293,7 +313,40 @@ async def run_server():
                 elif action == "stats":
                     result = await kb_tools.get_unified_knowledge_stats(arguments)
                 elif action == "build":
-                    result = await kb_tools.build_unified_knowledge_base(arguments)
+                    # action=build 需要数分钟到数十分钟，自动使用异步任务方式
+                    from src.tools.async_tasks import start_async_task
+                    async_mode = arguments.get("async_mode", True)
+                    if async_mode:
+                        # 异步模式：启动后台任务并立即返回 task_id，让 AI 轮询进度
+                        kb_type = arguments.get("kb_type", "all")
+                        version = arguments.get("version")
+                        force_rebuild = arguments.get("force_rebuild", False)
+                        
+                        # 根据 kb_type 决定任务类型
+                        if kb_type in ["all", "delphi"]:
+                            task_type = "build_knowledge_base"
+                        elif kb_type == "thirdparty":
+                            task_type = "build_thirdparty_knowledge_base"
+                        elif kb_type == "project":
+                            task_type = "init_project_knowledge_base"
+                        elif kb_type == "help":
+                            # 帮助知识库构建
+                            result = await help_kb_tools.build_help_knowledge_base(arguments)
+                            return result
+                        else:
+                            task_type = "build_knowledge_base"
+                        
+                        incremental = arguments.get("incremental", False)
+                        
+                        task_result = await start_async_task({
+                            "task_type": task_type,
+                            "params": {"version": version, "force_rebuild": force_rebuild, "incremental": incremental},
+                            "show_progress": arguments.get("show_progress", True)
+                        })
+                        result = task_result
+                    else:
+                        # 同步模式（非推荐）
+                        result = await kb_tools.build_unified_knowledge_base(arguments)
                 else:
                     result = {"error": f"未知action: {action}"}
             

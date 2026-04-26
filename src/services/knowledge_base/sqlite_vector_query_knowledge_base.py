@@ -19,10 +19,14 @@ import threading
 
 
 class SQLiteVectorKnowledgeBase:
-    def __init__(self, kb_dir: str, force_rebuild: bool = False):
+    def __init__(self, kb_dir: str, force_rebuild: bool = False, db_file: Optional[str] = None):
         self.kb_dir = Path(kb_dir)
         self.index_dir = self.kb_dir / "index"
-        self.db_file = self.kb_dir / "knowledge.sqlite"
+        # 支持从config指定数据库文件
+        if db_file:
+            self.db_file = self.kb_dir / db_file
+        else:
+            self.db_file = self.kb_dir / "knowledge.sqlite"
         # 用于构建时读取源数据
         self.source_index_file = self.index_dir / "source_index.json"
         self.source_dir = None
@@ -869,6 +873,7 @@ class SQLiteVectorKnowledgeBase:
             )
         
         classes_data = []
+        os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
             # 使用partial传递vocab和idf_weights
             from functools import partial
@@ -884,6 +889,8 @@ class SQLiteVectorKnowledgeBase:
             func = partial(SQLiteVectorKnowledgeBase.compute_func_vector, vocab=vocab, idf_weights=idf_weights)
             results = list(executor.map(func, func_items, chunksize=func_chunksize))
             functions_data = results
+        
+        os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
         
         print(f"  函数向量计算完成: {len(functions_data)}")
 

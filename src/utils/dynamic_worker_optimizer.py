@@ -4,6 +4,7 @@
 基于实际处理速度评估最优worker数量
 """
 
+import os
 import time
 import multiprocessing
 from typing import Callable, List, Any, Optional, Tuple
@@ -96,8 +97,10 @@ class DynamicWorkerOptimizer:
                 
                 # 测试当前worker数量的性能
                 if use_process_pool:
+                    os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
                     with ProcessPoolExecutor(max_workers=workers) as executor:
                         results = list(executor.map(task_function, test_args))
+                    os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
                 else:
                     with ThreadPoolExecutor(max_workers=workers) as executor:
                         results = list(executor.map(task_function, test_args))
