@@ -63,7 +63,6 @@ else:
     from src.tools.config import set_config_manager, search_compilers
     from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
     from src.tools.knowledge_base import (
-        set_knowledge_base_service,
         set_delphi_kb_service,
         set_project_kb_service,
         set_thirdparty_kb_service,
@@ -122,7 +121,6 @@ async def run_server():
     scm(config_manager)
     set_config_manager(config_manager)
     stks(thirdparty_kb_service)
-    set_knowledge_base_service(kb_service)
     set_knowledge_base_services(kb_service, thirdparty_kb_service)
     set_delphi_kb_service(kb_service)
     set_project_kb_service(kb_service)
