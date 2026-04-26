@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.04.26] - 2026-04-26
+
+### Fixed
+
+- `check_environment`: detect action 传递多余参数导致报错
+- `check_environment`: 补充 install/format_install action 实现
+- `search_knowledge`: 搜索结果文件路径显示 N/A（使用了错误的键名）
+- `search_knowledge`: search_type 参数（class/function 等）未生效，结果未按类型过滤
+- `search_knowledge`: 残留 kb_types_debug 和 help_debug 调试信息
+- `config.set_config_manager` 未被调用，导致 search_compilers 报"配置管理器未初始化"
+- server.py 中 3 处 `[DEBUG]` print 调试输出
+- 第三方库知识库旧 schema（path 列）导致索引创建失败，自动 drop 旧表重建
+- unit 类型 kind code 使用单字母 'u' 而非双字母 'UI'
+- 测试中 `search_by_class_name` 方法不存在（已废弃）
+- server.py 中 `set_knowledge_base_service` 导入不存在（已废弃）
+
+### Added
+
+- `get_coding_rules` 工具：通过 MCP tool 接口暴露 Delphi 编码规范
+- MCP 资源导出：`delphi://coding-rules`，AI Agent 可通过 resources 协议读取编码规则
+- `search_knowledge` 中 search_type 过滤逻辑（class/record/interface/function 等）
+- kind code 映射补充 TH/AT/PT 类型描述
+
+### Changed
+
+- 优化 8 个工具的描述：补充典型场景、action 说明、参数适用条件
+- 删除 `check_environment` 中无效的 `delphi_install_dir` 参数
+
+### Removed
+
+- 删除 18 个废弃函数：build_knowledge_base, search_class, search_function, semantic_search, get_knowledge_base_stats, list_delphi_versions, detect_compilers, search_delphi_compilers, set_compiler_config, get_compiler_list, remove_compiler_config, get_compile_history, search_by_keywords, search_members, 2 个 main() CLI 入口等
+- 删除 SINGLE_TO_DOUBLE 旧数据兼容映射
+- 清理 __init__.py 中 21 个废弃导出
+- 从 git 追踪中移除 logs/、data/、config/compilers.json、config/history.json
+
 ## [2026.04.25] - 2026-04-25
 
 ### Added

@@ -135,7 +135,7 @@ Supported Delphi versions for automatic detection:
 
 ### Manual Compiler Configuration (Optional)
 
-If you need to manually configure or add a custom compiler, you can use the MCP tool `set_compiler_config` for configuration, or directly edit the `config/compilers.json` file.
+If you need to manually configure or add a custom compiler, you can directly edit the `config/compilers.json` file, or use the `check_environment` tool with `detect` action to re-detect.
 
 ### Configure Claude Desktop
 
@@ -206,114 +206,42 @@ If you need to manually configure or add a custom compiler, you can use the MCP 
 
 ### Compilation Tools
 
-| Tool Name | Description |
-|-----------|-------------|
-| `compile_project` | Compile Delphi project (supports smart library path resolution) |
-| `compile_file` | Compile single Delphi unit file (syntax check only) |
-| `get_compiler_args` | Get compiler command line arguments (no execution) |
-| `set_compiler_config` | Configure Delphi compiler |
-| `check_environment` | Check compiler environment status |
-
-### Project Dependency Analysis Tools
-
-| Tool Name | Description |
-|-----------|-------------|
-| `analyze_project_dependencies` | Analyze project unit dependencies |
-| `resolve_smart_library_paths` | Intelligently resolve required third-party library paths for project |
-
-### Source File Reading Tools
-
-| Tool Name | Description |
-|-----------|-------------|
-| `read_source_file` | Read Delphi source file content (locate file in knowledge base first, then read from disk) |
-| `search_and_read_file` | Search for class or function and read the file content |
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `compile_project` | Compile Delphi project or check .pas file syntax | `project_path`, `target_platform`(win32/win64), `build_configuration`, `get_args_only` |
+| `check_environment` | Diagnose environment, detect compilers, install pasfmt | `action`(check/detect/install/format_install) |
+| `install_package` | Compile and install Delphi package to IDE | `package_path`, `target_platform`, `install` |
+| `list_installed_packages` | List packages installed to IDE | - |
 
 ### Knowledge Base Tools
 
-| Tool Name | Description |
-|-----------|-------------|
-| `build_knowledge_base` | Build Delphi source code knowledge base |
-| `search_class` | Search Delphi type definitions (supports class, record, interface, enum) |
-| `search_function` | Search Delphi function/procedure definitions |
-| `semantic_search` | Semantic search in Delphi code |
-| `get_knowledge_base_stats` | Get knowledge base statistics |
-| `list_delphi_versions` | List installed Delphi versions |
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `search_knowledge` | Search code/API/docs, build/view knowledge base | `action`(search/stats/build), `query`, `kb_type`, `search_type`, `top_k` |
 
-### Project Knowledge Base Tools
+### Source Code Tools
 
-| Tool Name | Description |
-|-----------|-------------|
-| `init_project_knowledge_base` | Initialize project knowledge base |
-| `search_project_class` | Search type definitions in project (supports class, record, interface, enum) |
-| `search_project_function` | Search function definitions in project |
-| `semantic_search_project` | Semantic search in project |
-| `get_project_kb_stats` | Get project knowledge base statistics |
-| `get_thirdparty_paths` | Get third-party library paths for project |
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `read_source_file` | Read file content or search by class/function name | `file_path`, `search_type`(path/class/function), `type_name`, `function_name` |
 
-### Global Third-party Library Knowledge Base Tools
+### Formatting Tools
 
-| Tool Name | Description |
-|-----------|-------------|
-| `build_thirdparty_knowledge_base` | Build third-party library knowledge base (global) |
-| `search_thirdparty_class` | Search classes (including record, interface, enum) in third-party libraries (global) |
-| `search_thirdparty_function` | Search functions in third-party libraries (global) |
-| `search_thirdparty_record` | Search record types in third-party libraries (global) |
-| `semantic_search_thirdparty` | Semantic search in third-party libraries (global) |
-| `search_by_filename` | Search files by filename (supports wildcards) (global) |
-| `get_thirdparty_kb_stats` | Get third-party library knowledge base statistics (global) |
-| `get_thirdparty_paths_global` | Get third-party library paths list (global) |
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `format_delphi` | Format Delphi source code, check/set pasfmt | `action`(file/code/check/set_path/status), `file_path`, `code` |
 
-### Help Documentation Tools
+### Async Task Tools
 
-| Tool Name | Description |
-|-----------|-------------|
-| `build_help_knowledge_base` | Build Delphi help documentation knowledge base (full build: extract+scan+index, supports async mode) |
-| `extract_help_chm` | Extract Delphi help documentation CHM files (step 1 of incremental build) |
-| `scan_help_html` | Scan extracted HTML files (step 2 of incremental build) |
-| `build_help_kb_index` | Build help documentation vector index (step 3 of incremental build) |
-| `get_task_status` | Get background task status (for querying help knowledge base build progress) |
-| `list_tasks` | List all background tasks |
-| `search_help` | Search Delphi help documentation (supports semantic search for classes, functions, and documents) |
-| `get_help_kb_stats` | Get help documentation knowledge base statistics |
-
-#### Help Knowledge Base Build Methods
-
-**Method 1: Full Build (One-click)**
-```json
-{
-  "force_rebuild": false,
-  "async_mode": true,
-  "help_names": ["fmx", "vcl"],
-  "max_files_per_help": 100
-}
-```
-
-**Method 2: Step-by-step Build (More flexible, suitable for large knowledge bases)**
-```json
-// Step 1: Extract CHM
-{ "help_names": ["fmx", "vcl"] }
-
-// Step 2: Scan HTML
-{ "help_names": ["fmx", "vcl"], "max_files_per_help": 100 }
-
-// Step 3: Build Index
-{ "help_names": ["fmx", "vcl"], "max_files_per_help": 100, "async_mode": true }
-```
-
-**Method 3: Incremental Build (Skip extraction, scan already extracted HTML directly)**
-```json
-{
-  "help_names": ["fmx", "vcl"],
-  "max_files_per_help": 100,
-  "source_dir": "data/help-knowledge-base/extracted"
-}
-```
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `async_task` | Manage background tasks (e.g., build knowledge base) | `action`(start/status/result/list/cancel), `task_id` |
 
 ### Coding Standards Tools
 
-| Tool Name | Description |
-|-----------|-------------|
-| `get_coding_rules` | Get Delphi source code coding rules |
+| Tool Name | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `get_coding_rules` | Get Delphi coding standards | `project_path`(optional) |
 
 ## Knowledge Base
 
@@ -363,6 +291,23 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 See [LICENSE](LICENSE) file for details.
 
 ## Version History
+
+### v2026.04.26 (2026-04-26)
+
+- Fixed multiple MCP interface bugs
+  - `check_environment`: detect action parameter passing error; added install/format_install action implementation
+  - `search_knowledge`: search result file path showing N/A (wrong key name); search_type filtering not working
+  - Missing `config.set_config_manager` call causing "config manager not initialized" error
+- Added `get_coding_rules` tool, exposing coding standards via MCP tool interface
+- Added MCP resource export (`delphi://coding-rules`), AI agents can read coding rules via resources protocol
+- Cleaned up invalid old code (net deletion of 1251 lines)
+  - Removed 18 deprecated functions (build_knowledge_base, search_class, search_function, semantic_search, etc.)
+  - Removed 5 deprecated config functions (set_compiler_config, detect_compilers, search_delphi_compilers, etc.)
+  - Cleaned up 21 deprecated exports in __init__.py
+- Fixed third-party knowledge base old schema compatibility (auto drop old tables and rebuild)
+- Fixed unit type kind code from single-letter 'u' to double-letter 'UI'
+- Removed unused SINGLE_TO_DOUBLE old data compatibility mapping
+- Optimized 8 tool descriptions: added typical scenarios, action descriptions, parameter applicability
 
 ### v2026.04.25 (2026-04-25)
 
