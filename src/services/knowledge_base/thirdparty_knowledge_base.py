@@ -483,18 +483,11 @@ class ThirdPartyKnowledgeBase:
             logger.info("知识库已存在,使用 force_rebuild=true 强制重建")
             return True
 
-        # force_rebuild时删除旧数据库
+        # force_rebuild时关闭旧连接并清空旧数据
         if force_rebuild:
             if self.kb_instance is not None:
                 self.kb_instance.close()
                 self.kb_instance = None
-            db_file = self.kb_dir / "knowledge.sqlite"
-            if db_file.exists():
-                try:
-                    db_file.unlink()
-                    logger.info("已删除旧知识库数据库")
-                except PermissionError:
-                    logger.warning("无法删除旧数据库(文件被占用),将清空旧数据后重建")
 
         # 合并所有路径进行扫描
         all_source_files = []

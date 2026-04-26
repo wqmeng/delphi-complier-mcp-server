@@ -295,8 +295,8 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
                     if row:
                         file_path = row[0] or row[1]
                     conn.close()
-                except Exception as e:
-                    print(f"[DEBUG] file_id lookup failed: {e}")
+                except Exception:
+                    pass
         
         if not file_path:
             return CallToolResult(
