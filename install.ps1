@@ -580,8 +580,9 @@ function Test-Cursor {
 }
 
 function Test-OpenCode {
-    # OpenCode 全局配置文件在用户目录下
-    $configPath = Join-Path $env:USERPROFILE ".opencode\config.json"
+    # OpenCode 全局配置文件
+    $opencodeConfigDir = Join-Path $env:USERPROFILE ".config\opencode"
+    $configPath = Join-Path $opencodeConfigDir "opencode.json"
     
     # 检查 OpenCode 是否安装（多种方式）
     # 1. npm 全局安装
@@ -1023,10 +1024,12 @@ function Get-McpConfig {
     
     if ($ConfigType -eq "OpenCode") {
         # OpenCode 使用特殊配置格式
+        $cwdPath = if ($ProjectDir -and (Test-Path $ProjectDir)) { $ProjectDir } else { $ScriptDir }
         if ($PythonExe -eq $venvPython) {
             return @{
                 type = "local"
                 command = @($PythonExe, $McpServerScript)
+                cwd = $cwdPath
                 environment = @{
                     PYTHONIOENCODING = "utf-8"
                     PYTHONUNBUFFERED = "1"
@@ -1038,6 +1041,7 @@ function Get-McpConfig {
             return @{
                 type = "local"
                 command = @("python", "src\server.py")
+                cwd = $cwdPath
                 environment = @{
                     PYTHONIOENCODING = "utf-8"
                     PYTHONUNBUFFERED = "1"
