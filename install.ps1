@@ -1188,6 +1188,8 @@ function Add-McpConfig {
 
     # 保存配置
     $json = $config | ConvertTo-Json -Depth 10
+    # PowerShell ConvertTo-Json 将单元素数组序列化为字符串，修复此问题
+    $json = $json -replace '"plugin":\s*"([^"]+)"', '"plugin": ["$1"]'
     $json | Out-File -FilePath $ConfigPath -Encoding UTF8 -Force
 
     Write-Success "已配置 MCP Server 到: $ConfigPath"
