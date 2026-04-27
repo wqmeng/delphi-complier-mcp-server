@@ -1048,11 +1048,13 @@ function Get-McpConfig {
     }
     else {
         # 标准 MCP 配置格式
+        $cwdPath = if ($ProjectDir -and (Test-Path $ProjectDir)) { $ProjectDir } else { $ScriptDir }
         if ($PythonExe -eq $venvPython) {
-            # 使用虚拟环境，使用绝对路径
+            # 使用虚拟环境
             return @{
                 command = $PythonExe
                 args = @($McpServerScript)
+                cwd = $cwdPath
                 env = @{
                     PYTHONUNBUFFERED = "1"
                     PYTHONIOENCODING = "utf-8"
@@ -1061,8 +1063,7 @@ function Get-McpConfig {
             }
         }
         else {
-            # 使用系统 Python，使用 cwd 方式
-            $cwdPath = if ($ProjectDir -and (Test-Path $ProjectDir)) { $ProjectDir } else { $ScriptDir }
+            # 使用系统 Python
             return @{
                 command = "python"
                 args = @("src\server.py")
