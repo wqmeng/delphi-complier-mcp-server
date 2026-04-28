@@ -224,7 +224,7 @@ def _extract_all_entities(content: str) -> List[Dict]:
     
     # 提取 procedure (FP)
     for match in _FUNC_PATTERN_2.finditer(content):
-        name = match.group(1)
+        name = match.group(2)
         line = content[:match.start()].count('\n') + 1
         entities.append({
             'name': name,
@@ -446,7 +446,7 @@ _SET_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*set\s+of\s+', re.
 _FUNC_PATTERN_1 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
 _FUNC_PATTERN_2 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)', re.MULTILINE | re.IGNORECASE)
 _FUNC_PATTERN_3 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
-_FUNC_PATTERN_4 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
+_FUNC_PATTERN_4 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;', re.MULTILINE | re.IGNORECASE)
 
 # 支持批量常量: const L1=1;L2=3; 或 resourcestring S1='a';S2='b';
 _CONST_PATTERN = re.compile(r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
