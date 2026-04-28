@@ -453,7 +453,8 @@ _CONST_PATTERN = re.compile(r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_
 # 支持类型标注常量: SMenuSeparator: string = '-'; 或 X = value;
 _CONST_PATTERN_TYPED = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[^\s=]+\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
 # 支持简单常量: SIntOverflow = '...'; 或 toInteger = Char(3);
-_CONST_PATTERN_SIMPLE = re.compile(r'^\s*([A-Z][a-zA-Z0-9_]*)\s*=\s*([^;{]+);', re.MULTILINE | re.IGNORECASE)
+# 排除类型定义: 右值以 record/class/interface/set/array/^/reference to/procedure/function 开头
+_CONST_PATTERN_SIMPLE = re.compile(r'^\s*([A-Z][a-zA-Z0-9_]*)\s*=\s*(?!record\b|class\b|interface\b|set\b|array\b|\^|reference\s+to\b|procedure\b|function\b)([^\s;{][^;{]*);', re.MULTILINE | re.IGNORECASE)
 
 _TYPE_PATTERN_1 = re.compile(r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*?)(?:;|$)', re.MULTILINE | re.IGNORECASE)
 _TYPE_PATTERN_2 = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(array|record|set|file|class|interface)\b', re.MULTILINE | re.IGNORECASE)
