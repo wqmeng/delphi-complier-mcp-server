@@ -434,9 +434,10 @@ def _extract_uses(content: str) -> List[str]:
 
 
 # 预编译正则表达式
-_CLASS_PATTERN = re.compile(r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s*(?:\(\s*([^)]+)\))?\s*(?:sealed|abstract)?', re.MULTILINE | re.IGNORECASE)
-_RECORD_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
-_INTERFACE_PATTERN = re.compile(r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?', re.MULTILINE | re.IGNORECASE)
+# 支持泛型: TList<T>、TDictionary<TKey, TValue>、TMyClass<T: class>
+_CLASS_PATTERN = re.compile(r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+(?:<[^>]+>)*>)?)\s*=\s*class\s*(?:\(\s*([^)]+)\))?\s*(?:sealed|abstract)?', re.MULTILINE | re.IGNORECASE)
+_RECORD_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*\))?', re.MULTILINE | re.IGNORECASE)
+_INTERFACE_PATTERN = re.compile(r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*\))?', re.MULTILINE | re.IGNORECASE)
 # 匹配 class helper for TSomeClass 和 record helper for TSomeRecord
 _HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
 _RECORD_HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)

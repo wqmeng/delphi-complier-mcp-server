@@ -648,7 +648,7 @@ class SmartCacheKnowledgeBase:
                     })
             
             # 类成员字段（以F开头，在type块内）
-            field_pattern = r'\b(F[A-Z][a-zA-Z0-9]*)\s*:\s*([A-Z][a-zA-Z0-9]*)\s*;'
+            field_pattern = r'\b(F[A-Z][a-zA-Z0-9]*)\s*:\s*([a-zA-Z][a-zA-Z0-9]*)\s*;'
             for match in re.finditer(field_pattern, content):
                 field_name = match.group(1)
                 field_type = match.group(2)
