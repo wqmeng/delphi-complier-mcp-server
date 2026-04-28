@@ -57,10 +57,10 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     
     
     _SEARCH_TYPE_TO_KIND = {
-        'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
-        'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF'], 'procedure': ['FP'],
-        'const': ['CC'], 'resourcestring': ['CR'], 'property': ['MP'], 'field': ['MF'],
-        'method': ['MM'], 'unit': ['u'], 'event': ['MM'],
+        'class': ['TC', 'c'], 'record': ['TR', 'r'], 'interface': ['TI', 'i'], 'enum': ['TE', 'e'],
+        'set': ['TS', 's'], 'type': ['TY', 'AT', 'PT', 'y', 'a', 't'], 'function': ['FF', 'f'], 'procedure': ['FP', 'p'],
+        'const': ['CC', 'k'], 'resourcestring': ['CR'], 'property': ['MP', 'v'], 'field': ['MF', 'm'],
+        'method': ['MM', 'g'], 'unit': ['u'], 'event': ['MM', 'g'],
     }
 
     def _filter_by_search_type(symbols, st):
