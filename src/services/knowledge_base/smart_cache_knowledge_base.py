@@ -1093,8 +1093,12 @@ class SmartCacheKnowledgeBase:
             print(f"  开始构建向量，共{total}个项目...")
             
             # 动态计算worker数和chunksize
-            n_workers = max(2, cpu_count() - 1)
-            batch_size = self.config['build'].get('batch_size', 1000)
+            parallel_workers_config = self.config.get('build', {}).get('parallel_workers')
+            if parallel_workers_config:
+                n_workers = max(1, parallel_workers_config)
+            else:
+                n_workers = max(2, cpu_count() - 1)
+            batch_size = self.config.get('build', {}).get('batch_size', 1000)
             vector_chunksize = max(500, batch_size // n_workers)
             
             print(f"  使用 {n_workers} 进程并行计算向量 (chunksize={vector_chunksize})...")

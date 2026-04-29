@@ -25,6 +25,7 @@ from multiprocessing import cpu_count
 from bs4 import BeautifulSoup
 
 from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
+from .fts5_lazy_manager import FTS5LazyManager
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -746,6 +747,15 @@ class DelphiHelpKnowledgeBase:
 
         # Delphi 帮助目录
         self.delphi_help_dir = self._find_delphi_help_dir()
+
+        # 初始化 FTS5 懒加载管理器（用于 vocabularies 表）
+        db_path = str(self.kb_dir / "knowledge.sqlite")
+        self.fts5_manager = FTS5LazyManager(
+            db_path=db_path,
+            main_table='vocabularies',
+            fts_table='vocabularies_fts',
+            columns=['name', 'description']
+        )
 
         logger.info(f"帮助文档知识库初始化: {self.kb_dir}")
 
@@ -1711,13 +1721,14 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
             logger.error(f"加载知识库失败: {e}")
             return False
 
-    def search(self, query: str, top_k: int = 10) -> List[Dict]:
+    def search(self, query: str, top_k: int = 10, use_fts5: bool = True) -> List[Dict]:
         """
-        搜索帮助文档 - 从SQLite查询 (统一Schema)
+        搜索帮助文档 - 从SQLite查询 (支持 FTS5 懒加载)
 
         Args:
             query: 搜索查询
             top_k: 返回结果数量
+            use_fts5: 是否使用 FTS5（默认 True）
 
         Returns:
             搜索结果
@@ -1729,7 +1740,107 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
             if not db_file.exists():
                 logger.warning("数据库不存在")
                 return results
+            
+            if use_fts5:
+                # 使用 FTS5 懒加载搜索
+                return self._fts5_search(query, top_k)
+            else:
+                # 降级搜索（LIKE）
+                return self._fallback_search(query, top_k)
                 
+        except Exception as e:
+            logger.error(f"搜索失败: {e}")
+            return results
+    
+    def _fts5_search(self, query: str, top_k: int) -> List[Dict]:
+        """
+        FTS5 搜索（懒加载）
+        
+        Args:
+            query: 搜索查询
+            top_k: 返回结果数量
+        
+        Returns:
+            搜索结果
+        """
+        results = []
+        
+        try:
+            db_file = self.kb_dir / "knowledge.sqlite"
+            conn = sqlite3.connect(str(db_file))
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            # 检查 FTS5 覆盖率
+            coverage = self.fts5_manager.get_coverage()
+            
+            if coverage >= 0.5:
+                # FTS5 搜索
+                safe_query = self.fts5_manager._escape_fts_query(query)
+                
+                cursor.execute(f"""
+                    SELECT v.id, v.name, v.type, v.base_class, v.description, 
+                           f.relative_path, f.full_path, bm25(vocabularies_fts) as score
+                    FROM vocabularies v
+                    JOIN files f ON v.file_id = f.id
+                    JOIN vocabularies_fts ON v.id = vocabularies_fts.rowid
+                    WHERE vocabularies_fts MATCH ?
+                    ORDER BY bm25(vocabularies_fts)
+                    LIMIT ?
+                """, (safe_query, top_k * 2))
+            else:
+                # 降级搜索 + 触发后台构建
+                results = self._fallback_search(query, top_k)
+                self.fts5_manager.trigger_background_build()
+                conn.close()
+                return results
+            
+            for row in cursor.fetchall():
+                type_name = row['type']
+                if type_name == 'class':
+                    results.append({
+                        'type': 'class',
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'description': row['description'],
+                        'base_class': row['base_class']
+                    })
+                elif type_name in ('function', 'property', 'event'):
+                    results.append({
+                        'type': type_name,
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'description': row['description']
+                    })
+            
+            conn.close()
+            return results[:top_k]
+            
+        except Exception as e:
+            logger.error(f"FTS5 搜索失败: {e}")
+            return self._fallback_search(query, top_k)
+    
+    def _fallback_search(self, query: str, top_k: int) -> List[Dict]:
+        """
+        降级搜索（LIKE 全表扫描）
+        
+        Args:
+            query: 搜索查询
+            top_k: 返回结果数量
+        
+        Returns:
+            搜索结果
+        """
+        results = []
+        
+        try:
+            db_file = self.kb_dir / "knowledge.sqlite"
             conn = sqlite3.connect(str(db_file))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
@@ -1751,6 +1862,37 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
                     END
                 LIMIT ?
             """, (query_lower, top_k * 2))
+            
+            for row in cursor.fetchall():
+                type_name = row['type']
+                if type_name == 'class':
+                    results.append({
+                        'type': 'class',
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'description': row['description'],
+                        'base_class': row['base_class']
+                    })
+                elif type_name in ('function', 'property', 'event'):
+                    results.append({
+                        'type': type_name,
+                        'name': row['name'],
+                        'title': row['name'],
+                        'path': row['relative_path'],
+                        'file_path': row['relative_path'],
+                        'full_path': row['full_path'],
+                        'description': row['description']
+                    })
+            
+            conn.close()
+            return results[:top_k]
+            
+        except Exception as e:
+            logger.error(f"降级搜索失败: {e}")
+            return results
             
             for row in cursor.fetchall():
                 type_name = row['type']

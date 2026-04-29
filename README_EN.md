@@ -40,6 +40,9 @@ Delphi MCP Server is a server based on Model Context Protocol (MCP) that allows 
 - **Third-party Library Knowledge Base**: Automatically extracts third-party library paths from .dproj files and builds knowledge base
 - **Incremental Updates**: Automatically detects source code changes and incrementally updates project knowledge base
 - **Help Documentation Knowledge Base**: Extracts content from Delphi CHM help files, supports API documentation queries
+- **Generic Document Knowledge Base**: Supports scanning and searching of txt/md/html/docx/doc/hlp/pdf and web documents
+  - Required dependencies: `beautifulsoup4`, `html2text`, `lxml`, `requests` (already in requirements.txt)
+  - Optional dependencies: `python-docx` (Word .docx support), `antiword/catdoc` (legacy Word .doc support), `PyMuPDF` (PDF support, recommended) or `pdfplumber` (PDF support, fallback)
 - **Smart Deduplication**: Deduplicates based on full path, correctly handles files with same name in different directories
 
 ### Coding Standards Features
@@ -55,6 +58,118 @@ Delphi MCP Server is a server based on Model Context Protocol (MCP) that allows 
 - Windows operating system
 - Git
 - 7-Zip (for extracting CHM help files, optional)
+
+## Knowledge Base Storage Locations
+
+All knowledge base data is stored in the `data/` folder under the project root:
+
+| Knowledge Base Type | Storage Path | Description |
+|--------------------|--------------|-------------|
+| Delphi Source KB | `data/delphi-knowledge-base/` | Delphi official source (RTL/VCL/FMX etc.) |
+| Third-party Library KB | `data/thirdparty-knowledge-base/` | Third-party component library source |
+| Help Documentation KB | `data/help-knowledge-base/` | Delphi CHM help documentation |
+| Generic Document KB | `data/document-knowledge-base/` | txt/md/html/docx generic documents |
+| Project KB | `<project-dir>/.delphi-kb/` | Project-level KB, stored in project directory |
+
+Each knowledge base directory contains:
+- `knowledge_base.sqlite` or `knowledge.sqlite` - SQLite database file
+- `config.json` - Knowledge base configuration file
+
+## Knowledge Base Configuration
+
+Each knowledge base is configured via `config.json` file, supporting custom database, source paths, build parameters, etc.
+
+### Delphi Source Knowledge Base Configuration
+
+Location: `data/delphi-knowledge-base/config.json`
+
+```json
+{
+  "name": "delphi-knowledge-base",
+  "type": "delphi-source",
+  "version": "2.0",
+  "source": {
+    "type": "link",
+    "path": "C:\\Program Files (x86)\\Embarcadero\\Studio\\22.0\\source",
+    "extensions": [".pas", ".dfm", ".inc"],
+    "encoding": "utf-8"
+  },
+  "database": {
+    "file": "knowledge_base.sqlite",
+    "cache_size": 10000
+  },
+  "build": {
+    "auto_rebuild": false,
+    "incremental": true,
+    "incremental_hash_mode": "mtime_size",
+    "parallel_workers": 4,
+    "batch_size": 1000
+  }
+}
+```
+
+| Configuration | Description | Default |
+|--------------|-------------|---------|
+| `source.type` | Source type: `link`=symlink, `copy`=copy | `link` |
+| `source.path` | Delphi source root directory | Auto-detect |
+| `source.extensions` | File extensions to scan | `[".pas", ".dfm", ".inc"]` |
+| `database.file` | Database filename | `knowledge_base.sqlite` |
+| `database.cache_size` | Vector cache size | `10000` |
+| `build.incremental` | Enable incremental build | `true` |
+| `build.incremental_hash_mode` | Change detection: `mtime_size`=fast, `md5`=accurate | `mtime_size` |
+| `build.parallel_workers` | Parallel worker processes | Auto-calculate |
+| `build.batch_size` | Batch size | `1000` |
+
+### Generic Document Knowledge Base Configuration
+
+Location: `data/document-knowledge-base/config.json`
+
+```json
+{
+  "name": "document-knowledge-base",
+  "type": "generic-documents",
+  "version": "1.0",
+  "database": {
+    "file": "documents.sqlite"
+  },
+  "build": {
+    "parallel_workers": null,
+    "batch_size": 50,
+    "supported_extensions": [".txt", ".md", ".markdown", ".htm", ".html", ".docx", ".doc", ".hlp"]
+  }
+}
+```
+
+| Configuration | Description | Default |
+|--------------|-------------|---------|
+| `database.file` | Database filename | `documents.sqlite` |
+| `build.parallel_workers` | Parallel workers (`null`=auto-calculate) | `null` |
+| `build.batch_size` | Batch size | `50` |
+| `build.supported_extensions` | Supported document formats | 8 formats |
+
+### Third-party Library Knowledge Base Configuration
+
+Location: `data/thirdparty-knowledge-base/config.json`
+
+Same format as Delphi Source Knowledge Base, auto-generated via `delphi_kb(action=build, kb_type=thirdparty)`.
+
+### Project Knowledge Base Configuration
+
+Location: `<project-dir>/.delphi-kb/config.json`
+
+Project KB config is auto-generated on first build, containing project source paths and third-party library paths.
+
+### Configuration Effectiveness
+
+All configuration items use default values when missing, ensuring system runs correctly:
+
+- ✅ `database.file` - Effective
+- ✅ `database.cache_size` - Effective
+- ✅ `source.type/path` - Effective
+- ✅ `build.incremental_hash_mode` - Effective
+- ✅ `build.parallel_workers` - Effective
+- ✅ `build.batch_size` - Effective
+- ✅ `build.supported_extensions` - Effective (Document KB)
 
 ## Installation
 

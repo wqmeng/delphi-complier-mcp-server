@@ -301,3 +301,108 @@ When adding new MCP tools:
 - MCP tools must be async-compatible
 - Knowledge bases stored in `data/` directory
 - Always use UTF-8 encoding on Windows
+
+---
+
+## MCP Tools Overview
+
+### Compilation Tools
+
+| Tool | Description |
+|------|-------------|
+| `compile_project` | 编译 Delphi 项目（支持 .dproj/.dpr/.dpk） |
+| `install_package` | 编译并安装 Delphi 组件包 |
+| `check_environment` | 检查编译环境配置 |
+| `format_delphi` | 格式化 Delphi 源码（使用 pasfmt） |
+
+### Knowledge Base Tools
+
+| Tool | Description |
+|------|-------------|
+| `delphi_kb` | Delphi 代码知识库查询（类/函数/单元搜索） |
+| `read_source_file` | 读取 Delphi 源文件内容 |
+
+### compile_project 支持的文件类型
+
+| 扩展名 | 说明 | 特殊处理 |
+|--------|------|---------|
+| `.dproj` | 项目文件 | 标准 MSBuild 编译 |
+| `.dpr` | 项目源文件 | 查找对应 .dproj 或直接编译 |
+| `.dpk` | 组件包文件 | 自动检测包类型，设计期包可自动安装 |
+
+---
+
+## Knowledge Base Features
+
+### Delphi Knowledge Base
+
+- **存储位置**: `data/delphi-knowledge-base/`
+- **数据库**: SQLite (knowledge.sqlite)
+- **索引**: 逆序索引 (`name_lower_rev`) + 向量索引（TF-IDF）
+- **搜索**: 支持语义搜索、模糊搜索、精确搜索
+
+### Document Knowledge Base
+
+- **存储位置**: `data/document-knowledge-base/`
+- **支持格式**: txt, md, html, docx, doc, hlp, pdf, 网页
+- **索引**: 
+  - 逆序索引 (`title_rev`) - 优化前缀/后缀匹配
+  - FTS5 全文索引 - BM25 排序（懒加载）
+- **搜索策略**: 
+  - FTS5 覆盖率 ≥ 50% → FTS5 MATCH（快）
+  - FTS5 覆盖率 < 50% →/LIKE 降级 + 后台构建 FTS5
+
+### Help Knowledge Base
+
+- **存储位置**: `data/help-knowledge-base/`
+- **来源**: Delphi CHM 帮助文件
+- **索引**: FTS5 全文索引（懒加载）
+- **实体**: 类、函数、属性、事件
+
+---
+
+## PDF Processing
+
+PDF 处理支持两种库（优先级递减）：
+
+1. **PyMuPDF** (推荐) - 性能更好
+   ```bash
+   pip install PyMuPDF
+   ```
+
+2. **pdfplumber** (备选) - 纯 Python
+   ```bash
+   pip install pdfplumber
+   ```
+
+---
+
+## Component Package Compilation
+
+### .dpk 文件编译流程
+
+```python
+compile_project("component.dpk")
+  ↓
+检测包类型（运行期/设计期）
+  ↓
+编译生成 .bpl 文件
+  ↓
+设计期包 + install_if_design_package=True
+  ↓
+注册到 IDE 注册表
+```
+
+### 包类型检测
+
+设计期包标记：
+- `{$DESIGNONLY}` 编译指令
+- `requires dsnide` 依赖
+- `requires DesignIntf, DesignEditors` 依赖
+
+### 复用函数
+
+`compile_project` 复用 `install_package` 的函数：
+- `_is_runtime_only_package()` - 检测包类型
+- `_compile_single_package()` - 编译单个包
+- `_register_packages_to_ide()` - 注册到 IDE

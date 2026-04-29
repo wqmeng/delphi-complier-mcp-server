@@ -1,6 +1,41 @@
 {
   "entries": [
     {
+      "timestamp": "2026-04-29T16:28:10.941713",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "success",
+      "duration": 1318,
+      "error_message": null
+    },
+    {
+      "timestamp": "2026-04-29T16:19:23.754281",
+      "project_path": "C:/User/GR32/Source/Packages/XE8/GR32_R.dproj",
+      "status": "failed",
+      "duration": 665,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-29T16:18:36.830421",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 663,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-29T16:18:05.436763",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 669,
+      "error_message": "无错误"
+    },
+    {
+      "timestamp": "2026-04-29T16:16:45.711372",
+      "project_path": "C:\\User\\GR32\\Source\\Packages\\XE8\\GR32_R.dproj",
+      "status": "failed",
+      "duration": 1293,
+      "error_message": "无错误"
+    },
+    {
       "timestamp": "2026-04-24T20:41:30.333805",
       "project_path": "C:\\\\User\\\\GR32\\\\Source\\\\Packages\\\\XE8\\\\GR32_R.dproj",
       "status": "failed",
@@ -664,41 +699,6 @@
       "status": "success",
       "duration": 5999,
       "error_message": null
-    },
-    {
-      "timestamp": "2026-03-09T14:37:14.553971",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "success",
-      "duration": 5728,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-03-09T14:36:14.769603",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3231,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T14:35:45.583735",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3202,
-      "error_message": "无错误"
-    },
-    {
-      "timestamp": "2026-03-09T14:24:01.720698",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "success",
-      "duration": 5874,
-      "error_message": null
-    },
-    {
-      "timestamp": "2026-03-09T14:22:55.720964",
-      "project_path": "C:\\User\\diandaxia\\diandaxia.dproj",
-      "status": "failed",
-      "duration": 3196,
-      "error_message": "无错误"
     }
   ],
   "max_entries": 100

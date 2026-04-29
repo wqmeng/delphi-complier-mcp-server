@@ -9,6 +9,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **FTS5 懒加载全文索引**：独立的 `FTS5LazyManager` 模块，支持按需增量构建
+- 文档知识库集成 FTS5：自动降级搜索 + 后台异步构建
+- 帮助知识库集成 FTS5：vocabularies 表的全文搜索
+- **compile_project 支持 .dpk 文件**：自动检测设计期包并安装
+- 设计期包检测：支持 `{$DESIGNONLY}`、`requires dsnide` 等标记
+- 设计期包自动安装：注册到 IDE 注册表 `Known Packages`
+- **逆序索引优化**：文档知识库添加 `title_lower` 和 `title_rev` 字段
+- 搜索评分排序：标题匹配 > 前缀匹配 > 后缀匹配 > 内容匹配
+
+### Changed
+
+- **废弃 TF-IDF 向量索引**：未使用的向量搜索代码已移除
+- 文档知识库 schema 升级：添加 `title_lower` 和 `title_rev` 字段
+- compile_project 复用 install_package 的函数（消除重复代码）
+- AGENTS.md 更新：添加 MCP 工具概述、知识库特性、组件包编译说明
+
+### Fixed
+
+- 修复搜索无评分排序问题
+- 修复 LIKE 全表扫描性能问题（使用逆序索引优化）
+- 修复依赖检测逻辑：缺少 PDF/DOCX 依赖时正确提示
+
+## [2026.04.30] - 2026-04-30
+
+### Added
+
+- 通用文档知识库支持：扫描、搜索和管理 txt/md/html/docx/doc/hlp/pdf 和网页文档
+- `delphi_kb` 工具新增 `action=scan` 用于扫描文档目录
+- `delphi_kb` 工具新增 `action=web` 用于添加网页文档
+- `delphi_kb` 工具新增 `kb_type=document` 用于查询文档知识库
+- 新增文档处理器：TextProcessor、MarkdownProcessor、HTMLProcessor、DocxProcessor、DocProcessor、HLPProcessor、PDFProcessor、WebDocumentProcessor
+- 新增依赖 `python-docx>=0.8.11` 用于处理 Word 文档
+- 新增依赖 `PyMuPDF`（推荐）或 `pdfplumber`（备选）用于处理 PDF 文档
+- 新增测试文件 `tests/test_document_kb.py` 覆盖所有文档处理器
+- 新增测试文件 `tests/test_edge_cases.py` 覆盖边界条件和潜在 Bug
+- 新增测试文件 `tests/test_document_async.py` 覆盖异步功能
+- 文档知识库支持 config.json 配置（database.file、build.parallel_workers、build.batch_size、build.supported_extensions）
+- 文档知识库异步扫描支持：`scan_directory_async()`、`is_scanning()`、`wait_scan_complete()`
+- 新增 PostgreSQL 文档知识库构建脚本 `scripts/build_postgresql_kb.py`
+- 文档知识库异步任务支持：`async_task` 工具新增 `build_document_knowledge_base` 任务类型
+- 文档知识库自动爬取支持：通过 `start_url` 参数自动发现链接并递归采集
+
+### Changed
+
+- 扩展 `delphi_kb` 工具 schema，新增 `directory`、`url`、`content_type`、`extensions`、`max_workers` 参数
+- 文档知识库数据存储在 `data/document-knowledge-base/documents.sqlite`
+- README.md 新增"通用文档知识库"依赖说明和"知识库存储位置"章节
+- `SmartCacheKnowledgeBase.rebuild_async` 读取 `build.parallel_workers` 配置项
+- `GenericDocumentScanner` 支持从 config.json 加载配置
+
+### Fixed
+
+- 修复 `add_web_document` 资源泄漏：使用 try-finally 保证数据库连接关闭
+- 清理未使用的导入 `os` 和常量 `KIND_DOCUMENT`、`KIND_SECTION`、`KIND_CODE`
+- 修复 `SmartCacheKnowledgeBase` 未读取 `build.parallel_workers` 配置项
+- 修复 `GenericDocumentScanner` 不支持 config.json 配置
+- 修复 `GenericDocumentScanner` 缺少异步扫描支持
+- 同步 README_EN.md 与 README.md 内容（新增通用文档知识库说明和配置文档）
+
+## [2026.04.29] - 2026-04-29
+
+### Added
+
 - Schema 版本管理机制（SCHEMA_VERSION），metadata 表记录版本号
 - 知识库搜索工具支持 project/thirdparty/help 多库并行搜索
 - 帮助知识库新增 `search_function` 支持

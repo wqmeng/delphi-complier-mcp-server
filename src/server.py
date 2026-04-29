@@ -79,6 +79,7 @@ else:
     from src.tools import async_tasks as async_tools
     from src.tools import pasfmt
     from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
+    from src.tools import document_kb_tools as doc_tools
     from src.utils.logger import init_default_logger, get_logger
     from src.__version__ import __version__, __copyright__
 
@@ -160,12 +161,14 @@ async def run_server():
                             "  1) action=search（默认）：搜索符号/文档。需要'query'参数，'search_type'过滤实体类型，'kb_type'选择知识库范围，'top_k'控制结果数。\n"
                             "  2) action=stats：查看知识库统计（文件/类/函数数量）。用'kb_type'选择知识库范围。\n"
                             "  3) action=build：构建/重建知识库（耗时操作，必须使用async_mode=true）。提交后通过'async_task'工具的action=status + task_id轮询进度。\n"
+                            "  4) action=scan：扫描目录添加文档（kb_type=document时）。需要'directory'参数。\n"
+                            "  5) action=web：添加网页文档（kb_type=document时）。需要'url'参数。\n"
                             "工作流: delphi_kb(action=search, 定位符号) → read_source_file(读取实际源码).",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "操作: search=语义/精确搜索(使用query+search_type+kb_type+top_k); stats=查看知识库统计(使用kb_type); build=异步构建知识库(使用kb_type+version+force_rebuild, 默认async_mode=true, 通过async_task轮询)"},
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码(RTL/VCL/FMX等), project=项目源码, thirdparty=三方库源码, help=CHM帮助文档。适用于所有action。"},
+                        "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web"], "default": "search", "description": "操作: search=语义/精确搜索; stats=查看统计; build=构建知识库; scan=扫描文档目录(kb_type=document); web=添加网页文档(kb_type=document)"},
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help", "document"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码, project=项目源码, thirdparty=三方库源码, help=CHM帮助文档, document=通用文档(txt/md/html/docx/doc/hlp/网页)"},
                         "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "实体类型过滤（仅action=search）。semantic=语义匹配(默认), all=全部, class=类(TC), record=记录(TR), interface=接口(TI), enum=枚举(TE), set=集合(TS), type=类型别名(TY), function=全局函数(FF), procedure=过程(FP), const=常量(CC), resourcestring=资源字符串(CR), property=属性(MP), field=字段(MF), method=方法(MM), unit=单元(UI), fuzzy=LIKE模糊匹配, filename=按文件名搜索, event=事件(ME), uses=引用单元"},
                         "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例如 'TStringList'（精确类名）、'TButton Click'（语义）、'Create'（函数名）、'SysUtils'（单元名）"},
                         "project_path": {"type": "string", "description": "项目.dproj/.dpr路径（仅action=build且kb_type=project时需要）"},
@@ -174,7 +177,18 @@ async def run_server():
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（仅action=build）。false=尽可能增量更新"},
                         "incremental": {"type": "boolean", "default": False, "description": "增量构建，跳过CHM提取（仅action=build且kb_type=help）"},
                         "hash_mode": {"type": "string", "default": "mtime_size", "description": "变更检测模式（仅action=build）: mtime_size=快速(默认), md5=准确"},
-                        "top_k": {"type": "integer", "default": 10, "description": "最大返回结果数 1-50（仅action=search）"}
+                        "top_k": {"type": "integer", "default": 10, "description": "最大返回结果数 1-50（仅action=search）"},
+                        "directory": {"type": "string", "description": "要扫描的目录路径（仅action=scan且kb_type=document时需要）"},
+                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "文件扩展名列表（可选，如['.md', '.txt', '.html']）"},
+                        "url": {"type": "string", "description": "网页URL（仅action=web且kb_type=document时需要）"},
+                        "urls": {"type": "array", "items": {"type": "string"}, "description": "网页URL列表（action=build且kb_type=document时使用）"},
+                        "start_url": {"type": "string", "description": "起始URL（action=build且kb_type=document时自动爬取）"},
+                        "max_pages": {"type": "integer", "default": 100, "description": "最大爬取页面数（自动爬取时）"},
+                        "max_depth": {"type": "integer", "default": 3, "description": "最大爬取深度（自动爬取时）"},
+                        "domain_filter": {"type": "string", "description": "域名过滤（自动爬取时，只爬取该域名）"},
+                        "url_pattern": {"type": "string", "description": "URL正则模式过滤（自动爬取时）"},
+                        "content_type": {"type": "string", "description": "文档类型过滤（可选，如'markdown', 'html', 'docx'）"},
+                        "max_workers": {"type": "integer", "description": "最大工作进程数（可选）"}
                     },
                     "required": []
                 }
@@ -308,17 +322,24 @@ async def run_server():
             
             elif name == "delphi_kb":
                 action = arguments.get("action", "search")
+                kb_type = arguments.get("kb_type", "all")
+                
                 if action == "search":
-                    result = await kb_tools.search_knowledge(arguments)
+                    if kb_type == "document":
+                        result = await doc_tools.search_documents(arguments)
+                    else:
+                        result = await kb_tools.search_knowledge(arguments)
                 elif action == "stats":
-                    result = await kb_tools.get_unified_knowledge_stats(arguments)
+                    if kb_type == "document":
+                        result = await doc_tools.get_document_statistics(arguments)
+                    else:
+                        result = await kb_tools.get_unified_knowledge_stats(arguments)
                 elif action == "build":
                     # action=build 需要数分钟到数十分钟，自动使用异步任务方式
                     from src.tools.async_tasks import start_async_task
                     async_mode = arguments.get("async_mode", True)
                     if async_mode:
                         # 异步模式：启动后台任务并立即返回 task_id，让 AI 轮询进度
-                        kb_type = arguments.get("kb_type", "all")
                         version = arguments.get("version")
                         force_rebuild = arguments.get("force_rebuild", False)
                         
@@ -333,20 +354,52 @@ async def run_server():
                             # 帮助知识库构建
                             result = await help_kb_tools.build_help_knowledge_base(arguments)
                             return result
+                        elif kb_type == "document":
+                            # 文档知识库构建
+                            task_type = "build_document_knowledge_base"
                         else:
                             task_type = "build_knowledge_base"
                         
                         incremental = arguments.get("incremental", False)
                         
+                        # 根据任务类型准备参数
+                        if task_type == "build_document_knowledge_base":
+                            task_params = {
+                                "urls": arguments.get("urls", []),
+                                "directory": arguments.get("directory"),
+                                "extensions": arguments.get("extensions"),
+                                "start_url": arguments.get("start_url"),
+                                "max_pages": arguments.get("max_pages", 100),
+                                "max_depth": arguments.get("max_depth", 3),
+                                "domain_filter": arguments.get("domain_filter"),
+                                "url_pattern": arguments.get("url_pattern")
+                            }
+                        else:
+                            task_params = {
+                                "version": version,
+                                "force_rebuild": force_rebuild,
+                                "incremental": incremental
+                            }
+                        
                         task_result = await start_async_task({
                             "task_type": task_type,
-                            "params": {"version": version, "force_rebuild": force_rebuild, "incremental": incremental},
+                            "params": task_params,
                             "show_progress": arguments.get("show_progress", True)
                         })
                         result = task_result
                     else:
                         # 同步模式（非推荐）
                         result = await kb_tools.build_unified_knowledge_base(arguments)
+                elif action == "scan":
+                    if kb_type == "document":
+                        result = await doc_tools.scan_documents(arguments)
+                    else:
+                        result = {"error": f"action=scan 仅支持 kb_type=document"}
+                elif action == "web":
+                    if kb_type == "document":
+                        result = await doc_tools.add_web_document(arguments)
+                    else:
+                        result = {"error": f"action=web 仅支持 kb_type=document"}
                 else:
                     result = {"error": f"未知action: {action}"}
             

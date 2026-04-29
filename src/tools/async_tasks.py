@@ -27,7 +27,12 @@ async def start_async_task(arguments: Any) -> CallToolResult:
                 - "build_knowledge_base": 构建Delphi知识库
                 - "build_thirdparty_knowledge_base": 构建第三方库知识库
                 - "init_project_knowledge_base": 初始化项目知识库
+                - "build_document_knowledge_base": 构建文档知识库
             - params: 任务参数 (可选, 根据任务类型不同)
+                - build_document_knowledge_base:
+                    - urls: 网页URL列表
+                    - directory: 扫描目录路径
+                    - extensions: 文件扩展名列表
             - show_progress: 是否显示进度 (可选, 默认 true)
 
     Returns:
@@ -97,6 +102,63 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
         task_name = f"初始化项目知识库 ({params.get('project_path', '未知项目')})"
 
+    elif task_type == "build_document_knowledge_base":
+        from ..services.knowledge_base.scan_generic_documents import GenericDocumentScanner
+        from pathlib import Path as FilePath
+        
+        def build_doc_task(**kwargs):
+            urls = kwargs.get("urls", [])
+            directory = kwargs.get("directory")
+            extensions = kwargs.get("extensions")
+            start_url = kwargs.get("start_url")
+            max_pages = kwargs.get("max_pages", 100)
+            max_depth = kwargs.get("max_depth", 3)
+            domain_filter = kwargs.get("domain_filter")
+            url_pattern = kwargs.get("url_pattern")
+            progress_callback = kwargs.get("_progress_callback")
+            
+            server_root = FilePath(__file__).parent.parent.parent
+            kb_dir = str(server_root / "data" / "document-knowledge-base")
+            FilePath(kb_dir).mkdir(parents=True, exist_ok=True)
+            
+            scanner = GenericDocumentScanner(kb_dir, progress_callback=progress_callback)
+            
+            results = {"success": 0, "failed": 0, "total": 0, "total_size": 0}
+            
+            # 爬取网站（自动嵌套采集）
+            if start_url:
+                crawl_result = scanner.crawl_website(
+                    start_url=start_url,
+                    max_pages=max_pages,
+                    max_depth=max_depth,
+                    domain_filter=domain_filter,
+                    url_pattern=url_pattern
+                )
+                results.update(crawl_result)
+            
+            # 添加指定 URL 列表
+            if urls:
+                for url in urls:
+                    result = scanner.add_web_document(url)
+                    if result and not (isinstance(result, dict) and 'error' in result):
+                        results["success"] += 1
+                    else:
+                        results["failed"] += 1
+                    results["total"] += 1
+            
+            # 扫描目录
+            if directory:
+                scan_result = scanner.scan_directory(directory, extensions=extensions)
+                results["scan"] = scan_result
+            
+            return results
+        
+        if params.get("start_url"):
+            task_name = f"爬取网站 (最多 {params.get('max_pages', 100)} 页)"
+        else:
+            urls_count = len(params.get("urls", []))
+            task_name = f"构建文档知识库 ({urls_count} 个URL)"
+
     else:
         return CallToolResult(
             content=[{"type": "text", "text": f"未知的任务类型: {task_type}"}],
@@ -110,11 +172,16 @@ async def start_async_task(arguments: Any) -> CallToolResult:
                 logger.info(f"任务进度: {progress:.1f}% - {message}")
 
         # 提交异步任务
+        task_func = (
+            build_kb_task if task_type == "build_knowledge_base" else
+            build_thirdparty_task if task_type == "build_thirdparty_knowledge_base" else
+            init_project_task if task_type == "init_project_knowledge_base" else
+            build_doc_task
+        )
+        
         task_id = task_manager.submit_task(
             name=task_name,
-            func=build_kb_task if task_type == "build_knowledge_base" else
-                  build_thirdparty_task if task_type == "build_thirdparty_knowledge_base" else
-                  init_project_task,
+            func=task_func,
             progress_callback=progress_callback if show_progress else None,
             **params
         )
