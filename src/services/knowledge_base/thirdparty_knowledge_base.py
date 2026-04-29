@@ -802,6 +802,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ('total_functions', str(func_count), current_time))
         cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
             ('build_time', datetime.now().isoformat(), current_time))
+        # 记录 schema 版本号
+        from src.services.knowledge_base import set_schema_version_in_db
+        set_schema_version_in_db(cursor)
         
         conn.commit()
         conn.close()
@@ -1048,10 +1051,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 cursor.execute("SELECT COUNT(*) FROM vocabulary")
                 stats["vocabulary_size"] = cursor.fetchone()[0]
             
-            if 'entities' in tables:
-                cursor.execute("SELECT COUNT(*) FROM entities")
-                stats["entities"] = cursor.fetchone()[0]
-
             stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
 
         finally:

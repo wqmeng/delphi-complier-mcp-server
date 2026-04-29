@@ -155,22 +155,26 @@ async def run_server():
                 }
             ),
             Tool(
-                name="search_knowledge",
-                description="【搜索/统计/构建】搜索Delphi代码/API/帮助文档。action=search按名称/语义搜索; action=stats查看知识库统计; action=build构建知识库(异步，用async_task轮询进度)。",
+                name="delphi_kb",
+                description="Delphi knowledge base: search code/classes/functions/docs, view stats, or build the index. THREE actions via 'action' param:\n"
+                            "  1) action=search (default): Search symbols/docs. Requires 'query' param. Use 'search_type' to filter by entity kind, 'kb_type' for scope, 'top_k' for count.\n"
+                            "  2) action=stats: View KB statistics (file/class/function counts per KB type). Use 'kb_type' to select scope.\n"
+                            "  3) action=build: Build/rebuild the KB (long-running, ALWAYS use async_mode=true). After submit, use 'async_task' tool with action=status + task_id to poll progress.\n"
+                            "Workflow: delphi_kb(action=search, locate symbol) → read_source_file(read actual code).",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "操作: search=搜索(快速), stats=查看统计(快速), build=构建知识库(异步，立即返回task_id)"},
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库: all=全部, delphi=官方, project=项目, thirdparty=第三方, help=帮助"},
-                        "search_type": {"type": "string", "enum": ["all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "semantic", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "搜索类型: class=类, record=记录, interface=接口, enum=枚举, set=集合, type=类型别名, function=函数, procedure=过程, const=常量, resourcestring=资源字符串, property=属性, field=字段, method=方法, unit=单元, semantic=语义搜索, fuzzy=模糊匹配"},
-                        "query": {"type": "string", "description": "搜索内容，如 'TStringList' 或 'TButton Click事件'"},
-                        "project_path": {"type": "string", "description": "项目路径 (action=build 或 kb_type=project时需要)"},
-                        "version": {"type": "string", "description": "Delphi版本，如 '23.0'"},
-                        "async_mode": {"type": "boolean", "default": True, "description": "是否异步执行"},
-                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建"},
-                        "incremental": {"type": "boolean", "default": False, "description": "增量构建(跳过解压CHM,仅help知识库支持)"},
-                        "hash_mode": {"type": "string", "default": "mtime_size", "description": "增量hash模式: mtime_size(默认,快速) 或 md5(准确)"},
-                        "top_k": {"type": "integer", "default": 10, "description": "返回结果数量 1-10"}
+                        "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "Operation: search=semantic/exact search(use query+search_type+kb_type+top_k); stats=view KB statistics(use kb_type); build=async KB build(use kb_type+version+force_rebuild, default async_mode=true, use async_task to poll)"},
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "KB scope: all=all KBs, delphi=official RTL/FMX sources, project=project-specific sources, thirdparty=3rd-party library sources, help=CHM help docs. Applicable to all actions."},
+                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "Entity kind filter (only for action=search). semantic=meaning-based matching(default), all=all kinds, class=classes(TC), record=records(TR), interface=interfaces(TI), enum=enums(TE), set=sets(TS), type=type aliases(TY), function=global functions(FF), procedure=procedures(FP), const=const(CC), resourcestring=resource strings(CR), property=properties(MP), field=fields(MF), method=methods(MM), unit=units(UI), fuzzy=LIKE-based matching, filename=search by file name, event=events(ME), uses=unit references"},
+                        "query": {"type": "string", "description": "Search keyword (required for action=search). E.g. 'TStringList' (exact class name), 'TButton Click' (semantic), 'Create' (function name), 'SysUtils' (unit name)"},
+                        "project_path": {"type": "string", "description": "Project .dproj/.dpr path (only needed when action=build and kb_type=project)"},
+                        "version": {"type": "string", "description": "Delphi version like '23.0' (only needed for action=build with kb_type=delphi or thirdparty)"},
+                        "async_mode": {"type": "boolean", "default": True, "description": "Run build asynchronously (only for action=build, default=true). true=submit build task and return task_id immediately(use async_task to check progress); false=blocking(not recommended, may timeout)"},
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "Force full rebuild (only for action=build). false=incremental update if possible"},
+                        "incremental": {"type": "boolean", "default": False, "description": "Incremental build skipping CHM extraction (only for action=build, kb_type=help)"},
+                        "hash_mode": {"type": "string", "default": "mtime_size", "description": "Change detection mode (only for action=build): mtime_size=fast(default), md5=accurate"},
+                        "top_k": {"type": "integer", "default": 10, "description": "Max result count 1-50 (only for action=search)"}
                     },
                     "required": []
                 }
@@ -302,7 +306,7 @@ async def run_server():
                     # 项目模式：编译
                     result = await compile_project(**arguments)
             
-            elif name == "search_knowledge":
+            elif name == "delphi_kb":
                 action = arguments.get("action", "search")
                 if action == "search":
                     result = await kb_tools.search_knowledge(arguments)

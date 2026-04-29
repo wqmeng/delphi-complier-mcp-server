@@ -30,15 +30,13 @@ from smart_cache_knowledge_base import SmartCacheKnowledgeBase
 class DelphiKnowledgeBaseService:
     """Delphi 知识库服务"""
 
-    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None,
-                 use_smart_cache: bool = True):
+    def __init__(self, kb_dir: Optional[str] = None, progress_callback: Optional[Callable] = None):
         """
         初始化知识库服务
 
         Args:
             kb_dir: 知识库目录路径,如果为 None 则使用默认路径
             progress_callback: 进度回调函数
-            use_smart_cache: 是否使用智能缓存方案（默认True）
         """
         if kb_dir is None:
             # 默认路径: MCP 服务器目录下的 data/delphi-knowledge-base
@@ -53,7 +51,6 @@ class DelphiKnowledgeBaseService:
         self.source_dir = None
         self.delphi_versions = []
         self.progress_callback = progress_callback
-        self.use_smart_cache = use_smart_cache
 
         # 创建必要的目录
         self.kb_dir.mkdir(parents=True, exist_ok=True)
@@ -194,12 +191,8 @@ class DelphiKnowledgeBaseService:
             print(f"源码目录不存在: {self.source_dir}")
             return False
 
-        if self.use_smart_cache:
-            # 使用智能缓存方案
-            return self._build_with_smart_cache(force_rebuild, incremental=incremental)
-        else:
-            # 使用原有方案
-            return self._build_with_legacy(force_rebuild)
+        # 使用智能缓存方案
+        return self._build_with_smart_cache(force_rebuild, incremental=incremental)
     
     def _build_with_smart_cache(self, force_rebuild: bool = False, incremental: bool = False) -> bool:
         """使用智能缓存方案构建知识库"""
@@ -252,30 +245,6 @@ class DelphiKnowledgeBaseService:
         
         return True
     
-    def _build_with_legacy(self, force_rebuild: bool = False) -> bool:
-        """使用原有方案构建知识库"""
-        # 导入扫描模块
-        from scan_delphi_sources import DelphiSourceScanner
-
-        # 初始化扫描器（带进度回调和增量构建选项）
-        scanner = DelphiSourceScanner(self.source_dir, self.kb_dir, self.progress_callback, force_rebuild=force_rebuild)
-
-        # 扫描源码
-        print("开始扫描 Delphi 源码...")
-        start_time = time.time()
-        scanner.run()
-        elapsed = (time.time() - start_time) * 1000
-        print(f"扫描完成! 耗时: {elapsed:.2f}ms")
-
-        # 构建 SQLite 向量索引
-        print("开始构建 SQLite 向量索引...")
-        start_time = time.time()
-        self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), force_rebuild=force_rebuild)
-        elapsed = (time.time() - start_time) * 1000
-        print(f"索引构建完成! 耗时: {elapsed:.2f}ms")
-
-        return True
-
     def load_knowledge_base(self) -> bool:
         """
         加载知识库
@@ -297,12 +266,7 @@ class DelphiKnowledgeBaseService:
                     except Exception as e:
                         print(f"[WARNING] 读取config.json失败: {e}, 使用默认数据库")
                 
-                if self.use_smart_cache:
-                    # 智能缓存方案：使用 SQLiteVectorKnowledgeBase 直接查询
-                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file=db_file)
-                else:
-                    # 使用原有方案
-                    self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file=db_file)
+                self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file=db_file)
             return True
         except Exception as e:
             print(f"加载知识库失败: {e}")
@@ -318,12 +282,8 @@ class DelphiKnowledgeBaseService:
         if not self.load_knowledge_base():
             return []
         
-        if self.use_smart_cache:
-            # 智能缓存方案：使用语义搜索
-            results = self.kb_instance.semantic_search(keyword, top_k=10)
-            return [{'name': r['name'], 'type': r['type_name'], 'similarity': r['similarity']} for r in results]
-        else:
-            return self.kb_instance.search_by_keyword(keyword)
+        results = self.kb_instance.semantic_search(keyword, top_k=10)
+        return [{'name': r['name'], 'type': r['type_name'], 'similarity': r['similarity']} for r in results]
 
     def search_by_unit_name(self, unit_name: str) -> List[Dict]:
         """根据单元名搜索"""

@@ -1374,6 +1374,22 @@ class DelphiHelpKnowledgeBase:
                 )
             """)
 
+            # 自动补齐：为旧库添加 name_lower_rev 列（如果缺失）
+            cursor.execute("PRAGMA table_info(vocabularies)")
+            vocab_cols = {r[1] for r in cursor.fetchall()}
+            if 'name_lower_rev' not in vocab_cols:
+                logger.info("迁移: 添加 name_lower_rev 列...")
+                cursor.execute("ALTER TABLE vocabularies ADD COLUMN name_lower_rev TEXT")
+                conn.commit()
+                logger.info("迁移: 填充 name_lower_rev 数据...")
+                cursor.execute("SELECT COUNT(*) FROM vocabularies")
+                total = cursor.fetchone()[0]
+                logger.info(f"  共 {total} 行，分批处理...")
+                conn.create_function("my_reverse", 1, lambda s: s[::-1] if s else '')
+                cursor.execute("UPDATE vocabularies SET name_lower_rev = my_reverse(name_lower) WHERE name_lower_rev IS NULL")
+                conn.commit()
+                logger.info(f"  name_lower_rev 填充完成")
+
             if progress_callback:
                 progress_callback(10, "写入文件数据...")
 
@@ -1490,6 +1506,17 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
                 if (i + 1) % batch_size == 0:
                     conn.commit()
 
+            # 确保 metadata 表存在并记录 schema 版本号
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at REAL
+                )
+            """)
+            from src.services.knowledge_base import set_schema_version_in_db
+            set_schema_version_in_db(cursor)
+
             conn.commit()
 
             if progress_callback:
@@ -1497,14 +1524,6 @@ INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line,
 
             logger.info(f"向量索引构建完成: {len(documents)} 个文档")
             return True
-
-        except Exception as e:
-            logger.error(f"构建向量索引失败: {e}")
-            return False
-
-        except Exception as e:
-            logger.error(f"构建向量索引失败: {e}")
-            return False
 
         except Exception as e:
             logger.error(f"构建向量索引失败: {e}")

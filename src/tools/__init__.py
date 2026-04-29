@@ -14,17 +14,8 @@ from .knowledge_base import (
     build_unified_knowledge_base,
     get_unified_knowledge_stats
 )
-from .project_knowledge_base import (
-    init_project_knowledge_base,
-    get_thirdparty_paths
-)
 from .help_knowledge_base import (
     build_help_knowledge_base,
-    extract_help_chm,
-    scan_help_html,
-    build_help_kb_index,
-    search_help,
-    get_help_kb_stats,
     cancel_task
 )
 from .thirdparty_knowledge_base import (
@@ -73,19 +64,11 @@ __all__ = [
     'search_knowledge',
     'build_unified_knowledge_base',
     'get_unified_knowledge_stats',
-    # 项目知识库工具
-    'init_project_knowledge_base',
-    'get_thirdparty_paths',
     # 第三方库知识库工具
     'build_thirdparty_knowledge_base',
     'set_thirdparty_knowledge_base_service',
     # 帮助文档知识库工具
     'build_help_knowledge_base',
-    'extract_help_chm',
-    'scan_help_html',
-    'build_help_kb_index',
-    'search_help',
-    'get_help_kb_stats',
     'cancel_task',
     # 源码文件读取工具
     'read_source_file',

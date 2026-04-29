@@ -27,6 +27,22 @@ def set_knowledge_base_services(delphi_service, thirdparty_service):
     thirdparty_kb_service = thirdparty_service
 
 
+def _get_kb_db_path(kb_service) -> Path:
+    """获取知识库实际的数据库文件路径（读取 config.json）"""
+    kb_dir = kb_service.kb_dir
+    config_path = kb_dir / "config.json"
+    db_name = "knowledge.sqlite"  # 默认值
+    if config_path.exists():
+        try:
+            import json
+            with open(config_path, encoding='utf-8') as f:
+                config = json.load(f)
+            db_name = config.get('database', {}).get('file', db_name)
+        except Exception:
+            pass
+    return kb_dir / db_name
+
+
 def _find_file_in_knowledge_base(file_path: str) -> Optional[Path]:
     """
     在知识库中查找文件
@@ -42,47 +58,61 @@ def _find_file_in_knowledge_base(file_path: str) -> Optional[Path]:
     if full_path.exists() and full_path.is_file():
         return full_path
     
-    # 2. 在 Delphi 官方源码知识库中查找
-    if delphi_kb_service and delphi_kb_service.kb_instance:
-        try:
-            import sqlite3
-            conn = sqlite3.connect(str(delphi_kb_service.kb_dir / 'knowledge.sqlite'))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            # 根据路径或文件名查找
-            cursor.execute("""
-                SELECT full_path FROM files 
-                WHERE path = ? OR full_path = ? OR path LIKE ?
-                LIMIT 1
-            """, (file_path, file_path, f'%/{file_path}'))
-            
-            row = cursor.fetchone()
-            conn.close()
-            
-            if row and Path(row['full_path']).exists():
-                return Path(row['full_path'])
-        except Exception:
-            pass
+    # 准备多种路径格式用于匹配（DB 可能存 正斜杠 / 或 反斜杠 \）
+    normalized = file_path.replace('\\', '/')            # 正斜杠版本
+    backslashed = file_path.replace('/', '\\')            # 反斜杠版本
+    name_part = Path(file_path).name                      # 仅文件名，如 "System.Classes.pas"
     
-    # 3. 在第三方库知识库中查找
-    if thirdparty_kb_service and thirdparty_kb_service.kb_instance:
+    # 2. 在所有知识库中查找（Delphi 官方 + 第三方库）
+    for kb_service in [delphi_kb_service, thirdparty_kb_service]:
+        if not kb_service:
+            continue
+        # 自动加载知识库（首次调用时 kb_instance 为 None）
+        if kb_service.kb_instance is None:
+            try:
+                kb_service.load_knowledge_base()
+            except Exception:
+                pass
+        if not kb_service.kb_instance:
+            continue
         try:
-            import sqlite3
-            conn = sqlite3.connect(str(thirdparty_kb_service.kb_dir / 'knowledge.sqlite'))
+            db_path = _get_kb_db_path(kb_service)
+            if not db_path.exists():
+                continue
+            
+            conn = sqlite3.connect(str(db_path))
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            cursor.execute("""
+            # 检测 files 表的路径列名
+            cursor.execute(f"PRAGMA table_info(files)")
+            col_names = {r['name'] for r in cursor.fetchall()}
+            path_col = 'relative_path' if 'relative_path' in col_names else 'path'
+            
+            # 多策略匹配：
+            #   1) 精确匹配（原始路径、正斜杠、反斜杠三种格式）
+            #   2) LIKE 模糊匹配（路径后缀匹配，处理两种分隔符）
+            #   3) 按文件名后缀匹配
+            cursor.execute(f"""
                 SELECT full_path FROM files 
-                WHERE path = ? OR full_path = ? OR path LIKE ?
+                WHERE {path_col} = ? OR {path_col} = ? OR {path_col} = ?
+                   OR {path_col} LIKE ? OR {path_col} LIKE ?
+                   OR {path_col} LIKE ? OR {path_col} LIKE ?
+                   OR full_path LIKE ? OR full_path LIKE ?
+                   OR {path_col} LIKE ?
                 LIMIT 1
-            """, (file_path, file_path, f'%/{file_path}'))
+            """, (
+                file_path, normalized, backslashed,
+                f'%/{normalized}', f'%\\{normalized}',
+                f'%/{backslashed}', f'%\\{backslashed}',
+                f'%/{normalized}', f'%\\{backslashed}',
+                f'%/{name_part}'
+            ))
             
             row = cursor.fetchone()
             conn.close()
             
-            if row and Path(row['full_path']).exists():
+            if row and row['full_path'] and Path(row['full_path']).exists():
                 return Path(row['full_path'])
         except Exception:
             pass
@@ -246,15 +276,20 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
             
             if delphi_kb_service.kb_instance:
                 if search_name:
-                    all_results = delphi_kb_service.search_by_class_name(search_name)
+                    # DelphiKnowledgeBaseService 只有 search_by_name，用它搜索后按 kind_code 过滤
+                    all_results = delphi_kb_service.search_by_name(search_name)
                     if is_record_search:
-                        # 过滤出 record 类型
-                        all_results = [r for r in all_results if r.get('class', {}).get('type_kind') == 'record']
+                        all_results = [r for r in all_results if r.get('kind_code', '') == 'TR']
+                    elif type_name:
+                        # 搜索类/接口/枚举等类型定义
+                        all_results = [r for r in all_results if r.get('kind_code', '') in ('TC', 'TR', 'TI', 'TE', 'TS', 'TY')]
                     results.extend(all_results)
                 if function_name:
-                    results.extend(delphi_kb_service.search_by_function_name(function_name))
+                    func_results = delphi_kb_service.search_by_name(function_name)
+                    func_results = [r for r in func_results if r.get('kind_code', '') in ('FF', 'FP')]
+                    results.extend(func_results)
         
-        # 在第三方库中搜索
+        # 在第三方库中搜索（ThirdPartyKnowledgeBase 有 search_by_class_name / search_by_function_name）
         if search_in in ["all", "thirdparty"] and thirdparty_kb_service:
             # 确保知识库已加载
             if not thirdparty_kb_service.kb_instance:
@@ -264,8 +299,7 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
                 if search_name:
                     all_results = thirdparty_kb_service.search_by_class_name(search_name)
                     if is_record_search:
-                        # 过滤出 record 类型
-                        all_results = [r for r in all_results if r.get('class', {}).get('type_kind') == 'record']
+                        all_results = [r for r in all_results if r.get('kind_code', '') == 'TR']
                     results.extend(all_results)
                 if function_name:
                     results.extend(thirdparty_kb_service.search_by_function_name(function_name))
@@ -280,21 +314,32 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
         # 获取第一个结果
         result = results[0]
         
-        # SmartCache 格式检查: 是否有 relative_path 或 full_path
-        file_path = result.get('full_path') or result.get('relative_path')
+        # 从结果中提取文件路径：check 多层格式
+        # search_by_name 返回格式: result['file']['path'] / result['file']['full_path']
+        # search_by_class_name 返回格式: result['full_path'] / result['relative_path']
+        file_path = None
+        file_info = result.get('file')
+        if isinstance(file_info, dict):
+            file_path = file_info.get('full_path') or file_info.get('path')
+        if not file_path:
+            file_path = result.get('full_path') or result.get('relative_path')
         
-        # 如果没有，从 file_id 查找
+        # 如果还没有，从 file_id 回退查询
         if not file_path:
             file_id = result.get('file_id')
-            if file_id and delphi_kb_service:
+            kb = delphi_kb_service or thirdparty_kb_service
+            if file_id and kb:
                 try:
-                    conn = sqlite3.connect(str(delphi_kb_service.kb_dir / "knowledge_base.sqlite"))
-                    cur = conn.cursor()
-                    cur.execute("SELECT full_path, relative_path FROM files WHERE id = ?", (file_id,))
-                    row = cur.fetchone()
-                    if row:
-                        file_path = row[0] or row[1]
-                    conn.close()
+                    db_path = _get_kb_db_path(kb)
+                    if db_path.exists():
+                        conn = sqlite3.connect(str(db_path))
+                        conn.row_factory = sqlite3.Row
+                        cur = conn.cursor()
+                        cur.execute("SELECT full_path, relative_path, path FROM files WHERE id = ?", (file_id,))
+                        row = cur.fetchone()
+                        if row:
+                            file_path = row['full_path'] or row['relative_path'] or row['path']
+                        conn.close()
                 except Exception:
                     pass
         

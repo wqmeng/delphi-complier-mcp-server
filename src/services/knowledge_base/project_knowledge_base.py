@@ -529,6 +529,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ('total_functions', str(func_count), current_time))
         cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
             ('build_time', datetime.now().isoformat(), current_time))
+        # 记录 schema 版本号
+        from src.services.knowledge_base import set_schema_version_in_db
+        set_schema_version_in_db(cursor)
         
         conn.commit()
         conn.close()

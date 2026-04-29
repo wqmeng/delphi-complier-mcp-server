@@ -71,16 +71,70 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
     for kb in kb_types:
         try:
-            if kb == "delphi" and _delphi_kb_service:
-                results["delphi_symbols"] = _filter_by_search_type(_delphi_kb_service.search_by_name(query)[:top_k * 3], search_type)[:top_k]
-                if search_type in ["semantic", "all"]:
+            if kb in ("delphi", "project") and _delphi_kb_service:
+                # 名称搜索（精确/通配匹配）
+                symbol_results = _delphi_kb_service.search_by_name(query)
+                filtered = _filter_by_search_type(symbol_results, search_type)[:top_k]
+                if filtered:
+                    results[f"{kb}_symbols"] = filtered
+                # 语义搜索（补充语义匹配结果）
+                if search_type in ("semantic", "all"):
                     try:
-                        results["delphi_semantic_classes"] = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
-                        results["delphi_semantic_functions"] = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
-                    except Exception as se:
-                        results["semantic_error"] = str(se)
+                        semantic_classes = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
+                        if semantic_classes:
+                            results[f"{kb}_semantic_classes"] = semantic_classes
+                    except Exception:
+                        pass
+                    try:
+                        semantic_functions = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
+                        if semantic_functions:
+                            results[f"{kb}_semantic_functions"] = semantic_functions
+                    except Exception:
+                        pass
+
+            elif kb == "thirdparty" and _thirdparty_kb_service:
+                # 确保知识库已加载
+                if _thirdparty_kb_service.kb_instance is None:
+                    _thirdparty_kb_service.load_knowledge_base()
+                if _thirdparty_kb_service.kb_instance:
+                    # 名称搜索：直接从底层 kb_instance 获取完整匹配结果
+                    symbol_results = _thirdparty_kb_service.kb_instance.search_by_name(query)
+                    filtered = _filter_by_search_type(symbol_results, search_type)[:top_k]
+                    if filtered:
+                        results["thirdparty_symbols"] = filtered
+                    # 语义搜索
+                    if search_type in ("semantic", "all"):
+                        try:
+                            semantic_classes = _thirdparty_kb_service.semantic_search_classes(query, top_k=top_k)
+                            if semantic_classes:
+                                results["thirdparty_semantic_classes"] = semantic_classes
+                        except Exception:
+                            pass
+                        try:
+                            semantic_functions = _thirdparty_kb_service.semantic_search_functions(query, top_k=top_k)
+                            if semantic_functions:
+                                results["thirdparty_semantic_functions"] = semantic_functions
+                        except Exception:
+                            pass
+
             elif kb == "help" and _help_kb_service:
-                results["help_classes"] = _help_kb_service.search_class(query)[:top_k]
+                # 帮助知识库：搜索类、函数
+                if _help_kb_service.is_kb_exists():
+                    if search_type in ("class", "semantic", "all"):
+                        try:
+                            help_classes = _help_kb_service.search_class(query, top_k=top_k)
+                            if help_classes:
+                                results["help_classes"] = help_classes
+                        except Exception:
+                            pass
+                    if search_type in ("function", "procedure", "semantic", "all"):
+                        try:
+                            help_functions = _help_kb_service.search_function(query, top_k=top_k)
+                            if help_functions:
+                                results["help_functions"] = help_functions
+                        except Exception:
+                            pass
+
         except Exception as e:
             results[f"{kb}_error"] = str(e)
     
@@ -94,10 +148,15 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     }
 
     def _format_symbol(r):
+        # 类型描述：兼容 SQLiteVector 格式（kind_code）和 SmartCache 格式（type_name）
         kind_code = r.get('kind_code', '')
-        type_desc = _KIND_DESC.get(kind_code, r.get('kind', kind_code))
-        file_info = r.get('file', {})
-        file_path = file_info.get('path', 'N/A') if file_info else 'N/A'
+        type_desc = _KIND_DESC.get(kind_code) or r.get('kind') or r.get('type_name', kind_code) or ''
+        # 文件路径：兼容两种 KB 返回格式
+        file_info = r.get('file')
+        if isinstance(file_info, dict):
+            file_path = file_info.get('full_path') or file_info.get('path', 'N/A')
+        else:
+            file_path = r.get('full_path') or r.get('relative_path', 'N/A')
         return f"  - {r.get('name', 'N/A')} ({type_desc})\n    文件: {file_path}\n    行号: {r.get('line', 'N/A')}\n"
 
     # 显示符号搜索结果
@@ -148,9 +207,39 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         output += "\n"
         has_results = True
     
+    # 项目知识库搜索结果
+    for kb, label in [("project", "项目"), ("thirdparty", "三方库")]:
+        if f"{kb}_symbols" in results and results[f"{kb}_symbols"]:
+            output += f"{label} 符号 ({len(results[f'{kb}_symbols'])}):\n"
+            for r in results[f"{kb}_symbols"][:top_k]:
+                output += _format_symbol(r)
+                if r.get('definition'):
+                    output += f"    定义: {r.get('definition')}\n"
+            output += "\n"
+            has_results = True
+        if f"{kb}_semantic_classes" in results and results[f"{kb}_semantic_classes"]:
+            output += f"{label} 类(语义搜索) ({len(results[f'{kb}_semantic_classes'])}):\n"
+            for name, sim in results[f"{kb}_semantic_classes"][:top_k]:
+                output += f"  - {name} (相似度: {sim:.2f})\n"
+            output += "\n"
+            has_results = True
+        if f"{kb}_semantic_functions" in results and results[f"{kb}_semantic_functions"]:
+            output += f"{label} 函数/过程(语义搜索) ({len(results[f'{kb}_semantic_functions'])}):\n"
+            for name, sim in results[f"{kb}_semantic_functions"][:top_k]:
+                output += f"  - {name} (相似度: {sim:.2f})\n"
+            output += "\n"
+            has_results = True
+    
     if "help_classes" in results and results["help_classes"]:
         output += f"帮助类 ({len(results['help_classes'])}):\n"
         for r in results["help_classes"][:top_k]:
+            output += f"  - {r.get('name', 'N/A')}\n"
+        output += "\n"
+        has_results = True
+    
+    if "help_functions" in results and results["help_functions"]:
+        output += f"帮助函数 ({len(results['help_functions'])}):\n"
+        for r in results["help_functions"][:top_k]:
             output += f"  - {r.get('name', 'N/A')}\n"
         output += "\n"
         has_results = True

@@ -195,6 +195,7 @@ class SmartCacheKnowledgeBase:
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA cache_size=-64000")
         conn.execute("PRAGMA temp_store=MEMORY")
+        conn.execute("PRAGMA busy_timeout=10000")  # 等待锁最长10秒，避免 database is locked
         
         return conn
     
@@ -1010,6 +1011,9 @@ class SmartCacheKnowledgeBase:
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('build_progress', '0')")
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_files', ?)", (str(total_files),))
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_items', ?)", (str(len(items_data)),))
+            # 记录 schema 版本号
+            from src.services.knowledge_base import set_schema_version_in_db
+            set_schema_version_in_db(cursor)
             
             conn.commit()
             
