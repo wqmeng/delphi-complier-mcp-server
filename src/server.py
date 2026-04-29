@@ -156,25 +156,25 @@ async def run_server():
             ),
             Tool(
                 name="delphi_kb",
-                description="Delphi knowledge base: search code/classes/functions/docs, view stats, or build the index. THREE actions via 'action' param:\n"
-                            "  1) action=search (default): Search symbols/docs. Requires 'query' param. Use 'search_type' to filter by entity kind, 'kb_type' for scope, 'top_k' for count.\n"
-                            "  2) action=stats: View KB statistics (file/class/function counts per KB type). Use 'kb_type' to select scope.\n"
-                            "  3) action=build: Build/rebuild the KB (long-running, ALWAYS use async_mode=true). After submit, use 'async_task' tool with action=status + task_id to poll progress.\n"
-                            "Workflow: delphi_kb(action=search, locate symbol) → read_source_file(read actual code).",
+                description="【知识库搜索/构建】搜索Delphi代码/类/函数/文档，查看统计或构建索引。三种模式通过'action'参数控制：\n"
+                            "  1) action=search（默认）：搜索符号/文档。需要'query'参数，'search_type'过滤实体类型，'kb_type'选择知识库范围，'top_k'控制结果数。\n"
+                            "  2) action=stats：查看知识库统计（文件/类/函数数量）。用'kb_type'选择知识库范围。\n"
+                            "  3) action=build：构建/重建知识库（耗时操作，必须使用async_mode=true）。提交后通过'async_task'工具的action=status + task_id轮询进度。\n"
+                            "工作流: delphi_kb(action=search, 定位符号) → read_source_file(读取实际源码).",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "Operation: search=semantic/exact search(use query+search_type+kb_type+top_k); stats=view KB statistics(use kb_type); build=async KB build(use kb_type+version+force_rebuild, default async_mode=true, use async_task to poll)"},
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "KB scope: all=all KBs, delphi=official RTL/FMX sources, project=project-specific sources, thirdparty=3rd-party library sources, help=CHM help docs. Applicable to all actions."},
-                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "Entity kind filter (only for action=search). semantic=meaning-based matching(default), all=all kinds, class=classes(TC), record=records(TR), interface=interfaces(TI), enum=enums(TE), set=sets(TS), type=type aliases(TY), function=global functions(FF), procedure=procedures(FP), const=const(CC), resourcestring=resource strings(CR), property=properties(MP), field=fields(MF), method=methods(MM), unit=units(UI), fuzzy=LIKE-based matching, filename=search by file name, event=events(ME), uses=unit references"},
-                        "query": {"type": "string", "description": "Search keyword (required for action=search). E.g. 'TStringList' (exact class name), 'TButton Click' (semantic), 'Create' (function name), 'SysUtils' (unit name)"},
-                        "project_path": {"type": "string", "description": "Project .dproj/.dpr path (only needed when action=build and kb_type=project)"},
-                        "version": {"type": "string", "description": "Delphi version like '23.0' (only needed for action=build with kb_type=delphi or thirdparty)"},
-                        "async_mode": {"type": "boolean", "default": True, "description": "Run build asynchronously (only for action=build, default=true). true=submit build task and return task_id immediately(use async_task to check progress); false=blocking(not recommended, may timeout)"},
-                        "force_rebuild": {"type": "boolean", "default": False, "description": "Force full rebuild (only for action=build). false=incremental update if possible"},
-                        "incremental": {"type": "boolean", "default": False, "description": "Incremental build skipping CHM extraction (only for action=build, kb_type=help)"},
-                        "hash_mode": {"type": "string", "default": "mtime_size", "description": "Change detection mode (only for action=build): mtime_size=fast(default), md5=accurate"},
-                        "top_k": {"type": "integer", "default": 10, "description": "Max result count 1-50 (only for action=search)"}
+                        "action": {"type": "string", "enum": ["search", "stats", "build"], "default": "search", "description": "操作: search=语义/精确搜索(使用query+search_type+kb_type+top_k); stats=查看知识库统计(使用kb_type); build=异步构建知识库(使用kb_type+version+force_rebuild, 默认async_mode=true, 通过async_task轮询)"},
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码(RTL/VCL/FMX等), project=项目源码, thirdparty=三方库源码, help=CHM帮助文档。适用于所有action。"},
+                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "实体类型过滤（仅action=search）。semantic=语义匹配(默认), all=全部, class=类(TC), record=记录(TR), interface=接口(TI), enum=枚举(TE), set=集合(TS), type=类型别名(TY), function=全局函数(FF), procedure=过程(FP), const=常量(CC), resourcestring=资源字符串(CR), property=属性(MP), field=字段(MF), method=方法(MM), unit=单元(UI), fuzzy=LIKE模糊匹配, filename=按文件名搜索, event=事件(ME), uses=引用单元"},
+                        "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例如 'TStringList'（精确类名）、'TButton Click'（语义）、'Create'（函数名）、'SysUtils'（单元名）"},
+                        "project_path": {"type": "string", "description": "项目.dproj/.dpr路径（仅action=build且kb_type=project时需要）"},
+                        "version": {"type": "string", "description": "Delphi版本号如 '23.0'（仅action=build且kb_type=delphi/thirdparty时需要）"},
+                        "async_mode": {"type": "boolean", "default": True, "description": "是否异步构建（仅action=build，默认true）。true=提交后立即返回task_id(通过async_task查进度); false=阻塞等待(不推荐，可能超时)"},
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（仅action=build）。false=尽可能增量更新"},
+                        "incremental": {"type": "boolean", "default": False, "description": "增量构建，跳过CHM提取（仅action=build且kb_type=help）"},
+                        "hash_mode": {"type": "string", "default": "mtime_size", "description": "变更检测模式（仅action=build）: mtime_size=快速(默认), md5=准确"},
+                        "top_k": {"type": "integer", "default": 10, "description": "最大返回结果数 1-50（仅action=search）"}
                     },
                     "required": []
                 }
