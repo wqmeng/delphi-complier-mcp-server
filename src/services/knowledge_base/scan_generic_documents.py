@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 """
 通用文档扫描器
-支持 hlp/doc/docx/txt/md/html/网页等多种文档格式
+支持 doc/docx/txt/md/html/pdf/网页等多种文档格式
 """
 
 import re
 import json
 import hashlib
 import sqlite3
+import logging
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -17,6 +18,8 @@ from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
 
 from .fts5_lazy_manager import FTS5LazyManager
+
+logger = logging.getLogger(__name__)
 
 try:
     from bs4 import BeautifulSoup
@@ -315,26 +318,6 @@ class DocProcessor(DocumentProcessor):
             return None
 
 
-class HLPProcessor(DocumentProcessor):
-    """Windows Help 文件处理器 (.hlp) - 需要 helpdeco 或 wine"""
-    
-    def __init__(self):
-        self.supported_extensions = ['.hlp']
-    
-    def process(self, file_path: Path) -> Optional[Dict]:
-        return {
-            'title': file_path.stem,
-            'content': f"Windows Help 文件需要专用工具解压: {file_path.name}",
-            'content_type': 'hlp',
-            'size': 0,
-            'line_count': 0,
-            'hash': '',
-            'sections': [],
-            'code_examples': [],
-            'requires_extraction': True
-        }
-
-
 class PDFProcessor(DocumentProcessor):
     """PDF 文档处理器 (.pdf) - 需要 pdfplumber 或 PyMuPDF"""
     
@@ -556,7 +539,6 @@ def _process_document_worker(args: Tuple) -> Optional[Dict]:
         HTMLProcessor(),
         DocxProcessor(),
         DocProcessor(),
-        HLPProcessor(),
         PDFProcessor()
     ]
     
@@ -590,7 +572,7 @@ class GenericDocumentScanner:
         '.txt', '.md', '.markdown',
         '.htm', '.html',
         '.docx', '.doc',
-        '.hlp', '.pdf'
+        '.pdf'
     ]
     
     def __init__(self, kb_dir: str, config: Optional[Dict] = None, progress_callback: Optional[Callable] = None):
@@ -613,6 +595,39 @@ class GenericDocumentScanner:
         )
         
         self._init_database()
+    
+    @staticmethod
+    def _detect_language(title: str, content: str = '') -> str:
+        """
+        检测文档语言
+        
+        Args:
+            title: 文档标题
+            content: 文档内容
+        
+        Returns:
+            语言代码: 'zh' (中文), 'ja' (日文), 'ko' (韩文), 'en' (英文), 'other' (其他)
+        """
+        import re
+        
+        # 合并标题和内容前1000字符进行检测
+        sample = (title + ' ' + content[:1000])
+        
+        # 统计各语言字符数
+        zh_chars = len(re.findall(r'[\u4e00-\u9fff]', sample))
+        ja_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', sample))
+        ko_chars = len(re.findall(r'[\uac00-\ud7af]', sample))
+        en_chars = len(re.findall(r'[A-Za-z]', sample))
+        
+        # 选择字符数最多的语言
+        counts = {'zh': zh_chars, 'ja': ja_chars, 'ko': ko_chars, 'en': en_chars}
+        max_lang = max(counts, key=counts.get)
+        
+        # 如果最大字符数太少，返回 other
+        if counts[max_lang] < 10:
+            return 'other'
+        
+        return max_lang
     
     def _load_config(self) -> Dict:
         """加载配置文件"""
@@ -710,17 +725,31 @@ class GenericDocumentScanner:
         if 'title_rev' not in columns:
             cursor.execute("ALTER TABLE documents ADD COLUMN title_rev TEXT")
         
+        if 'language' not in columns:
+            cursor.execute("ALTER TABLE documents ADD COLUMN language TEXT DEFAULT 'en'")
+        
         # 创建逆序索引
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_title_lower ON documents(title_lower)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_title_rev ON documents(title_rev)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_language ON documents(language)")
         
-        # 填充已有数据的逆序字段
+        # 填充已有数据的逆序字段和语言字段
         cursor.execute("SELECT COUNT(*) FROM documents WHERE title IS NOT NULL AND title_rev IS NULL")
         missing = cursor.fetchone()[0]
         if missing > 0:
             conn.create_function("my_reverse", 1, lambda s: s[::-1].lower() if s else '')
             conn.create_function("my_lower", 1, lambda s: s.lower() if s else '')
             cursor.execute("UPDATE documents SET title_lower = my_lower(title), title_rev = my_reverse(title) WHERE title IS NOT NULL AND title_rev IS NULL")
+        
+        # 填充已有数据的语言字段
+        cursor.execute("SELECT COUNT(*) FROM documents WHERE language IS NULL OR language = 'en'")
+        missing_lang = cursor.fetchone()[0]
+        if missing_lang > 0:
+            cursor.execute("SELECT id, title, content FROM documents WHERE language IS NULL OR language = 'en'")
+            for row in cursor.fetchall():
+                doc_id, title, content = row
+                lang = self._detect_language(title or '', content or '')
+                cursor.execute("UPDATE documents SET language = ? WHERE id = ?", (lang, doc_id))
         
         # 创建 FTS5 虚拟表（懒加载，不填充数据）
         self.fts5_manager.create_fts_table(conn)
@@ -854,13 +883,14 @@ class GenericDocumentScanner:
                             title = result.get('title', '')
                             title_lower = title.lower() if title else ''
                             title_rev = title[::-1].lower() if title else ''
+                            language = self._detect_language(title, result.get('content', ''))
                             
                             cursor.execute("""
                                 INSERT INTO documents (
                                     path, full_path, extension, title, title_lower, title_rev,
                                     content, content_type, file_size, size, line_count,
-                                    hash, last_modified, sections, code_examples, url, requires_extraction
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    hash, last_modified, sections, code_examples, url, requires_extraction, language
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """, (
                                 result.get('path'),
                                 result.get('full_path'),
@@ -878,7 +908,8 @@ class GenericDocumentScanner:
                                 json.dumps(result.get('sections', [])),
                                 json.dumps(result.get('code_examples', [])),
                                 result.get('url'),
-                                result.get('requires_extraction', 0)
+                                result.get('requires_extraction', 0),
+                                language
                             ))
                             processed += 1
                         except Exception:
@@ -975,18 +1006,26 @@ class GenericDocumentScanner:
                 cursor = conn.cursor()
                 
                 try:
+                    title = result.get('title', '')
+                    content = result.get('content', '')
+                    title_lower = title.lower() if title else ''
+                    title_rev = title[::-1].lower() if title else ''
+                    language = self._detect_language(title, content)
+                    
                     cursor.execute("""
                         INSERT INTO documents (
-                            path, full_path, extension, title, content, content_type,
+                            path, full_path, extension, title, title_lower, title_rev, content, content_type,
                             file_size, size, line_count, hash, last_modified,
-                            sections, code_examples, url
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            sections, code_examples, url, language
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         url,
                         url,
                         '.html',
-                        result.get('title'),
-                        result.get('content'),
+                        title,
+                        title_lower,
+                        title_rev,
+                        content,
                         result.get('content_type'),
                         result.get('size'),
                         result.get('size'),
@@ -995,7 +1034,8 @@ class GenericDocumentScanner:
                         datetime.now().isoformat(),
                         json.dumps(result.get('sections', [])),
                         json.dumps(result.get('code_examples', [])),
-                        result.get('url')
+                        result.get('url'),
+                        language
                     ))
                     
                     conn.commit()
@@ -1253,9 +1293,18 @@ class GenericDocumentScanner:
             """)
             by_type = dict(cursor.fetchall())
             
+            # 直接从数据库查询语言分布
+            cursor.execute("""
+                SELECT language, COUNT(*) 
+                FROM documents 
+                GROUP BY language
+            """)
+            by_language = dict(cursor.fetchall())
+            
             return {
                 'total_documents': total_documents,
-                'by_type': by_type
+                'by_type': by_type,
+                'by_language': by_language
             }
         finally:
             conn.close()

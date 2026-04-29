@@ -17,13 +17,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 设计期包自动安装：注册到 IDE 注册表 `Known Packages`
 - **逆序索引优化**：文档知识库添加 `title_lower` 和 `title_rev` 字段
 - 搜索评分排序：标题匹配 > 前缀匹配 > 后缀匹配 > 内容匹配
+- **delphi_kb 统一接口**：集成 `read_source_file` 功能
+- **文档语言检测**：自动检测并存储 `language` 字段
+- **中文搜索提示**：根据文档库语言分布智能建议翻译
 
 ### Changed
 
 - **废弃 TF-IDF 向量索引**：未使用的向量搜索代码已移除
-- 文档知识库 schema 升级：添加 `title_lower` 和 `title_rev` 字段
+- 文档知识库 schema 升级：添加 `title_lower`、`title_rev`、`language` 字段
 - compile_project 复用 install_package 的函数（消除重复代码）
 - AGENTS.md 更新：添加 MCP 工具概述、知识库特性、组件包编译说明
+- 废弃 `read_source_file` 工具，功能集成到 `delphi_kb(action=read)`
 
 ### Fixed
 
@@ -35,11 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- 通用文档知识库支持：扫描、搜索和管理 txt/md/html/docx/doc/hlp/pdf 和网页文档
+- 通用文档知识库支持：扫描、搜索和管理 txt/md/html/docx/doc/pdf 和网页文档
 - `delphi_kb` 工具新增 `action=scan` 用于扫描文档目录
 - `delphi_kb` 工具新增 `action=web` 用于添加网页文档
 - `delphi_kb` 工具新增 `kb_type=document` 用于查询文档知识库
-- 新增文档处理器：TextProcessor、MarkdownProcessor、HTMLProcessor、DocxProcessor、DocProcessor、HLPProcessor、PDFProcessor、WebDocumentProcessor
+- 新增文档处理器：TextProcessor、MarkdownProcessor、HTMLProcessor、DocxProcessor、DocProcessor、PDFProcessor、WebDocumentProcessor
 - 新增依赖 `python-docx>=0.8.11` 用于处理 Word 文档
 - 新增依赖 `PyMuPDF`（推荐）或 `pdfplumber`（备选）用于处理 PDF 文档
 - 新增测试文件 `tests/test_document_kb.py` 覆盖所有文档处理器

@@ -136,9 +136,34 @@ async def search_documents(arguments: Any) -> CallToolResult:
     results = scanner.search(query, content_type=content_type, top_k=top_k)
     
     if not results:
-        return CallToolResult(
-            content=[{"type": "text", "text": f"未找到匹配 '{query}' 的文档"}]
-        )
+        msg = f"未找到匹配 '{query}' 的文档"
+        
+        import re
+        if re.search(r'[\u4e00-\u9fff]', query):
+            # 中文查询，检查文档库语言
+            stats = scanner.get_statistics()
+            languages = stats.get('by_language', {})
+            total = stats.get('total_documents', 0)
+            
+            # 构建语言提示
+            lang_hints = []
+            if languages.get('en', 0) > 0:
+                pct = languages['en'] / total * 100
+                lang_hints.append(f"英文({pct:.0f}%)")
+            if languages.get('ja', 0) > 0:
+                pct = languages['ja'] / total * 100
+                lang_hints.append(f"日文({pct:.0f}%)")
+            if languages.get('ko', 0) > 0:
+                pct = languages['ko'] / total * 100
+                lang_hints.append(f"韩文({pct:.0f}%)")
+            
+            if lang_hints:
+                msg += f"\n\n💡 文档库包含: {', '.join(lang_hints)}"
+                msg += "\n   AI可自动翻译关键词后重试，例如："
+                msg += "\n   - '创建表' → 'CREATE TABLE'"
+                msg += "\n   - '索引语法' → 'CREATE INDEX'"
+        
+        return CallToolResult(content=[{"type": "text", "text": msg}])
     
     output = f"搜索 '{query}'"
     if content_type:
@@ -146,7 +171,8 @@ async def search_documents(arguments: Any) -> CallToolResult:
     output += f" - 找到 {len(results)} 个结果:\n\n"
     
     for i, doc in enumerate(results, 1):
-        output += f"{i}. {doc.get('title', 'N/A')}\n"
+        doc_id = doc.get('id')
+        output += f"{i}. [ID:{doc_id}] {doc.get('title', 'N/A')}\n"
         output += f"   类型: {doc.get('content_type', 'N/A')}\n"
         
         if doc.get('url'):
@@ -162,6 +188,8 @@ async def search_documents(arguments: Any) -> CallToolResult:
             output += f"   预览: {preview}...\n"
         
         output += "\n"
+    
+    output += f"提示: 使用 delphi_kb(action=read, doc_id={results[0].get('id')}) 读取完整内容\n"
     
     return CallToolResult(content=[{"type": "text", "text": output}])
 
@@ -181,3 +209,75 @@ async def get_document_statistics(arguments: Any) -> CallToolResult:
             output += f"  {content_type}: {count}\n"
     
     return CallToolResult(content=[{"type": "text", "text": output}])
+
+
+async def read_document(arguments: Any) -> CallToolResult:
+    """读取文档内容"""
+    import sqlite3
+    
+    url = arguments.get("url")
+    doc_id = arguments.get("doc_id")
+    offset = arguments.get("offset", 0)
+    limit = arguments.get("limit", 5000)
+    
+    if not url and not doc_id:
+        return CallToolResult(
+            content=[{"type": "text", "text": "请提供 url 或 doc_id 参数"}],
+            isError=True
+        )
+    
+    scanner = _get_scanner()
+    db_path = scanner.db_path
+    
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        if doc_id:
+            cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+        else:
+            cursor.execute("SELECT * FROM documents WHERE url = ?", (url,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return CallToolResult(
+                content=[{"type": "text", "text": f"未找到文档: {url or doc_id}"}],
+                isError=True
+            )
+        
+        doc = dict(row)
+        content = doc.get('content', '')
+        content_len = len(content)
+        
+        if offset < 0:
+            offset = 0
+        if limit > 20000:
+            limit = 20000
+        
+        content_slice = content[offset:offset + limit]
+        
+        output = f"文档: {doc.get('title', 'N/A')}\n"
+        output += f"类型: {doc.get('content_type', 'N/A')}\n"
+        if doc.get('url'):
+            output += f"URL: {doc.get('url')}\n"
+        output += f"大小: {doc.get('size', 0)} 字节\n"
+        output += f"内容长度: {content_len} 字符\n"
+        output += f"显示范围: {offset} - {offset + len(content_slice)}\n"
+        output += "=" * 60 + "\n\n"
+        output += content_slice
+        
+        if offset + limit < content_len:
+            remaining = content_len - (offset + limit)
+            output += f"\n... (还有 {remaining} 字符未显示) ...\n"
+            output += f"提示: 使用 offset={offset + limit} 继续读取\n"
+        
+        return CallToolResult(content=[{"type": "text", "text": output}])
+        
+    except Exception as e:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"读取文档失败: {str(e)}"}],
+            isError=True
+        )

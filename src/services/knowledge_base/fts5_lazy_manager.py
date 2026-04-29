@@ -182,23 +182,22 @@ class FTS5LazyManager:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            # 处理查询词（FTS5 要求转义特殊字符）
             safe_query = self._escape_fts_query(query)
             
             if use_bM25:
-                # BM25 排序（相关性排序）
                 sql = f"""
-                    SELECT rowid, *, bm25({self.fts_table}) as score
-                    FROM {self.fts_table}
+                    SELECT m.*, bm25({self.fts_table}) as score
+                    FROM {self.fts_table} f
+                    JOIN {self.main_table} m ON f.rowid = m.id
                     WHERE {self.fts_table} MATCH ?
                     ORDER BY bm25({self.fts_table})
                     LIMIT ?
                 """
             else:
-                # 无排序
                 sql = f"""
-                    SELECT rowid, *
-                    FROM {self.fts_table}
+                    SELECT m.*
+                    FROM {self.fts_table} f
+                    JOIN {self.main_table} m ON f.rowid = m.id
                     WHERE {self.fts_table} MATCH ?
                     LIMIT ?
                 """
