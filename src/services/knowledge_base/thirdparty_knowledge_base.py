@@ -574,6 +574,14 @@ class ThirdPartyKnowledgeBase:
                 existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
             logger.info(f"现有文件数: {len(existing_files)}")
         
+        # 增量构建：加载现有文件的hash
+        existing_files = {}
+        if not force_rebuild:
+            cursor.execute("SELECT id, full_path, hash FROM files")
+            for row in cursor.fetchall():
+                existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
+            logger.info(f"现有文件数: {len(existing_files)}")
+        
         # 确保表存在
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS files (
@@ -626,6 +634,18 @@ class ThirdPartyKnowledgeBase:
         skipped_files = 0
         updated_files = 0
         new_files = 0
+        deleted_files = 0
+        
+        # 构建新文件路径集合（用于检测已删除的文件）
+        new_file_paths = set(file_info.get('full_path', '') for file_info in unique_files)
+        
+        # 检测已删除的文件（保留，仅记录日志）
+        if not force_rebuild:
+            for old_path in existing_files:
+                if old_path not in new_file_paths:
+                    deleted_files += 1
+            if deleted_files > 0:
+                logger.info(f"检测到 {deleted_files} 个文件已删除（保留记录）")
         
         for i, file_info in enumerate(unique_files):
             full_path = file_info.get('full_path', '')
@@ -635,15 +655,17 @@ class ThirdPartyKnowledgeBase:
             if not force_rebuild and full_path in existing_files:
                 existing_info = existing_files[full_path]
                 if existing_info['hash'] == new_hash:
-                    # 文件未变更，跳过
+                    # 2. 已存在未变更，直接跳过
                     skipped_files += 1
                     continue
                 
-                # 文件已变更，删除旧的vocabularies
+                # 3. 已存在已变更，删除旧的vocabularies和FTS信息
                 old_file_id = existing_info['id']
                 cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_file_id,))
+                # 注意：第三方库知识库暂无FTS索引，如有需要在此添加
                 updated_files += 1
             else:
+                # 1. 不存在，直接插入
                 new_files += 1
             
             # 转换 units 和 uses 为字符串
@@ -721,8 +743,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 conn.commit()
                 logger.info(f"  已处理 {i+1}/{len(unique_files)} 源文件")
         
-        if skipped_files > 0:
-            logger.info(f"增量构建: 跳过 {skipped_files} 个未变更文件, 更新 {updated_files} 个变更文件, 新增 {new_files} 个文件")
+        if not force_rebuild:
+            logger.info(f"增量构建: 新增 {new_files} 个, 更新 {updated_files} 个, 跳过 {skipped_files} 个, 删除 {deleted_files} 个（保留）")
 
         # 插入帮助文档
         if all_help_docs:
