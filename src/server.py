@@ -37,11 +37,7 @@ if str(project_root) not in sys.path:
 # 导致所有服务模块被重新导入(885个模块),启动极慢。
 # 检测到是子进程时,跳过所有服务导入,只保留必要的模块。
 # ============================================================
-_is_multiprocessing_child = (
-    '--multiprocessing-fork' in sys.argv or
-    os.environ.get('_IN_PROCESS_POOL_WORKER') == '1' or
-    __name__ == '__mp_main__'
-)
+_is_multiprocessing_child = __name__ == '__mp_main__'
 
 if _is_multiprocessing_child:
     # 子进程不需要任何MCP服务,直接跳过
@@ -66,15 +62,12 @@ else:
         set_delphi_kb_service,
         set_project_kb_service,
         set_thirdparty_kb_service,
-        set_help_kb_service,
         search_knowledge,
         build_unified_knowledge_base,
         get_unified_knowledge_stats
     )
-    from src.services.knowledge_base.help_knowledge_base import DelphiHelpKnowledgeBase
     from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
     from src.tools import knowledge_base as kb_tools
-    from src.tools import help_knowledge_base as help_kb_tools
     from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
     from src.tools import async_tasks as async_tools
     from src.tools import pasfmt
@@ -108,11 +101,6 @@ async def run_server():
     thirdparty_kb_service = ThirdPartyKnowledgeBase()
     thirdparty_kb_tools.set_thirdparty_knowledge_base_service(thirdparty_kb_service)
     logger.info("第三方库知识库服务初始化完成")
-
-    # 初始化帮助文档知识库服务
-    help_kb_service = DelphiHelpKnowledgeBase()
-    set_help_kb_service(help_kb_service)
-    logger.info("帮助文档知识库服务初始化完成")
 
     # 设置工具的服务实例
     sp1(compiler_service)
@@ -169,7 +157,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "enum": ["search", "read", "stats", "build", "scan", "web"], "default": "search", "description": "操作: search=语义/精确搜索; read=读取内容; stats=查看统计; build=构建知识库; scan=扫描文档目录(kb_type=document); web=添加网页文档(kb_type=document)"},
-                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "help", "document"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码, project=项目源码, thirdparty=三方库源码, help=CHM帮助文档, document=通用文档(txt/md/html/docx/doc/pdf/epub/hlp/网页)"},
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码, project=项目源码, thirdparty=三方库源码, document=通用文档(txt/md/html/docx/doc/pdf/epub/hlp/网页)"},
                         "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses"], "default": "semantic", "description": "实体类型过滤（仅action=search）。semantic=语义匹配(默认), all=全部, class=类(TC), record=记录(TR), interface=接口(TI), enum=枚举(TE), set=集合(TS), type=类型别名(TY), function=全局函数(FF), procedure=过程(FP), const=常量(CC), resourcestring=资源字符串(CR), property=属性(MP), field=字段(MF), method=方法(MM), unit=单元(UI), fuzzy=LIKE模糊匹配, filename=按文件名搜索, event=事件(ME), uses=引用单元"},
                         "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例如 'TStringList'（精确类名）、'TButton Click'（语义）、'Create'（函数名）、'SysUtils'（单元名）"},
                         "doc_id": {"type": "integer", "description": "文档ID（action=read时，与url/file_path三选一）"},
@@ -181,7 +169,7 @@ async def run_server():
                         "version": {"type": "string", "description": "Delphi版本号如 '23.0'（仅action=build且kb_type=delphi/thirdparty时需要）"},
                         "async_mode": {"type": "boolean", "default": True, "description": "是否异步构建（仅action=build，默认true）。true=提交后立即返回task_id(通过async_task查进度); false=阻塞等待(不推荐，可能超时)"},
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（仅action=build）。false=尽可能增量更新"},
-                        "incremental": {"type": "boolean", "default": False, "description": "增量构建，跳过CHM提取（仅action=build且kb_type=help）"},
+                        "incremental": {"type": "boolean", "default": False, "description": "增量构建，跳过CHM提取"},
                         "hash_mode": {"type": "string", "default": "mtime_size", "description": "变更检测模式（仅action=build）: mtime_size=快速(默认), md5=准确"},
                         "top_k": {"type": "integer", "default": 10, "description": "最大返回结果数 1-50（仅action=search）"},
                         "directory": {"type": "string", "description": "要扫描的目录路径（仅action=scan且kb_type=document时需要）"},
@@ -355,10 +343,6 @@ async def run_server():
                             task_type = "build_thirdparty_knowledge_base"
                         elif kb_type == "project":
                             task_type = "init_project_knowledge_base"
-                        elif kb_type == "help":
-                            # 帮助知识库构建
-                            result = await help_kb_tools.build_help_knowledge_base(arguments)
-                            return result
                         elif kb_type == "document":
                             # 文档知识库构建
                             task_type = "build_document_knowledge_base"

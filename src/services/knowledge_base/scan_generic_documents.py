@@ -12,10 +12,13 @@ import hashlib
 import sqlite3
 import logging
 import threading
+import subprocess
+import tempfile
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Callable
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 from .fts5_lazy_manager import FTS5LazyManager
@@ -276,7 +279,6 @@ class DocProcessor(DocumentProcessor):
     
     def process(self, file_path: Path) -> Optional[Dict]:
         try:
-            import subprocess
             
             result = subprocess.run(
                 ['antiword', str(file_path)],
@@ -558,6 +560,112 @@ class EPUBProcessor(DocumentProcessor):
                 }
         except Exception:
             return None
+
+
+class ChmProcessor(DocumentProcessor):
+    """Microsoft Compiled HTML Help 处理器 (.chm).
+
+    使用 7-Zip 解压 CHM 文件后，将内部的 HTML 文件作为文档导入。
+    需要系统安装 7-Zip (https://www.7-zip.org/)。
+    """
+
+    # 7z 解压时跳过的辅助文件类型
+    EXCLUDE_PATTERNS = [
+        '-x!*.png', '-x!*.gif', '-x!*.jpg', '-x!*.jpeg',
+        '-x!*.css', '-x!*.js', '-x!*.ico', '-x!*.svg',
+        '-x!*.woff', '-x!*.woff2', '-x!*.ttf', '-x!*.eot',
+        '-x!*.bmp', '-x!*.webp', '-x!*.avif',
+    ]
+
+    def __init__(self):
+        self.supported_extensions = ['.chm']
+        self._sevenzip_path = None
+
+    def _find_7zip(self) -> Optional[str]:
+        if self._sevenzip_path:
+            return self._sevenzip_path
+        # 项目 tools 目录（可打包携带）
+        tools_dir = Path(__file__).parent.parent.parent.parent / 'tools'
+        candidates = [
+            str(tools_dir / '7z' / '7z.exe'),
+            r'C:\Program Files\7-Zip\7z.exe',
+            r'C:\Program Files (x86)\7-Zip\7z.exe',
+        ]
+        for p in candidates:
+            if Path(p).exists():
+                self._sevenzip_path = p
+                return p
+        return None
+
+    def process(self, file_path: Path) -> Optional[List[Dict]]:
+        sevenzip = self._find_7zip()
+        if not sevenzip:
+            return [{
+                'title': file_path.stem,
+                'content': (
+                    '需要安装 7-Zip 才能处理 CHM 文件\n\n'
+                    '下载地址:\n'
+                    '  官网: https://www.7-zip.org/download.html\n'
+                    '  SourceForge: https://sourceforge.net/projects/sevenzip/files/7-Zip/\n\n'
+                    'Windows 64位用户下载 7z2301-x64.exe 安装即可'
+                ),
+                'content_type': 'chm',
+                'size': 0, 'line_count': 0, 'hash': '', 'sections': [], 'code_examples': [],
+                'requires_dependencies': True,
+                'install_hint': '需要安装 7-Zip: https://www.7-zip.org/download.html'
+            }]
+
+        tmpdir = None
+        try:
+            # 用 7z 解压到临时目录（跳过图片/CSS/JS等辅助文件，只保留 HTML）
+            tmpdir = tempfile.mkdtemp(prefix='chm_')
+            result = subprocess.run(
+                [sevenzip, 'x', '-y', f'-o{tmpdir}', str(file_path), *self.EXCLUDE_PATTERNS],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=600
+            )
+            if result.returncode != 0:
+                return None
+
+            # 搜集所有 htm/html 文件
+            extracted_dir = Path(tmpdir)
+            html_files = list(extracted_dir.rglob('*.htm')) + list(extracted_dir.rglob('*.html'))
+            if not html_files:
+                return None
+
+            # 用 HTMLProcessor 逐一处理
+            html_proc = HTMLProcessor()
+            docs = []
+            seen_hashes = set()
+            for hf in html_files:
+                try:
+                    doc = html_proc.process(hf)
+                    if doc:
+                        rel_path = str(hf.relative_to(extracted_dir)).replace('\\', '/')
+                        doc['path'] = rel_path
+                        doc['full_path'] = str(hf)
+                        doc['extension'] = '.html'
+                        doc['file_size'] = hf.stat().st_size
+                        doc['last_modified'] = datetime.fromtimestamp(
+                            hf.stat().st_mtime
+                        ).isoformat()
+                        # 去重
+                        doc_hash = doc.get('hash', '')
+                        if doc_hash and doc_hash in seen_hashes:
+                            continue
+                        if doc_hash:
+                            seen_hashes.add(doc_hash)
+                        docs.append(doc)
+                except Exception:
+                    continue
+
+            return docs if docs else None
+
+        except Exception:
+            return None
+        finally:
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class HlpProcessor(DocumentProcessor):
@@ -1283,6 +1391,7 @@ def _process_document_worker(args: Tuple) -> List[Dict]:
         DocProcessor(),
         PDFProcessor(),
         EPUBProcessor(),
+        ChmProcessor(),
         HlpProcessor()
     ]
     
@@ -1329,7 +1438,7 @@ class GenericDocumentScanner:
         '.htm', '.html',
         '.docx', '.doc',
         '.pdf', '.epub',
-        '.hlp'
+        '.hlp', '.chm'
     ]
     
     def __init__(self, kb_dir: str, config: Optional[Dict] = None, progress_callback: Optional[Callable] = None):
@@ -1549,10 +1658,13 @@ class GenericDocumentScanner:
                 max_workers = max(1, parallel_workers_config)
             else:
                 cpu_cores = cpu_count()
-                max_workers = min(max(1, total_files // 50), max(1, cpu_cores - 1))
+                # 至少 2 个 worker（帮助知识库策略: max(2, cpu_cores-1)），不超过文件数
+                max_workers = min(max(2, cpu_cores - 1), total_files)
         
         batch_size_config = self.config.get('build', {}).get('batch_size', 50)
-        chunk_size = max(20, batch_size_config)
+        # chunksize 不能超过平均每 worker 文件数，否则重文件会堆积
+        files_per_worker = max(1, total_files // max_workers) if max_workers > 0 else 50
+        chunk_size = min(max(1, files_per_worker), max(20, batch_size_config))
         
         processed = 0
         failed = 0
@@ -1607,7 +1719,6 @@ class GenericDocumentScanner:
         if '.doc' in extensions:
             doc_files = [f for f in all_files if f.suffix.lower() == '.doc']
             if doc_files:
-                import shutil
                 has_antiword = shutil.which('antiword') is not None
                 has_catdoc = shutil.which('catdoc') is not None
                 
@@ -1668,12 +1779,26 @@ class GenericDocumentScanner:
         conn.commit()
         
         try:
+            COMMIT_INTERVAL = 500  # 每处理多少文档提交一次
+            batch_count = 0
+            
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 args = [(str(f), str(directory)) for f in all_files]
-                results = executor.map(_process_document_worker, args, chunksize=chunk_size)
+                future_map = {executor.submit(_process_document_worker, a): a for a in args}
                 
                 file_idx = 0
-                for docs in results:
+                for future in as_completed(future_map):
+                    try:
+                        docs = future.result()
+                    except Exception:
+                        failed += 1
+                        file_idx += 1
+                        continue
+                    
+                    if not docs:
+                        file_idx += 1
+                        continue
+                    
                     for result in docs:
                         if result.get('requires_dependencies'):
                             failed += 1
@@ -1712,12 +1837,19 @@ class GenericDocumentScanner:
                                 language
                             ))
                             processed += 1
+                            batch_count += 1
                         except Exception:
                             failed += 1
                     
-                    if self.progress_callback and (file_idx + 1) % 100 == 0:
-                        self.progress_callback(file_idx + 1, total_files)
+                    # 每完成一个文件或达到提交间隔，就 commit 一次
+                    if batch_count >= COMMIT_INTERVAL:
+                        conn.commit()
+                        batch_count = 0
+                    
                     file_idx += 1
+                    if self.progress_callback:
+                        # 用已完成的文件数报告进度（相对于总文件数）
+                        self.progress_callback(file_idx, total_files)
             
             conn.commit()
             

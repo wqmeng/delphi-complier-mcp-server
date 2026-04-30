@@ -177,8 +177,7 @@ python build_kb.py --source C:\Delphi\Source --output data/delphi-kb/
 | `delphi` | Delphi 官方源码 (RTL/VCL/FMX 等) | `action=build, version=<ver>` |
 | `project` | 项目级知识库 (项目源码 + 三方库) | `action=build, project_path=<.dproj>` |
 | `thirdparty` | 全局共享第三方库知识库 | `action=build, version=<ver>` |
-| `help` | Delphi CHM 帮助文档 | `action=build, version=<ver>` |
-| `document` | 通用文档 (txt/md/html/docx/pdf/epub/hlp/网页) | `action=build` + `directory`/`url`/`urls` |
+| `document` | 通用文档 (txt/md/html/docx/pdf/epub/hlp/chm/网页) | `action=build` + `directory`/`url`/`urls` |
 
 ### Source Scanner File Extensions
 

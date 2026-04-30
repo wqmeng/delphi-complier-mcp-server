@@ -942,16 +942,12 @@ class SmartCacheKnowledgeBase:
             
             print(f"  使用 {n_workers} 进程并行解析 (chunksize={file_chunksize})...")
             
-            os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
-            
             with ProcessPoolExecutor(max_workers=n_workers) as executor:
                 parsed_results = list(executor.map(
                     self._parse_delphi_file_static,
                     all_files_to_parse,
                     chunksize=file_chunksize
                 ))
-            
-            os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
             
             if self.progress_callback:
                 self.progress_callback(55, f"解析完成: {len(all_files_to_parse)} 个文件，正在入库...")
@@ -1138,14 +1134,12 @@ class SmartCacheKnowledgeBase:
                 )
                 
                 # 并行计算向量
-                os.environ['_IN_PROCESS_POOL_WORKER'] = '1'
                 with ProcessPoolExecutor(max_workers=n_workers) as executor:
                     results = list(executor.map(
                         compute_func,
                         compute_items,
                         chunksize=vector_chunksize
                     ))
-                os.environ.pop('_IN_PROCESS_POOL_WORKER', None)
                 
                 # 更新数据库
                 for item_id, packed_vector in results:

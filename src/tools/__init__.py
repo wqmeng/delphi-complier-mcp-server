@@ -9,14 +9,9 @@ from .knowledge_base import (
     set_delphi_kb_service,
     set_project_kb_service,
     set_thirdparty_kb_service,
-    set_help_kb_service,
     search_knowledge,
     build_unified_knowledge_base,
     get_unified_knowledge_stats
-)
-from .help_knowledge_base import (
-    build_help_knowledge_base,
-    cancel_task
 )
 from .thirdparty_knowledge_base import (
     build_thirdparty_knowledge_base,
@@ -60,16 +55,12 @@ __all__ = [
     'set_delphi_kb_service',
     'set_project_kb_service',
     'set_thirdparty_kb_service',
-    'set_help_kb_service',
     'search_knowledge',
     'build_unified_knowledge_base',
     'get_unified_knowledge_stats',
     # 第三方库知识库工具
     'build_thirdparty_knowledge_base',
     'set_thirdparty_knowledge_base_service',
-    # 帮助文档知识库工具
-    'build_help_knowledge_base',
-    'cancel_task',
     # 源码文件读取工具
     'read_source_file',
     'search_and_read_file',

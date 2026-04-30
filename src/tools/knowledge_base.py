@@ -15,7 +15,6 @@ from mcp.types import CallToolResult
 _delphi_kb_service = None
 _project_kb_service = None
 _thirdparty_kb_service = None
-_help_kb_service = None
 
 
 def set_delphi_kb_service(service):
@@ -36,12 +35,6 @@ def set_thirdparty_kb_service(service):
     _thirdparty_kb_service = service
 
 
-def set_help_kb_service(service):
-    """设置帮助知识库服务实例"""
-    global _help_kb_service
-    _help_kb_service = service
-
-
 async def search_knowledge(arguments: Any) -> CallToolResult:
     """统一搜索知识库"""
     kb_type = arguments.get("kb_type", "all")
@@ -53,7 +46,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         return CallToolResult(content=[{"type": "text", "text": "请提供搜索关键词 query"}], isError=True)
     
     results = {}
-    kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty", "help"]
+    kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty"]
     
     
     _SEARCH_TYPE_TO_KIND = {
@@ -152,24 +145,6 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                         except Exception:
                             pass
 
-            elif kb == "help" and _help_kb_service:
-                # 帮助知识库：搜索类、函数
-                if _help_kb_service.is_kb_exists():
-                    if search_type in ("class", "semantic", "all"):
-                        try:
-                            help_classes = _help_kb_service.search_class(query, top_k=top_k)
-                            if help_classes:
-                                results["help_classes"] = help_classes
-                        except Exception:
-                            pass
-                    if search_type in ("function", "procedure", "semantic", "all"):
-                        try:
-                            help_functions = _help_kb_service.search_function(query, top_k=top_k)
-                            if help_functions:
-                                results["help_functions"] = help_functions
-                        except Exception:
-                            pass
-
         except Exception as e:
             results[f"{kb}_error"] = str(e)
     
@@ -265,20 +240,6 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
             output += "\n"
             has_results = True
     
-    if "help_classes" in results and results["help_classes"]:
-        output += f"帮助类 ({len(results['help_classes'])}):\n"
-        for r in results["help_classes"][:top_k]:
-            output += f"  - {r.get('name', 'N/A')}\n"
-        output += "\n"
-        has_results = True
-    
-    if "help_functions" in results and results["help_functions"]:
-        output += f"帮助函数 ({len(results['help_functions'])}):\n"
-        for r in results["help_functions"][:top_k]:
-            output += f"  - {r.get('name', 'N/A')}\n"
-        output += "\n"
-        has_results = True
-    
     if not has_results:
         output += "未找到相关内容\n"
     
@@ -323,14 +284,6 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
                 results["thirdparty"] = "成功" if success else "失败"
-            elif kb == "help" and _help_kb_service:
-                success = _help_kb_service.build_knowledge_base(
-                    help_names=None,
-                    progress_callback=None,
-                    save_markdown=False,
-                    cleanup_original=False
-                )
-                results["help"] = "成功" if success else "失败"
         except Exception as e:
             results[kb] = f"错误: {str(e)}"
     
@@ -347,7 +300,7 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
     统一获取知识库统计信息
     
     参数:
-    - kb_type: "delphi"|"project"|"thirdparty"|"help"|"all"
+    - kb_type: "delphi"|"project"|"thirdparty"|"all"
     - project_path: 项目路径 (仅project需要)
     """
     kb_type = arguments.get("kb_type", "all")
@@ -355,7 +308,7 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
     
     # 解析知识库类型
     if kb_type == "all":
-        kb_types = ["delphi", "project", "thirdparty", "help"]
+        kb_types = ["delphi", "project", "thirdparty"]
     elif isinstance(kb_type, str):
         kb_types = [k.strip() for k in kb_type.split(",")]
     else:
@@ -378,9 +331,6 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 stats = _thirdparty_kb_service.get_statistics()
                 results["thirdparty"] = stats
-            elif kb == "help" and _help_kb_service:
-                stats = _help_kb_service.get_statistics()
-                results["help"] = stats
         except Exception as e:
             results[kb] = {"error": str(e)}
     
