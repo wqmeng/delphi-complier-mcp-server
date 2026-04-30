@@ -300,10 +300,10 @@ AI Agent 在编译或生成 Delphi 代码前，**必须**先调用 `get_coding_r
 
 搜索 Delphi API 时，按以下优先级：
 
-1. `delphi_kb(kb_type="delphi", ...)` — 源码知识库（查类/函数定义声明）
-2. `delphi_kb(kb_type="document", ...)` — 文档知识库（查 API 描述、示例、用法）
-3. `delphi_kb(kb_type="project", project_path=..., ...)` — 项目知识库（查项目特有代码）
-4. `delphi_kb(kb_type="thirdparty", ...)` — 三方库知识库（查第三方组件）
+1. `delphi_kb(kb_type="project", project_path=..., ...)` — 项目知识库（项目特有代码，最优先）
+2. `delphi_kb(kb_type="document", ...)` — 文档知识库（API 描述、示例、用法）
+3. `delphi_kb(kb_type="delphi", ...)` — 源码知识库（RTL/VCL/FMX 定义声明）
+4. `delphi_kb(kb_type="thirdparty", ...)` — 三方库知识库（第三方组件）
 
 ### Kind Constants
 
