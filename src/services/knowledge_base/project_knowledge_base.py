@@ -225,6 +225,40 @@ class ProjectKnowledgeBase:
         hash_str = "|".join(sorted(hash_parts))
         return hashlib.md5(hash_str.encode()).hexdigest()
 
+    def _get_shared_thirdparty_paths(self) -> Set[str]:
+        """
+        读取 MCP 服务器共享第三方知识库中已扫描的路径列表。
+
+        共享知识库路径:
+          C:/User/delphi-complier-mcp-server/data/thirdparty-knowledge-base/thirdparty_paths.json
+
+        Returns:
+            已扫描的路径集合 (绝对路径,已规范化)
+        """
+        shared_paths_file = Path(
+            r"C:\User\delphi-complier-mcp-server\data\thirdparty-knowledge-base\thirdparty_paths.json"
+        )
+        if not shared_paths_file.exists():
+            logger.info("共享第三方知识库路径文件不存在,跳过检查")
+            return set()
+
+        try:
+            with open(shared_paths_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            raw_paths = data.get("paths", [])
+            # 规范化所有路径 (解析真实大小写)
+            normalized = set()
+            for p in raw_paths:
+                try:
+                    normalized.add(str(Path(p).resolve()))
+                except Exception:
+                    normalized.add(p)
+            logger.info(f"从共享知识库读取到 {len(normalized)} 个已扫描路径")
+            return normalized
+        except Exception as e:
+            logger.warning(f"读取共享第三方知识库路径失败: {e}")
+            return set()
+
     def build_thirdparty_knowledge_base(self, force_rebuild: bool = False) -> bool:
         """
         构建三方库知识库
@@ -253,6 +287,24 @@ class ProjectKnowledgeBase:
             if (thirdparty_kb_dir / "index" / "source_index.json").exists():
                 logger.info("三方库知识库已是最新,跳过构建")
                 return True
+
+        # 读取共享第三方知识库中已扫描的路径，过滤掉已存在的
+        shared_scanned = self._get_shared_thirdparty_paths()
+        if shared_scanned:
+            before = len(thirdparty_paths)
+            thirdparty_paths = [
+                p for p in thirdparty_paths
+                if str(Path(p).resolve()) not in shared_scanned
+            ]
+            skipped = before - len(thirdparty_paths)
+            if skipped > 0:
+                logger.info(f"共享知识库已包含 {skipped} 个路径,跳过扫描")
+            else:
+                logger.info("所有路径均未被共享知识库收录,继续完整扫描")
+
+        if not thirdparty_paths:
+            logger.info("所有三方库路径已在共享知识库中,无需重复构建")
+            return True
 
         logger.info(f"开始构建三方库知识库,共 {len(thirdparty_paths)} 个目录")
 
@@ -317,6 +369,40 @@ class ProjectKnowledgeBase:
         logger.info("三方库知识库构建完成")
         return True
 
+    def _get_shared_exclude_prefixes(self) -> List[Path]:
+        """
+        获取共享知识库中属于当前项目目录的路径前缀列表。
+
+        只返回在 self.project_dir 下的路径,用于 rglob 时的跳过判断。
+
+        Returns:
+            需要跳过的目录前缀 (Path 列表)
+        """
+        all_scanned = self._get_shared_thirdparty_paths()
+        prefixes = []
+        for p in all_scanned:
+            try:
+                pp = Path(p).resolve()
+                pp.relative_to(self.project_dir.resolve())
+                prefixes.append(pp)
+            except ValueError:
+                pass  # 不在项目目录内,不会出现在 rglob 结果中
+        if prefixes:
+            logger.info(f"项目源码扫描将跳过 {len(prefixes)} 个共享知识库已收录的目录")
+        return prefixes
+
+    def _should_skip_shared_path(self, file_path: Path, exclude_prefixes: List[Path]) -> bool:
+        """检查文件是否在需要跳过的共享知识库路径下"""
+        if not exclude_prefixes:
+            return False
+        file_str = str(file_path.resolve())
+        for prefix in exclude_prefixes:
+            prefix_str = str(prefix)
+            # 检查 file_path 是否以 prefix 开头 (作为目录前缀)
+            if file_str == prefix_str or file_str.startswith(prefix_str + os.sep):
+                return True
+        return False
+
     def build_project_knowledge_base(self, force_rebuild: bool = False) -> bool:
         """
         构建项目源码知识库
@@ -328,7 +414,6 @@ class ProjectKnowledgeBase:
             是否构建成功
         """
         import sqlite3
-        import os
         
         # 计算源码哈希
         current_hash = self._calculate_source_hash(self.project_dir)
@@ -347,34 +432,42 @@ class ProjectKnowledgeBase:
         project_kb_dir = self.kb_dir
         project_kb_dir.mkdir(parents=True, exist_ok=True)
 
+        # 读取共享 KB 中已收录的路径前缀(仅项目内),用于跳过
+        exclude_prefixes = self._get_shared_exclude_prefixes()
+
         # 直接扫描 (单线程,避免多进程问题)
         all_source_files = []
         total_files = 0
         total_lines = 0
+        skipped_files = 0
         
         scanner = DelphiSourceScanner(str(self.project_dir), str(project_kb_dir), self.progress_callback)
+
+        def _scan_files(extension: str):
+            nonlocal total_files, total_lines, skipped_files
+            for file_path in self.project_dir.rglob(f'*{extension}'):
+                if self._should_skip_shared_path(file_path, exclude_prefixes):
+                    skipped_files += 1
+                    continue
+                try:
+                    file_info = scanner.analyze_file(file_path)
+                    if file_info:
+                        all_source_files.append(file_info)
+                        total_files += 1
+                        total_lines += file_info.get('line_count', 0)
+                except Exception as e:
+                    logger.debug(f"分析文件失败: {file_path}, {e}")
         
-        # 扫描所有pas文件
-        for file_path in self.project_dir.rglob('*.pas'):
-            try:
-                file_info = scanner.analyze_file(file_path)
-                if file_info:
-                    all_source_files.append(file_info)
-                    total_files += 1
-                    total_lines += file_info.get('line_count', 0)
-            except Exception as e:
-                logger.debug(f"分析文件失败: {file_path}, {e}")
-        
-        # 扫描dpr文件
-        for file_path in self.project_dir.rglob('*.dpr'):
-            try:
-                file_info = scanner.analyze_file(file_path)
-                if file_info:
-                    all_source_files.append(file_info)
-                    total_files += 1
-                    total_lines += file_info.get('line_count', 0)
-            except Exception as e:
-                logger.debug(f"分析文件失败: {file_path}, {e}")
+        # 依次扫描所有 Delphi 相关源文件
+        _scan_files('.pas')
+        _scan_files('.dpr')
+        _scan_files('.dpk')
+        _scan_files('.dfm')
+        _scan_files('.fmx')
+        _scan_files('.inc')
+
+        if skipped_files > 0:
+            logger.info(f"跳过 {skipped_files} 个已在共享知识库中的文件")
 
         logger.info(f"总共找到 {total_files} 个源文件, {total_lines} 行代码")
 

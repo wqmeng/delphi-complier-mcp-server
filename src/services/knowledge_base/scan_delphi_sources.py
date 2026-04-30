@@ -624,7 +624,7 @@ class DelphiSourceScanner:
         self.output_dir = Path(output_dir)
         self.index_file = self.output_dir / "index" / "source_index.json"
         self.metadata_file = self.output_dir / "index" / "metadata.json"
-        self.file_extensions = {'.pas', '.dpr', '.dpk', '.inc', '.hpp', '.h'}
+        self.file_extensions = {'.pas', '.dpr', '.dpk', '.dfm', '.inc'}
         self.progress_callback = progress_callback
         self.force_rebuild = force_rebuild
         self._existing_index: Optional[Dict] = None
