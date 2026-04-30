@@ -534,19 +534,14 @@ class ThirdPartyKnowledgeBase:
             logger.warning("未找到任何源文件或帮助文档")
             return False
 
-        # 去重：使用相对路径(path)作为唯一标识
+        # 去重：使用完整路径(full_path)作为唯一标识
         seen_paths = set()
         unique_files = []
         for file_info in all_source_files:
-            rel_path = file_info.get('path', '')
-            if rel_path and rel_path not in seen_paths:
-                seen_paths.add(rel_path)
+            full_path = file_info.get('full_path', '')
+            if full_path and full_path not in seen_paths:
+                seen_paths.add(full_path)
                 unique_files.append(file_info)
-            elif not rel_path:
-                full_path = file_info.get('full_path', '')
-                if full_path and full_path not in seen_paths:
-                    seen_paths.add(full_path)
-                    unique_files.append(file_info)
 
         unique_count = len(unique_files)
         if unique_count < total_files:
@@ -570,6 +565,14 @@ class ThirdPartyKnowledgeBase:
                 logger.info("已清空旧知识库数据")
             except Exception:
                 pass
+        
+        # 增量构建：加载现有文件的hash
+        existing_files = {}
+        if not force_rebuild:
+            cursor.execute("SELECT id, full_path, hash FROM files")
+            for row in cursor.fetchall():
+                existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
+            logger.info(f"现有文件数: {len(existing_files)}")
         
         # 确保表存在
         cursor.execute("""
@@ -620,7 +623,29 @@ class ThirdPartyKnowledgeBase:
         # 插入源文件
         logger.info("保存源文件到数据库...")
         batch_size = 1000
+        skipped_files = 0
+        updated_files = 0
+        new_files = 0
+        
         for i, file_info in enumerate(unique_files):
+            full_path = file_info.get('full_path', '')
+            new_hash = file_info.get('hash', '')
+            
+            # 增量构建：检查文件是否变更
+            if not force_rebuild and full_path in existing_files:
+                existing_info = existing_files[full_path]
+                if existing_info['hash'] == new_hash:
+                    # 文件未变更，跳过
+                    skipped_files += 1
+                    continue
+                
+                # 文件已变更，删除旧的vocabularies
+                old_file_id = existing_info['id']
+                cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_file_id,))
+                updated_files += 1
+            else:
+                new_files += 1
+            
             # 转换 units 和 uses 为字符串
             units = file_info.get('units', [])
             if isinstance(units, list):
@@ -630,12 +655,12 @@ class ThirdPartyKnowledgeBase:
                 uses = ','.join(uses)
             
             cursor.execute("""
-                INSERT INTO files (full_path, relative_path, extension, size, line_count, hash, 
+                INSERT OR REPLACE INTO files (full_path, relative_path, extension, size, line_count, hash, 
                     last_modified, category, units_defined, units_imported, description, 
                     scan_timestamp, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                file_info.get('full_path', ''),
+                full_path,
                 file_info.get('path', ''),
                 file_info.get('extension', '.pas'),
                 file_info.get('size', 0),
@@ -695,18 +720,28 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             if (i + 1) % batch_size == 0:
                 conn.commit()
                 logger.info(f"  已处理 {i+1}/{len(unique_files)} 源文件")
+        
+        if skipped_files > 0:
+            logger.info(f"增量构建: 跳过 {skipped_files} 个未变更文件, 更新 {updated_files} 个变更文件, 新增 {new_files} 个文件")
 
         # 插入帮助文档
         if all_help_docs:
             logger.info("保存帮助文档到数据库...")
             for help_doc in all_help_docs:
+                full_path = help_doc.get('full_path', '')
+                
+                # 增量构建：删除已存在的帮助文档
+                if not force_rebuild and full_path in existing_files:
+                    old_file_id = existing_files[full_path]['id']
+                    cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_file_id,))
+                
                 cursor.execute("""
-                    INSERT INTO files (full_path, relative_path, extension, size, line_count, hash, 
+                    INSERT OR REPLACE INTO files (full_path, relative_path, extension, size, line_count, hash, 
                         last_modified, category, units_defined, units_imported, description, 
                         scan_timestamp, created_at, updated_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    help_doc.get('full_path', ''),
+                    full_path,
                     help_doc.get('path', ''),
                     help_doc.get('extension', '.html'),
                     help_doc.get('size', 0),
