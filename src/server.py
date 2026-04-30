@@ -12,7 +12,7 @@ import asyncio
 import sys
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 import io
 
 os.environ['PYTHONIOENCODING'] = 'utf-8'
@@ -78,6 +78,45 @@ else:
 
     # 初始化日志
     logger = init_default_logger()
+
+
+def _auto_detect_delphi_help_dir() -> Optional[str]:
+    """自动检测最新安装的 Delphi 帮助文档目录"""
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Embarcadero\BDS")
+        versions = []
+        i = 0
+        while True:
+            try:
+                versions.append(winreg.EnumKey(key, i))
+                i += 1
+            except OSError:
+                break
+        winreg.CloseKey(key)
+
+        versions.sort(key=lambda x: float(x) if x.replace('.', '').isdigit() else 0, reverse=True)
+        for ver in versions:
+            try:
+                vk = winreg.OpenKey(winreg.HKEY_CURRENT_USER, rf"SOFTWARE\Embarcadero\BDS\{ver}")
+                root_dir = winreg.QueryValueEx(vk, "RootDir")[0]
+                winreg.CloseKey(vk)
+                help_dir = Path(root_dir) / "Help" / "Doc"
+                if help_dir.exists():
+                    logger.info(f"自动检测到 Delphi 帮助目录 (版本 {ver}): {help_dir}")
+                    return str(help_dir)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 注册表失败，尝试默认路径
+    for ver in ["23.0", "22.0", "21.0", "20.0", "19.0", "18.0"]:
+        path = rf"C:\Program Files (x86)\Embarcadero\Studio\{ver}\Help\Doc"
+        if Path(path).exists():
+            logger.info(f"使用默认帮助目录: {path}")
+            return path
+    return None
 
 
 async def run_server():
@@ -146,10 +185,12 @@ async def run_server():
             Tool(
                 name="delphi_kb",
                 description="【知识库搜索/构建】搜索Delphi代码/类/函数/文档，查看统计或构建索引。三种模式通过'action'参数控制：\n"
+                            "     kb_type=document 且 action=build 时不传 directory 则自动检测最新 Delphi 帮助目录\n"
                             "  1) action=search（默认）：搜索符号/文档。需要'query'参数，'search_type'过滤实体类型，'kb_type'选择知识库范围，'top_k'控制结果数。\n"
                             "  2) action=read：读取文档/源码内容。需要'url'/'doc_id'(文档)或'file_path'(源码)，支持offset/limit分页。\n"
                             "  3) action=stats：查看知识库统计（文件/类/函数数量）。用'kb_type'选择知识库范围。\n"
-                            "  4) action=build：构建/重建知识库（耗时操作，必须使用async_mode=true）。提交后通过'async_task'工具的action=status + task_id轮询进度。\n"
+                             "  4) action=build：构建/重建知识库（耗时操作，必须使用async_mode=true）。提交后通过'async_task'工具的action=status + task_id轮询进度。\n"
+                             "     - kb_type=document 时不传 directory 则自动检测最新 Delphi 帮助目录\n"
                             "  5) action=scan：扫描目录添加文档（kb_type=document时）。需要'directory'参数。\n"
                             "  6) action=web：添加网页文档（kb_type=document时）。需要'url'参数。\n"
                             "工作流: delphi_kb(action=search) → delphi_kb(action=read).",
@@ -172,8 +213,8 @@ async def run_server():
                         "incremental": {"type": "boolean", "default": False, "description": "增量构建，跳过CHM提取"},
                         "hash_mode": {"type": "string", "default": "mtime_size", "description": "变更检测模式（仅action=build）: mtime_size=快速(默认), md5=准确"},
                         "top_k": {"type": "integer", "default": 10, "description": "最大返回结果数 1-50（仅action=search）"},
-                        "directory": {"type": "string", "description": "要扫描的目录路径（仅action=scan且kb_type=document时需要）"},
-                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "文件扩展名列表（可选，如['.md', '.txt', '.html']）"},
+                        "directory": {"type": "string", "description": "要扫描的目录路径（action=scan且kb_type=document时需要；action=build且kb_type=document时可选，不传则自动检测Delphi帮助目录）"},
+                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "文件扩展名列表（可选，如['.md', '.txt', '.html']；kb_type=document且不传时默认['.chm']）"},
                         "urls": {"type": "array", "items": {"type": "string"}, "description": "网页URL列表（action=build且kb_type=document时使用）"},
                         "start_url": {"type": "string", "description": "起始URL（action=build且kb_type=document时自动爬取）"},
                         "max_pages": {"type": "integer", "default": 100, "description": "最大爬取页面数（自动爬取时）"},
@@ -353,10 +394,18 @@ async def run_server():
                         
                         # 根据任务类型准备参数
                         if task_type == "build_document_knowledge_base":
+                            directory = arguments.get("directory")
+                            if not directory:
+                                detected = _auto_detect_delphi_help_dir()
+                                if detected:
+                                    directory = detected
+                                    logger.info(f"自动检测到 Delphi 帮助目录: {directory}")
+                                else:
+                                    logger.warning("未提供 directory 且未检测到 Delphi 帮助目录")
                             task_params = {
                                 "urls": arguments.get("urls", []),
-                                "directory": arguments.get("directory"),
-                                "extensions": arguments.get("extensions"),
+                                "directory": directory,
+                                "extensions": arguments.get("extensions", [".chm"]),
                                 "start_url": arguments.get("start_url"),
                                 "max_pages": arguments.get("max_pages", 100),
                                 "max_depth": arguments.get("max_depth", 3),
