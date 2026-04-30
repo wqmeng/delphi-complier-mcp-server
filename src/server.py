@@ -396,7 +396,7 @@ async def run_server():
                         
                         task_result = await start_async_task({
                             "task_type": task_type,
-                            "params": task_params,
+                            "task_params": task_params,
                             "show_progress": arguments.get("show_progress", True)
                         })
                         result = task_result
