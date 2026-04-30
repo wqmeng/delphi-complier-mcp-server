@@ -2,11 +2,12 @@
 # -*- coding: utf-8 -*-
 """
 通用文档扫描器
-支持 doc/docx/txt/md/html/pdf/网页等多种文档格式
+支持 doc/docx/txt/md/html/pdf/epub/hlp/网页等多种文档格式
 """
 
 import re
 import json
+import struct
 import hashlib
 import sqlite3
 import logging
@@ -559,6 +560,644 @@ class EPUBProcessor(DocumentProcessor):
             return None
 
 
+class HlpProcessor(DocumentProcessor):
+    """Windows Help 文件处理器 (.hlp) — 纯 Python, 输出 Markdown.
+    解析 |TTLBTREE 获得标题, |TOPIC 解压后通过 Hall/Phrase 解码获得正文.
+    支持 HC30/HC31/HCW 4.00 格式, LZ77 压缩.
+    """
+
+    def __init__(self):
+        self.supported_extensions = ['.hlp']
+
+    # ═══════════════════════════════════════════
+    #  公开入口 — 按 RT2 topic header 拆分为多个文档
+    # ═══════════════════════════════════════════
+
+    def process(self, file_path: Path) -> Optional[List[Dict]]:
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(16)
+                if len(header) < 16:
+                    return None
+                magic, dir_start, _fb, _fs = struct.unpack('<LLLl', header)
+                if magic != 0x00035F3F:
+                    return None
+
+                internal_files = self._parse_directory(f, dir_start)
+                if not internal_files or '|SYSTEM' not in internal_files:
+                    return None
+
+                system_info = self._read_system(f, internal_files)
+                if not system_info:
+                    return None
+
+                phrases = self._parse_phrases(f, internal_files, system_info)
+                titles = self._read_ttlbtree(f, internal_files)
+                topic_list = self._extract_topic_text(f, internal_files, system_info, phrases, titles)
+
+        except Exception:
+            return None
+
+        if not topic_list:
+            return None
+
+        docs = []
+        for title, body_text in topic_list:
+            if not title and not body_text:
+                continue
+            content_parts = [f'## {title}'] if title else []
+            if body_text:
+                content_parts.append(body_text)
+            content = '\n\n'.join(content_parts)
+            content = re.sub(r'\n{3,}', '\n\n', content).strip()
+            if not content:
+                continue
+
+            sections = [{'level': 2, 'title': title}] if title else []
+            code_examples = re.findall(r'```[\w]*\n(.*?)```', content, re.DOTALL)
+
+            docs.append({
+                'title': (title or file_path.stem)[:200],
+                'content': content,
+                'content_type': 'hlp',
+                'size': len(content),
+                'line_count': content.count('\n') + 1,
+                'hash': hashlib.md5(content.encode()).hexdigest(),
+                'sections': sections,
+                'code_examples': code_examples
+            })
+
+        return docs if docs else None
+
+    # ═══════════════════════════════════════════
+    #  目录 B+ 树
+    # ═══════════════════════════════════════════
+
+    def _parse_directory(self, f, dir_start):
+        f.seek(dir_start + 9)
+        f.read(2); f.read(2)
+        page_size = struct.unpack('<H', f.read(2))[0]
+        f.read(16); f.read(2); f.read(2)
+        root_page = struct.unpack('<h', f.read(2))[0]
+        f.read(2); f.read(2)
+        nlevels = struct.unpack('<h', f.read(2))[0]
+        f.read(4)
+
+        def read_leaf_fn(fh, n):
+            r = []
+            for _ in range(n):
+                nb = bytearray()
+                while True:
+                    b = fh.read(1)
+                    if b in (b'\x00', b''): break
+                    nb.extend(b)
+                r.append((nb.decode('latin-1', errors='replace'),
+                          struct.unpack('<L', fh.read(4))[0]))
+            return r
+
+        page_start = dir_start + 9 + 38
+        entries = self._traverse_btree_leaves(f, page_start, root_page, nlevels, page_size, read_leaf_fn)
+        return dict(entries)
+
+    def _traverse_btree_leaves(self, f, page_start, root_page, nlevels, page_size, read_leaf_fn):
+        page_num = root_page
+        for _ in range(nlevels - 1):
+            f.seek(page_start + page_num * page_size)
+            f.read(2); nentries = struct.unpack('<h', f.read(2))[0]
+            prev_page = struct.unpack('<h', f.read(2))[0]
+            names = []
+            for __ in range(nentries):
+                nb = bytearray()
+                while True:
+                    b = f.read(1)
+                    if b in (b'\x00', b''): break
+                    nb.extend(b)
+                names.append(struct.unpack('<h', f.read(2))[0])
+            page_num = prev_page if prev_page != -1 else (names[0] if names else -1)
+
+        results = []
+        while page_num not in (-1, 0xFFFF):
+            f.seek(page_start + page_num * page_size)
+            f.read(2); nentries = struct.unpack('<h', f.read(2))[0]
+            f.read(2); next_page = struct.unpack('<h', f.read(2))[0]
+            results.extend(read_leaf_fn(f, nentries))
+            page_num = next_page
+        return results
+
+    # ═══════════════════════════════════════════
+    #  |SYSTEM
+    # ═══════════════════════════════════════════
+
+    def _read_system(self, f, internal_files):
+        sys_offset = internal_files.get('|SYSTEM')
+        if sys_offset is None:
+            return None
+        f.seek(sys_offset); f.read(4); f.read(4); f.read(1)
+        data_start = sys_offset + 9
+        f.seek(data_start)
+        magic = struct.unpack('<H', f.read(2))[0]
+        if magic != 0x036C: return None
+        minor = struct.unpack('<h', f.read(2))[0]
+        f.read(2); f.read(4)
+        flags = struct.unpack('<H', f.read(2))[0]
+
+        tb_size = 4096 if (minor > 16 and (flags & 4)) else 2048
+        compressed = minor > 16 and (flags & 0xC)
+        has_hall = ('|PhrIndex' in internal_files) and ('|PhrImage' in internal_files)
+        has_old_phrases = '|Phrases' in internal_files
+        return {'topic_block_size': tb_size, 'compressed': compressed,
+                'minor': minor, 'has_hall': has_hall, 'has_old_phrases': has_old_phrases}
+
+    # ═══════════════════════════════════════════
+    #  短语表 (Hall / old-style)
+    # ═══════════════════════════════════════════
+
+    def _parse_phrases(self, f, internal_files, system_info):
+        if system_info.get('has_hall'):
+            return self._parse_phrases_hall(f, internal_files)
+        if system_info.get('has_old_phrases'):
+            return self._parse_phrases_old(f, internal_files)
+        return None
+
+    # ── Hall (|PhrIndex + |PhrImage) ──
+
+    def _parse_phrases_hall(self, f, internal_files):
+        idx_off = internal_files.get('|PhrIndex')
+        img_off = internal_files.get('|PhrImage')
+        if not idx_off or not img_off:
+            return None
+
+        f.seek(idx_off); f.read(4); idx_used = struct.unpack('<L', f.read(4))[0]; f.read(1)
+        idx_start = idx_off + 9
+        f.seek(idx_start)
+        idx_data = f.read(idx_used)
+
+        magic = struct.unpack_from('<L', idx_data, 0)[0]
+        if magic != 1: return None
+        nentries = struct.unpack_from('<L', idx_data, 4)[0]
+        img_size = struct.unpack_from('<L', idx_data, 12)[0]
+        img_comp_size = struct.unpack_from('<L', idx_data, 16)[0]
+        flags = struct.unpack_from('<H', idx_data, 24)[0]
+        bit_count = flags & 0xF
+
+        offsets = self._build_phrase_offsets(idx_data, 28, nentries, bit_count)
+        if not offsets or len(offsets) < nentries + 1:
+            return None
+
+        f.seek(img_off); f.read(4); img_used = struct.unpack('<L', f.read(4))[0]; f.read(1)
+        img_start = img_off + 9
+        f.seek(img_start)
+        img_raw = f.read(img_used)
+
+        if img_comp_size != img_size:
+            img_data = self._lz77_decompress(img_raw, img_size)
+        else:
+            img_data = img_raw
+
+        phrases = []
+        for i in range(nentries):
+            s, e = offsets[i], offsets[i + 1]
+            if s < len(img_data) and e <= len(img_data):
+                phrases.append(img_data[s:e].decode('latin-1', errors='replace'))
+            else:
+                phrases.append('')
+        return phrases
+
+    def _build_phrase_offsets(self, data, start_offset, nentries, bit_count):
+        byte_data = bytearray(data)
+        ptr_idx = start_offset
+        mask = 0
+        value = 0
+
+        def get_bit():
+            nonlocal ptr_idx, mask, value
+            mask = (mask << 1) & 0xFFFFFFFF  # Python ints don't overflow
+            if mask == 0:
+                if ptr_idx + 4 <= len(byte_data):
+                    value = struct.unpack_from('<L', byte_data, ptr_idx)[0]
+                else:
+                    value = 0
+                ptr_idx += 4
+                mask = 1
+            return (value & mask) != 0
+
+        offsets = [0]
+        for _ in range(nentries):
+            n = 1
+            while get_bit():
+                n += 1 << bit_count
+            if get_bit(): n += 1
+            if bit_count > 1 and get_bit(): n += 2
+            if bit_count > 2 and get_bit(): n += 4
+            if bit_count > 3 and get_bit(): n += 8
+            if bit_count > 4 and get_bit(): n += 16
+            offsets.append(offsets[-1] + n)
+        return offsets
+
+    # ── old-style (|Phrases) ──
+
+    def _parse_phrases_old(self, f, internal_files):
+        phr_offset = internal_files.get('|Phrases')
+        if phr_offset is None: return None
+        f.seek(phr_offset); f.read(4); phr_used = struct.unpack('<L', f.read(4))[0]; f.read(1)
+        phr_start = phr_offset + 9
+        f.seek(phr_start)
+        data = f.read(phr_used)
+        if len(data) < 4: return None
+
+        num_phrases = struct.unpack_from('<H', data, 0)[0]
+        one_hundred = struct.unpack_from('<H', data, 2)[0]
+        offsets = []
+        pos = 4
+        for _ in range(num_phrases + 1):
+            offsets.append(struct.unpack_from('<H', data, pos)[0])
+            pos += 2
+
+        hdr_end = 4 + (num_phrases + 1) * 2
+        if one_hundred == 0x0100 and len(data) > hdr_end + 4:
+            decomp_size = struct.unpack_from('<L', data, hdr_end)[0]
+            lz77_data = data[hdr_end + 4:]
+            phrase_bytes = self._lz77_decompress(lz77_data, max(decomp_size, 65536))
+            if not phrase_bytes:
+                return None
+        else:
+            phrase_bytes = data[hdr_end:]
+
+        phrases = []
+        for i in range(num_phrases):
+            s, e = offsets[i], offsets[i + 1]
+            if s < len(phrase_bytes) and e <= len(phrase_bytes):
+                phrases.append(phrase_bytes[s:e].decode('latin-1', errors='replace'))
+            else:
+                phrases.append('')
+        return phrases
+
+    # ═══════════════════════════════════════════
+    #  |TOPIC 文本提取 (含 Hall / Phrase 解压)
+    # ═══════════════════════════════════════════
+
+    def _extract_topic_text(self, f, internal_files, system_info, phrases, titles):
+        """Walk TOPICLINKs, group text by RT2 topic headers. Returns [(title, text)]."""
+        topic_offset = internal_files.get('|TOPIC')
+        if topic_offset is None:
+            return []
+
+        f.seek(topic_offset); f.read(4)
+        topic_used = struct.unpack('<L', f.read(4))[0]; f.read(1)
+        data_start = topic_offset + 9
+
+        tb_size = system_info['topic_block_size']
+        compressed = system_info['compressed']
+        has_phrases = phrases is not None
+        use_hall = system_info.get('has_hall', False)
+
+        all_data = bytearray()
+        offset = data_start
+        while offset < data_start + topic_used:
+            f.seek(offset); f.read(12)
+            raw = f.read(tb_size - 12)
+            if compressed:
+                all_data.extend(self._lz77_decompress(raw, 16384))
+            else:
+                all_data.extend(raw)
+            offset += tb_size
+
+        topics = []  # [(title, [text_runs])]
+        current_title = 'Unknown'
+        current_texts = []
+
+        title_index = 0
+        pos = 0
+        while pos + 21 <= len(all_data):
+            bsz = struct.unpack_from('<L', all_data, pos)[0]
+            if 10 <= bsz <= 4000:
+                rt = all_data[pos + 20]
+                dl2 = struct.unpack_from('<L', all_data, pos + 4)[0]
+                dl1 = struct.unpack_from('<L', all_data, pos + 16)[0]
+
+                if 21 < dl1 < bsz:
+                    compressed_sz = bsz - dl1
+                    ld2_raw = all_data[pos + dl1: pos + bsz]
+
+                    ld2 = b''
+                    if compressed_sz > 0 and dl2 > 0:
+                        if has_phrases:
+                            if dl2 <= compressed_sz:
+                                ld2 = ld2_raw[:dl2]
+                            elif use_hall:
+                                ld2 = self._hall_decompress_bytes(ld2_raw, phrases, dl2)
+                            else:
+                                ld2 = self._phrase_decompress_bytes(ld2_raw, phrases, dl2)
+                        else:
+                            ld2 = ld2_raw
+
+                    if rt == 2:
+                        # Save previous topic
+                        if title_index > 0:
+                            topics.append((current_title, current_texts))
+                            current_texts = []
+
+                        # Extract title from LinkData2 first NUL-term string
+                        title = self._extract_topic_header_text(ld2) if ld2 else ''
+                        # Fallback to TTLBTREE title
+                        if not title and title_index < len(titles):
+                            title = titles[title_index][1]
+                        current_title = title or f'Topic {title_index}'
+                        title_index += 1
+
+                    elif rt in (0x20, 0x23, 0x27) and ld2:
+                        ld1 = all_data[pos + 21: pos + dl1]
+                        t = self._extract_display_text(ld1, ld2)
+                        if t:
+                            words = t.split()
+                            ratio = sum(1 for w in words if len(w) > 2) / max(len(words), 1)
+                            if ratio > 0.3 or len(t) > 40:
+                                current_texts.append(t)
+
+                    pos += bsz
+                    continue
+            pos += 1
+
+        # Last topic
+        if title_index > 1 or (not topics and current_texts):
+            topics.append((current_title, current_texts))
+
+        # Merge text runs per topic
+        result = []
+        for i, (t_title, texts) in enumerate(topics):
+            # Use TTLBTREE title when available (cleaner)
+            if i < len(titles):
+                t_title = titles[i][1]
+            merged = '\n\n'.join(texts)
+            merged = re.sub(r'\n{3,}', '\n\n', merged)
+            result.append((t_title, merged))
+
+        return result
+
+    # ── RT=2 topic header: LinkData2 = NUL-separated title + macros ──
+
+    @staticmethod
+    def _extract_topic_header_text(ld2):
+        """LinkData2 for RecordType 2: first NUL-terminated string is topic title."""
+        parts = ld2.split(b'\x00')
+        texts = []
+        for part in parts:
+            s = part.decode('latin-1', errors='replace')
+            s = HlpProcessor._clean_text(s)
+            if s:
+                texts.append(s)
+        return ' '.join(texts)
+
+    # ── RT=0x20 display paragraph: LinkData1 has format header, LinkData2 = NUL-separated text ──
+
+    @staticmethod
+    def _extract_display_text(ld1, ld2):
+        """Extract text from a display paragraph (RecordType 0x20/0x23/0x27).
+        LinkData1 starts with format info; LinkData2 is NUL-terminated strings
+        alternating with format control bytes from LinkData1."""
+        off = 0
+
+        # Skip expanded size (compressed long)
+        off = HlpProcessor._skip_compressed_long(ld1, off)
+        # Skip topic offset increment (word)
+        off += 2
+
+        # Parse ParagraphInfo flags (word)
+        if off + 2 > len(ld1):
+            return ''
+        x2 = struct.unpack_from('<H', ld1, off)[0]
+        off += 2
+
+        # Skip conditional fields based on flags
+        if x2 & 0x0001: off = HlpProcessor._skip_compressed_long(ld1, off)
+        if x2 & 0x0002: off = HlpProcessor._skip_int(ld1, off)
+        if x2 & 0x0004: off = HlpProcessor._skip_int(ld1, off)
+        if x2 & 0x0008: off = HlpProcessor._skip_int(ld1, off)
+        if x2 & 0x0010: off = HlpProcessor._skip_int(ld1, off)
+        if x2 & 0x0020: off = HlpProcessor._skip_int(ld1, off)
+        if x2 & 0x0040: off = HlpProcessor._skip_int(ld1, off)
+        if x2 & 0x0100: off += 4  # border info (byte + word)
+        if x2 & 0x0200:
+            if off >= len(ld1): return ''
+            ntabs = HlpProcessor._scan_int(ld1, off)
+            off = HlpProcessor._skip_int(ld1, off)
+            for _ in range(ntabs):
+                if off + 2 > len(ld1): break
+                tab = struct.unpack_from('<H', ld1, off)[0]
+                off += 2
+                if tab & 0x4000:
+                    off += 2
+
+        # Now iterate: read NUL-term string from ld2, then format byte from ld1.
+        # Build paragraphs: LF(0x81)/CR(0x82)→soft break, 0xFF→paragraph end.
+        paragraphs = []
+        current = []
+        ld2_pos = 0
+        while ld2_pos < len(ld2):
+            end = ld2.find(b'\x00', ld2_pos)
+            if end < 0:
+                end = len(ld2)
+            s = ld2[ld2_pos:end].decode('latin-1', errors='replace')
+            s = HlpProcessor._clean_text(s)
+            if s:
+                current.append(s)
+            ld2_pos = end + 1
+
+            if off >= len(ld1):
+                break
+            ctrl = ld1[off]
+            if ctrl == 0xFF:
+                if current:
+                    paragraphs.append(' '.join(current))
+                    current = []
+                off += 1
+                break  # end of paragraph
+            elif ctrl in (0x81, 0x82):           # LF / CR → soft break
+                if current:
+                    paragraphs.append(' '.join(current))
+                    current = []
+                off += 1
+            elif ctrl == 0x80: off += 3          # font change
+            elif ctrl == 0x20: off += 5          # variable field
+            elif ctrl == 0x21: off += 3          # dtype
+            elif ctrl == 0x83: off += 4
+            elif ctrl == 0x84: off += 5
+            elif ctrl == 0x85: off += 6
+            elif ctrl == 0x86: off += 7
+            elif ctrl == 0x87: off += 8
+            elif ctrl == 0x88: off += 9
+            elif ctrl == 0x89: off += 10
+            elif ctrl == 0x8A: off += 11
+            elif ctrl == 0x8B: off += 12
+            elif ctrl == 0x8C: off += 13
+            elif ctrl == 0x23: off += 1          # topic separator
+            else: off += 1
+
+        if current:
+            paragraphs.append(' '.join(current))
+        return '\n\n'.join(paragraphs)
+
+    # ── Compressed number helpers ──
+
+    @staticmethod
+    def _skip_compressed_long(data, off):
+        while off < len(data) and (data[off] & 0x80):
+            off += 1
+        return off + 1
+
+    @staticmethod
+    def _skip_int(data, off):
+        b = data[off]
+        if b & 0x80:
+            return off + 2
+        return off + 1
+
+    @staticmethod
+    def _scan_int(data, off):
+        b = data[off]
+        if b & 0x80:
+            return (b & 0x7F) | (data[off + 1] << 7)
+        return b
+
+    # ── Hall LinkData2 解压 ──
+
+    @staticmethod
+    def _hall_decompress(data, phrases, expected_len):
+        return HlpProcessor._hall_decompress_bytes(data, phrases, expected_len).decode('latin-1', errors='replace')
+
+    @staticmethod
+    def _hall_decompress_bytes(data, phrases, expected_len):
+        """Hall decompression, returns raw bytes (NUL-separated text fragments)."""
+        result = bytearray()
+        i = 0
+        data_bytes = bytearray(data)
+        while i < len(data_bytes):
+            ch = data_bytes[i]
+            if ch & 15 == 15:  i += 1
+            elif ch & 15 == 7: result.append(0x20); i += 1
+            elif ch & 7 == 3:
+                copy_len = (ch >> 3) + 1; i += 1
+                end = min(i + copy_len, len(data_bytes))
+                result.extend(data_bytes[i:end])
+                i = end
+            elif ch & 3 == 1:
+                if i + 1 >= len(data_bytes): break
+                phrase_num = ch * 64 + 64 + data_bytes[i + 1]; i += 2
+                if 0 <= phrase_num < len(phrases):
+                    result.extend(phrases[phrase_num].encode('latin-1', errors='replace'))
+            elif ch % 2 == 0:
+                phrase_num = ch // 2; i += 1
+                if 0 <= phrase_num < len(phrases):
+                    result.extend(phrases[phrase_num].encode('latin-1', errors='replace'))
+            else: i += 1
+        return bytes(result[:expected_len])
+
+    # ── old-style Phrase LinkData2 解压 ──
+
+    @staticmethod
+    def _phrase_decompress(data, phrases, expected_len):
+        return HlpProcessor._phrase_decompress_bytes(data, phrases, expected_len).decode('latin-1', errors='replace')
+
+    @staticmethod
+    def _phrase_decompress_bytes(data, phrases, expected_len):
+        result = bytearray()
+        i = 0
+        data_bytes = bytearray(data)
+        while i < len(data_bytes):
+            ch = data_bytes[i]
+            if ch == 0 or ch >= 16:
+                result.append(ch)
+                i += 1
+            else:
+                if i + 1 >= len(data_bytes): break
+                val = ch * 256 - 256 + data_bytes[i + 1]; i += 2
+                phrase_num = val // 2
+                if 0 <= phrase_num < len(phrases):
+                    result.extend(phrases[phrase_num].encode('latin-1', errors='replace'))
+                    if val % 2 == 1: result.append(0x20)
+        return bytes(result[:expected_len])
+
+    # ── 共享后处理 ──
+
+    @staticmethod
+    def _clean_text(raw):
+        """Strip non-printable chars, collapse whitespace."""
+        clean = []
+        for c in raw:
+            if 32 <= ord(c) < 127: clean.append(c)
+            elif c in '\n\r\t': clean.append(' ')
+        return re.sub(r'\s+', ' ', ''.join(clean)).strip()
+
+    # ═══════════════════════════════════════════
+    #  LZ77 解压 (ring buffer, zero-init)
+    # ═══════════════════════════════════════════
+
+    @staticmethod
+    def _lz77_decompress(data, max_output=16384):
+        output = bytearray()
+        ring = bytearray(b'\x00' * 4096)
+        ring_pos = 0
+        src = bytearray(data)
+        src_idx = bit_buf = bits_left = 0
+
+        while len(output) < max_output and src_idx < len(src):
+            if bits_left == 0:
+                if src_idx >= len(src): break
+                bit_buf, src_idx, bits_left = src[src_idx], src_idx + 1, 8
+            if bit_buf & 1:
+                if src_idx + 1 >= len(src): break
+                low, high = src[src_idx], src[src_idx + 1]; src_idx += 2
+                pos_rel = low | ((high & 0xF) << 8)
+                length = (high >> 4) + 3
+                for _ in range(length):
+                    if len(output) >= max_output: break
+                    b = ring[(ring_pos - 1 - pos_rel) & 0xFFF]
+                    output.append(b)
+                    ring[ring_pos & 0xFFF] = b
+                    ring_pos = (ring_pos + 1) & 0xFFF
+                # DON'T reset bits_left — continue processing remaining bits
+                # from current bit_buf (same as helpdeco: mask shifts until overflow)
+            else:
+                if src_idx >= len(src): break
+                b = src[src_idx]; src_idx += 1
+                output.append(b)
+                ring[ring_pos & 0xFFF] = b
+                ring_pos = (ring_pos + 1) & 0xFFF
+            bit_buf >>= 1; bits_left -= 1
+        return bytes(output)
+
+    # ═══════════════════════════════════════════
+    #  |TTLBTREE → 标题
+    # ═══════════════════════════════════════════
+
+    def _read_ttlbtree(self, f, internal_files):
+        ttl_offset = internal_files.get('|TTLBTREE')
+        if ttl_offset is None: return []
+        f.seek(ttl_offset); f.read(4); f.read(4); f.read(1)
+        ttl_start = ttl_offset + 9
+        f.seek(ttl_start); f.read(2); f.read(2)
+        ttl_psize = struct.unpack('<H', f.read(2))[0]
+        f.read(16); f.read(2); f.read(2)
+        ttl_root = struct.unpack('<h', f.read(2))[0]
+        f.read(2); f.read(2)
+        ttl_nlevels = struct.unpack('<h', f.read(2))[0]; f.read(4)
+
+        def read_ttl_leaf(fh, n):
+            r = []
+            for _ in range(n):
+                off = struct.unpack('<L', fh.read(4))[0]
+                nb = bytearray()
+                while True:
+                    b = fh.read(1)
+                    if b in (b'\x00', b''): break
+                    nb.extend(b)
+                r.append((off, nb.decode('latin-1', errors='replace')))
+            return r
+
+        ttl_pstart = ttl_start + 38
+        return self._traverse_btree_leaves(f, ttl_pstart, ttl_root, ttl_nlevels, ttl_psize, read_ttl_leaf)
+
+
 class WebDocumentProcessor:
     """网页文档处理器（在线文档）"""
     
@@ -627,15 +1266,10 @@ def _has_lxml() -> bool:
         return False
 
 
-def _process_document_worker(args: Tuple) -> Optional[Dict]:
+def _process_document_worker(args: Tuple) -> List[Dict]:
     """
     处理单个文档的工作函数（用于多进程）
-    
-    Args:
-        args: (file_path_str, directory_str)
-    
-    Returns:
-        文档信息字典或None
+    返回文档信息字典列表（HLP 等格式可能返回多个文档）
     """
     file_path_str, directory_str = args
     file_path = Path(file_path_str)
@@ -648,7 +1282,8 @@ def _process_document_worker(args: Tuple) -> Optional[Dict]:
         DocxProcessor(),
         DocProcessor(),
         PDFProcessor(),
-        EPUBProcessor()
+        EPUBProcessor(),
+        HlpProcessor()
     ]
     
     try:
@@ -658,20 +1293,32 @@ def _process_document_worker(args: Tuple) -> Optional[Dict]:
             if processor.can_process(file_path):
                 result = processor.process(file_path)
                 if result:
-                    rel_path = file_path.relative_to(directory)
-                    result.update({
-                        'path': str(rel_path).replace('\\', '/'),
+                    rel_path = str(file_path.relative_to(directory)).replace('\\', '/')
+                    common_meta = {
                         'full_path': str(file_path),
                         'extension': file_path.suffix.lower(),
                         'file_size': stat_info.st_size,
                         'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat()
-                    })
-                    return result
+                    }
+                    
+                    if isinstance(result, list):
+                        docs = []
+                        for item in result:
+                            item.setdefault('path', rel_path)
+                            item.update(common_meta)
+                            if not item.get('path') or item['path'] == rel_path:
+                                item['path'] = f"{rel_path}#{item.get('title', 'untitled')}"
+                            docs.append(item)
+                        return docs
+                    else:
+                        result['path'] = rel_path
+                        result.update(common_meta)
+                        return [result]
         
-        return None
+        return []
         
     except Exception:
-        return None
+        return []
 
 
 class GenericDocumentScanner:
@@ -681,7 +1328,8 @@ class GenericDocumentScanner:
         '.txt', '.md', '.markdown',
         '.htm', '.html',
         '.docx', '.doc',
-        '.pdf', '.epub'
+        '.pdf', '.epub',
+        '.hlp'
     ]
     
     def __init__(self, kb_dir: str, config: Optional[Dict] = None, progress_callback: Optional[Callable] = None):
@@ -976,14 +1624,48 @@ class GenericDocumentScanner:
         conn = sqlite3.connect(str(self.db_path))
         cursor = conn.cursor()
         
+        existing_mtimes = {}
+        try:
+            cursor.execute("SELECT full_path, last_modified FROM documents")
+            for r in cursor.fetchall():
+                existing_mtimes[r[0]] = r[1]
+        except Exception:
+            pass
+        
+        changed = []
+        for fx in all_files:
+            try:
+                stx = fx.stat()
+                mt = datetime.fromtimestamp(stx.st_mtime).isoformat()
+                if existing_mtimes.get(str(fx)) == mt:
+                    continue
+                changed.append(fx)
+            except Exception:
+                changed.append(fx)
+        
+        skipped = total_files - len(changed)
+        all_files = changed
+        
+        if not all_files:
+            conn.close()
+            return {'total_files': total_files, 'processed': 0, 'failed': 0,
+                    'skipped': skipped, 'warnings': warnings, 'install_hints': install_hints}
+        
+        for fx in all_files:
+            try:
+                cursor.execute("DELETE FROM documents WHERE full_path = ?", (str(fx),))
+            except Exception:
+                pass
+        conn.commit()
+        
         try:
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
                 args = [(str(f), str(directory)) for f in all_files]
                 results = executor.map(_process_document_worker, args, chunksize=chunk_size)
                 
-                for i, result in enumerate(results):
-                    if result:
-                        # 检查是否缺少依赖
+                file_idx = 0
+                for docs in results:
+                    for result in docs:
                         if result.get('requires_dependencies'):
                             failed += 1
                             continue
@@ -1023,11 +1705,10 @@ class GenericDocumentScanner:
                             processed += 1
                         except Exception:
                             failed += 1
-                    else:
-                        failed += 1
                     
-                    if self.progress_callback and (i + 1) % 100 == 0:
-                        self.progress_callback(i + 1, total_files)
+                    if self.progress_callback and (file_idx + 1) % 100 == 0:
+                        self.progress_callback(file_idx + 1, total_files)
+                    file_idx += 1
             
             conn.commit()
             
@@ -1038,6 +1719,7 @@ class GenericDocumentScanner:
             'total_files': total_files,
             'processed': processed,
             'failed': failed,
+            'skipped': skipped,
             'warnings': warnings,
             'install_hints': install_hints
         }
