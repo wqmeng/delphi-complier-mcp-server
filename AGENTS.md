@@ -280,6 +280,31 @@ class DelphiScanner:
 - Use `pytest` fixtures for setup/teardown
 - Mock external dependencies using `unittest.mock`
 
+## Agent 编码工作流
+
+### 编译 Delphi 代码前的规则获取
+
+AI Agent 在编译或生成 Delphi 代码前，**必须**先调用 `get_coding_rules` 获取编码规则：
+
+```
+步骤:
+1. 调用 get_coding_rules(project_path="<项目.dproj路径>")
+2. 工具返回 默认规则 + 用户自定义规则的合并内容（用户规则覆盖默认）
+3. 严格按返回的规则编写/修改代码
+4. 编译项目验证
+```
+
+规则包含：命名规则、格式化规则、类型声明顺序、文件头注释、修改代码约束、审核要点等。
+
+### 知识库使用优先级
+
+搜索 Delphi API 时，按以下优先级：
+
+1. `delphi_kb(kb_type="delphi", ...)` — 源码知识库（查类/函数定义声明）
+2. `delphi_kb(kb_type="document", ...)` — 文档知识库（查 API 描述、示例、用法）
+3. `delphi_kb(kb_type="project", project_path=..., ...)` — 项目知识库（查项目特有代码）
+4. `delphi_kb(kb_type="thirdparty", ...)` — 三方库知识库（查第三方组件）
+
 ### Kind Constants
 
 Use two-letter codes defined in `scan_delphi_sources.py`:

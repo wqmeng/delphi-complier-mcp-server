@@ -63,13 +63,23 @@ async def get_coding_rules(project_path: Optional[str] = None) -> CallToolResult
             else:
                 logger.info(f"用户项目目录下未找到自定义编码规则文件: {user_rules_path}")
 
-        # 合并规则（用户规则覆盖默认规则）
-        # 这里采用简单的策略：如果有用户规则，则使用用户规则；否则使用默认规则
-        # 更复杂的合并策略可以根据实际需求实现
-        final_rules = user_rules if user_rules else default_rules
+        # 合并规则：默认规则做底，用户规则覆盖（在用户规则前插入默认规则，用分隔线标记）
+        merged = ""
+        if default_rules:
+            merged += "# ═══════════════════════════════════\n"
+            merged += "# 默认编码规则\n"
+            merged += "# ═══════════════════════════════════\n"
+            merged += default_rules
+            if user_rules:
+                merged += "\n\n"
+                merged += "# ═══════════════════════════════════\n"
+                merged += "# 用户自定义规则（覆盖上方同名规则）\n"
+                merged += "# ═══════════════════════════════════\n"
+                merged += user_rules
+        elif user_rules:
+            merged = user_rules
 
-        # 如果两者都不存在，返回空字符串
-        if not final_rules:
+        if not merged:
             logger.warning("未找到任何编码规则文件")
             return CallToolResult(
                 content=[TextContent(type="text", text="未找到任何编码规则文件")],
@@ -77,8 +87,15 @@ async def get_coding_rules(project_path: Optional[str] = None) -> CallToolResult
             )
 
         logger.info("成功获取编码规则")
-        output = f"编码规则 (来源: {'用户' if user_rules else '默认'}):\n\n"
-        output += final_rules
+        source = ""
+        if default_rules and user_rules:
+            source = "默认规则 + 用户规则（用户覆盖默认）"
+        elif user_rules:
+            source = "用户规则"
+        else:
+            source = "默认规则"
+        output = f"编码规则 (来源: {source}):\n\n"
+        output += merged
         return CallToolResult(content=[TextContent(type="text", text=output)])
 
     except Exception as e:
