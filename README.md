@@ -427,18 +427,23 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ### v2026.04.30 (2026-04-30)
 
-- **新增**.hlp 文档知识库支持
+- **新增 WinHelp (.hlp) 文档支持**
   - 纯 Python 实现 WinHelp 文件解析器（HlpProcessor）
   - 支持 HC30/HC31/HCW 4.00 格式，LZ77 解压（带 ring buffer）
-  - 支持 Hall / old-style 短语解压（\|PhrIndex + \|PhrImage）
-  - 解析 TOPICLINK 格式结构，提取干净纯文本
-  - 按 RT2 topic header 自动拆分为多个文档（122+ 个 topic）
-  - 增量更新支持（基于文件 mtime 跳过未变更文件）
-- 修复 LZ77 解压中 match 后重置 bits_left 导致短语表崩溃的 bug
-- 修复 Python 位运算溢出导致 \|PhrIndex GetBit 偏移错误
-- 修复 \|PhrIndex 多余 get_bit() 初始化调用
-- 通用文档知识库现支持 `.hlp` 扩展名
-- 更新 MCP 工具描述，标注 .hlp 支持
+  - 支持 Hall/old-style 短语解压（\|PhrIndex + \|PhrImage）
+  - 解析 TOPICLINK 格式结构，自动拆分为多个文档
+  - 增量更新支持（基于文件 mtime）
+- **异步任务优化**
+  - 兼容 `params` 和 `task_params` 两种参数名
+  - 任务名称显示具体操作（扫描目录/爬取网站/URL列表）
+- **FTS5 懒加载机制优化**
+  - 插入文档时不同步 FTS 索引，由懒加载机制按需构建
+  - 删除文档时同步删除 FTS 索引，避免搜索结果不匹配
+- **修复多个 Bug**
+  - 修复异步任务参数名不一致问题
+  - 修复 LZ77 解压短语表崩溃 bug
+  - 修复 Python 位运算溢出导致 GetBit 偏移错误
+  - 修复 MCP 工具定义缺少 `build_document_knowledge_base` 任务类型
 
 ### v2026.04.29 (2026-04-29)
 

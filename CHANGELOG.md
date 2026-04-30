@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.04.30] - 2026-04-30
+
+### Added
+
+- **WinHelp (.hlp) 文档支持**：纯 Python 实现的 HlpProcessor，支持 HC30/HC31/HCW 4.00 格式
+  - LZ77 解压（带 ring buffer）
+  - Hall/old-style 短语解压（\|PhrIndex + \|PhrImage）
+  - TOPICLINK 格式结构解析，自动拆分为多个文档
+  - 增量更新支持（基于文件 mtime）
+- 通用文档知识库：扫描、搜索和管理 txt/md/html/docx/doc/pdf/epub/hlp 和网页文档
+- `delphi_kb` 工具新增 `action=scan/web` 和 `kb_type=document`
+- 新增文档处理器：TextProcessor、MarkdownProcessor、HTMLProcessor、DocxProcessor、DocProcessor、PDFProcessor、WebDocumentProcessor、HlpProcessor
+- 新增依赖 `python-docx>=0.8.11`，推荐 `PyMuPDF` 或备选 `pdfplumber`
+
+### Changed
+
+- **异步任务参数兼容**：`async_task` 工具兼容 `params` 和 `task_params` 两种参数名
+- **任务名称优化**：文档知识库构建任务显示具体操作（扫描目录/爬取网站/URL列表）
+- **FTS5懒加载机制优化**：插入文档时不同步FTS索引，由懒加载机制按需构建
+- AGENTS.md 更新：补充测试命令、代码风格指南、错误处理规范
+
+### Fixed
+
+- 修复异步任务参数名不一致问题（`params` vs `task_params`）
+- 修复文档知识库构建任务名称显示"0 个URL"的问题
+- 修复删除文档时未同步删除FTS5索引导致搜索结果不匹配的问题
+- 修复 LZ77 解压中 match 后重置 bits_left 导致短语表崩溃的 bug
+- 修复 Python 位运算溢出导致 \|PhrIndex GetBit 偏移错误
+- 修复 MCP 工具定义缺少 `build_document_knowledge_base` 任务类型
+
 ## [2026.04.29] - 2026-04-29
 
 ### Added
@@ -35,44 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 修复 LIKE 全表扫描性能问题（使用逆序索引优化）
 - 修复依赖检测逻辑：缺少 PDF/DOCX 依赖时正确提示
 
-## [2026.04.30] - 2026-04-30
-
-### Added
-
-- 通用文档知识库支持：扫描、搜索和管理 txt/md/html/docx/doc/pdf 和网页文档
-- `delphi_kb` 工具新增 `action=scan` 用于扫描文档目录
-- `delphi_kb` 工具新增 `action=web` 用于添加网页文档
-- `delphi_kb` 工具新增 `kb_type=document` 用于查询文档知识库
-- 新增文档处理器：TextProcessor、MarkdownProcessor、HTMLProcessor、DocxProcessor、DocProcessor、PDFProcessor、WebDocumentProcessor
-- 新增依赖 `python-docx>=0.8.11` 用于处理 Word 文档
-- 新增依赖 `PyMuPDF`（推荐）或 `pdfplumber`（备选）用于处理 PDF 文档
-- 新增测试文件 `tests/test_document_kb.py` 覆盖所有文档处理器
-- 新增测试文件 `tests/test_edge_cases.py` 覆盖边界条件和潜在 Bug
-- 新增测试文件 `tests/test_document_async.py` 覆盖异步功能
-- 文档知识库支持 config.json 配置（database.file、build.parallel_workers、build.batch_size、build.supported_extensions）
-- 文档知识库异步扫描支持：`scan_directory_async()`、`is_scanning()`、`wait_scan_complete()`
-- 新增 PostgreSQL 文档知识库构建脚本 `scripts/build_postgresql_kb.py`
-- 文档知识库异步任务支持：`async_task` 工具新增 `build_document_knowledge_base` 任务类型
-- 文档知识库自动爬取支持：通过 `start_url` 参数自动发现链接并递归采集
-
-### Changed
-
-- 扩展 `delphi_kb` 工具 schema，新增 `directory`、`url`、`content_type`、`extensions`、`max_workers` 参数
-- 文档知识库数据存储在 `data/document-knowledge-base/documents.sqlite`
-- README.md 新增"通用文档知识库"依赖说明和"知识库存储位置"章节
-- `SmartCacheKnowledgeBase.rebuild_async` 读取 `build.parallel_workers` 配置项
-- `GenericDocumentScanner` 支持从 config.json 加载配置
-
-### Fixed
-
-- 修复 `add_web_document` 资源泄漏：使用 try-finally 保证数据库连接关闭
-- 清理未使用的导入 `os` 和常量 `KIND_DOCUMENT`、`KIND_SECTION`、`KIND_CODE`
-- 修复 `SmartCacheKnowledgeBase` 未读取 `build.parallel_workers` 配置项
-- 修复 `GenericDocumentScanner` 不支持 config.json 配置
-- 修复 `GenericDocumentScanner` 缺少异步扫描支持
-- 同步 README_EN.md 与 README.md 内容（新增通用文档知识库说明和配置文档）
-
-## [2026.04.29] - 2026-04-29
+## [2026.04.29] - 2026-04-29 (2)
 
 ### Added
 

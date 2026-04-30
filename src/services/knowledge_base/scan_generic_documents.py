@@ -1653,7 +1653,16 @@ class GenericDocumentScanner:
         
         for fx in all_files:
             try:
+                # 先获取要删除的文档ID
+                cursor.execute("SELECT id FROM documents WHERE full_path = ?", (str(fx),))
+                doc_ids = [row[0] for row in cursor.fetchall()]
+                
+                # 删除documents表记录
                 cursor.execute("DELETE FROM documents WHERE full_path = ?", (str(fx),))
+                
+                # 同步删除FTS5索引
+                for doc_id in doc_ids:
+                    cursor.execute("DELETE FROM documents_fts WHERE rowid = ?", (doc_id,))
             except Exception:
                 pass
         conn.commit()

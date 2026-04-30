@@ -39,7 +39,8 @@ async def start_async_task(arguments: Any) -> CallToolResult:
         任务启动结果，包含任务ID
     """
     task_type = arguments.get("task_type")
-    params = arguments.get("params", {})
+    # 兼容两种参数名：params 或 task_params
+    params = arguments.get("params") or arguments.get("task_params", {})
     show_progress = arguments.get("show_progress", True)
 
     if not task_type:
@@ -155,6 +156,8 @@ async def start_async_task(arguments: Any) -> CallToolResult:
         
         if params.get("start_url"):
             task_name = f"爬取网站 (最多 {params.get('max_pages', 100)} 页)"
+        elif params.get("directory"):
+            task_name = f"构建文档知识库 (扫描目录: {params.get('directory')})"
         else:
             urls_count = len(params.get("urls", []))
             task_name = f"构建文档知识库 ({urls_count} 个URL)"

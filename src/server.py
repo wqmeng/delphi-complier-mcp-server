@@ -254,7 +254,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list", "description": "操作: start=启动后台任务, status=查状态(含进度), result=查结果, list=列表, cancel=取消"},
-                        "task_type": {"type": "string", "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base"], "description": "任务类型 (action=start时需要)"},
+                        "task_type": {"type": "string", "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base", "build_document_knowledge_base"], "description": "任务类型 (action=start时需要)"},
                         "task_params": {"type": "object", "description": "任务参数: version(Delphi版本), force_rebuild, project_path 等"},
                         "task_id": {"type": "string", "description": "任务ID (action=status/result/cancel时需要)"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"}
