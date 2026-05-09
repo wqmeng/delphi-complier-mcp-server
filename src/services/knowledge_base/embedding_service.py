@@ -36,6 +36,11 @@ def is_available() -> bool:
         return False
 
 
+def is_model_loaded() -> bool:
+    """检查模型是否已加载（仅用于搜索时的快速判断，不触发加载）"""
+    return _model is not None
+
+
 def load_model():
     """懒加载模型（全局单例）"""
     global _model

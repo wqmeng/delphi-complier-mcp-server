@@ -1012,6 +1012,7 @@ class SQLiteVectorKnowledgeBase:
     def _semantic_search_embedding(self, query: str, type_filter: tuple, top_k: int = 10) -> List[Tuple[str, float]]:
         """
         使用 embedding 进行真语义搜索
+        仅当模型已加载（由 build_embedding/build_vectors 触发）时才启用，不自动加载模型
 
         Args:
             query: 搜索查询
@@ -1023,12 +1024,13 @@ class SQLiteVectorKnowledgeBase:
         """
         try:
             from .embedding_service import (
-                encode_single, cosine_similarity, blob_to_vector, is_available
+                encode_single, cosine_similarity, blob_to_vector, is_model_loaded
             )
         except ImportError:
             return []
 
-        if not is_available():
+        # 只有在模型已加载（之前跑过 build_embedding）时才使用 embedding 搜索
+        if not is_model_loaded():
             return []
 
         query_emb = encode_single(query, prefix="query")
