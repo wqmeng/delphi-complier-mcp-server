@@ -171,12 +171,20 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                         from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
                         try:
                             # 从 .dproj 读取命名空间前缀，用于解析省略前缀的单元引用
+                            # 未配置时使用 Delphi 2010+ 默认前缀
                             from ..utils.dproj_parser import DprojParser
                             try:
                                 parser = DprojParser(project_path)
                                 ns_prefixes = parser.get_namespace()
                             except Exception:
                                 ns_prefixes = None
+
+                            if not ns_prefixes:
+                                # Delphi 2010+ 默认命名空间前缀
+                                ns_prefixes = [
+                                    'Vcl', 'System', 'Winapi', 'Data', 'Xml',
+                                    'Web', 'Soap', 'System.Win', 'Fmx', 'Platform',
+                                ]
 
                             pkb = ProjectKnowledgeBase(project_path)
                             pkb.load_knowledge_bases()
