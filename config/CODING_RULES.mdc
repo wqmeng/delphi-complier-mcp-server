@@ -1,7 +1,63 @@
 # Delphi 编码规范
 
-> **最后更新**: 2026-04-25
-> **版本**: 1.1.0
+> **最后更新**: 2026-05-09
+> **版本**: 1.2.0
+
+---
+
+## 知识库搜索规则（编码前必读）
+
+AI Agent 在写任何涉及 Delphi 类型/函数引用的代码前，必须先查询知识库确认 API 定义，**禁止凭空编造不存在的 API**。
+
+### 搜索策略优先级
+
+```
+⭐1  猜精确类名/函数名 → delphi_kb(query="TStringList")
+     Agent 应根据需求推测可能的 Delphi 命名（如 TFormMain / OnClick / DoSave）
+     → 精确搜索，最快最准
+
+⭐2  换名再搜
+     第一个名字没结果时，换同义词/不同前缀再试
+     (TMainForm → TfrmMain → TFormMain)
+
+⭐3  search_type="reference"
+     delphi_kb(search_type="reference", query="form.main")
+     查哪些文件引用了此单元，评估修改影响
+
+⭐4  search_type="semantic"（兜底）
+     delphi_kb(search_type="semantic", query="处理按钮点击")
+     仅当精确搜不到时使用。需先执行过 build_embedding 才有效
+```
+
+### 典型错误与正确做法
+
+```
+❌ 错误：凭空编造 API
+    "使用 TStringList.CreateOwnsObjects(True)"
+    → 未确认 API 是否存在，可能编译失败
+
+✅ 正确：
+    1. delphi_kb(query="TStringList")
+    2. 查看定义: System.Classes.pas 第 810 行
+    3. 确认继承链: TStringList → TStrings
+    4. 确认 CreateOwnsObjects 参数后再写代码
+```
+
+### 知识库范围选择
+
+| 搜索目标 | 参数 | 说明 |
+|----------|------|------|
+| 项目自有代码 | `kb_type="project"` | 当前项目源码，最优先 |
+| VCL/FMX/RTL API | `kb_type="delphi"` | Delphi 官方源码 |
+| 第三方组件 | `kb_type="thirdparty"` | 共享三方库 |
+| 全部 | 不传（默认） | 同时搜三个库 |
+
+### 何时必搜知识库
+
+- 引用 `T`/`I`/`E` 开头的外部类型时
+- 调用不熟悉的 RTL/VCL 函数时
+- 使用第三方组件 API 时（`TVirtualStringTree`、`TfrxReport` 等）
+- 修改已有代码前，先确认被修改符号的定义和引用
 
 ---
 
