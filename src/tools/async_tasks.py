@@ -102,6 +102,20 @@ async def start_async_task(arguments: Any) -> CallToolResult:
 
         task_name = f"初始化项目知识库 ({params.get('project_path', '未知项目')})"
 
+    elif task_type == "build_embedding":
+        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+
+        def build_embedding_task(**kwargs):
+            project_path = kwargs.get("project_path")
+            progress_callback = kwargs.get("_progress_callback")
+            pkb = ProjectKnowledgeBase(project_path, progress_callback)
+            pkb.load_knowledge_bases()
+            counts = pkb.build_vectors(progress_callback=progress_callback)
+            pkb.close()
+            return counts
+
+        task_name = f"构建 embedding 向量 ({params.get('project_path', '')})"
+
     elif task_type == "build_document_knowledge_base":
         from ..services.knowledge_base.scan_generic_documents import GenericDocumentScanner
         from pathlib import Path as FilePath
@@ -178,6 +192,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             build_kb_task if task_type == "build_knowledge_base" else
             build_thirdparty_task if task_type == "build_thirdparty_knowledge_base" else
             init_project_task if task_type == "init_project_knowledge_base" else
+            build_embedding_task if task_type == "build_embedding" else
             build_doc_task
         )
         

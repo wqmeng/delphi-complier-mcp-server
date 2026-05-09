@@ -292,7 +292,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "default": "list", "description": "操作: start=启动后台任务, status=查状态(含进度), result=查结果, list=列表, cancel=取消"},
-                        "task_type": {"type": "string", "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base", "build_document_knowledge_base"], "description": "任务类型 (action=start时需要)"},
+                        "task_type": {"type": "string", "enum": ["build_knowledge_base", "build_thirdparty_knowledge_base", "init_project_knowledge_base", "build_document_knowledge_base", "build_embedding"], "description": "任务类型 (action=start时需要)"},
                         "task_params": {"type": "object", "description": "任务参数: version(Delphi版本), force_rebuild, project_path 等"},
                         "task_id": {"type": "string", "description": "任务ID (action=status/result/cancel时需要)"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"}
@@ -448,21 +448,19 @@ async def run_server():
                         # 同步模式（非推荐）
                         result = await kb_tools.build_unified_knowledge_base(arguments)
                 elif action == "build_embedding":
-                    # 构建 embedding 向量（不重新扫描源码）
-                    from src.services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+                    # 构建 embedding 向量（异步，避免模型加载超时）
                     from src.tools.knowledge_base import _resolve_project_path
                     pp = _resolve_project_path(arguments.get("project_path"))
-                    if pp:
-                        try:
-                            pkb = ProjectKnowledgeBase(pp)
-                            pkb.load_knowledge_bases()
-                            counts = pkb.build_vectors(progress_callback=lambda pct, msg: logger.info(f"向量构建: {pct:.0f}% - {msg}"))
-                            pkb.close()
-                            result = {"text": f"向量构建完成: {counts}"}
-                        except Exception as e:
-                            result = {"error": f"向量构建失败: {str(e)}"}
-                    else:
+                    if not pp:
                         result = {"error": "未检测到项目路径"}
+                    else:
+                        from src.tools.async_tasks import start_async_task
+                        task_result = await start_async_task({
+                            "task_type": "build_embedding",
+                            "task_params": {"project_path": pp},
+                            "show_progress": True
+                        })
+                        result = task_result
                 elif action == "scan":
                     if kb_type == "document":
                         result = await doc_tools.scan_documents(arguments)
