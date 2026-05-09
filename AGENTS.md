@@ -319,14 +319,92 @@ delphi_kb(
 - `async_mode=true`：异步执行（耗时数分钟），提交后返回 task_id，通过 `async_task(action=status, task_id=...)` 轮询进度
 - 需要系统安装 7-Zip（可放在 `tools/7z/` 目录下免安装）
 
-### 知识库使用优先级
+### 知识库使用策略
 
-搜索 Delphi API 时，按以下优先级：
+#### 核心原则：先猜精确名，再模糊搜
 
-1. `delphi_kb(kb_type="project", ...)` — 项目知识库（项目特有代码，最优先；`project_path` 可选，不传时自动从当前目录检测 `.dproj`）
-2. `delphi_kb(kb_type="document", ...)` — 文档知识库（API 描述、示例、用法）
-3. `delphi_kb(kb_type="delphi", ...)` — 源码知识库（RTL/VCL/FMX 定义声明）
-4. `delphi_kb(kb_type="thirdparty", ...)` — 三方库知识库（第三方组件）
+知识库的精确搜索（`search_by_name`）远强于语义搜索。AI Agent **应该利用自身对 Delphi 命名习惯的理解，将自然语言需求转换为可能的类名/函数名**，再进行精确搜索。
+
+```
+用户需求
+    ↓
+Agent 思考：这个功能在 Delphi 中可能的命名
+  ┌─ TFormMain / TMainForm / TfrmMain
+  ├─ OnButtonClick / DoClick / Button1Click
+  ├─ SaveToFile / DoSave / WriteFile
+  └─ ...
+    ↓
+delphi_kb(query="TFormMain", kb_type="project")    ← 精确搜索（最快最准）
+delphi_kb(query="TMainForm", kb_type="project")     ← 换名字再试
+    ↓
+如果所有精确名都搜不到 → 才考虑语义搜索
+```
+
+#### 搜索优先级
+
+| 优先级 | 搜索方式 | 示例 | 适用场景 |
+|--------|----------|------|----------|
+| ⭐1 | 猜精确类名 → `search_by_name` | `TStringList` | 已知或能猜出类名 |
+| ⭐2 | 猜函数名 → `search_type="function"` | `Create`、`DoSave` | 需要函数签名 |
+| ⭐3 | 多关键字尝试 | `TJSONObject`、`TJsonSerializer` | 不确定确切命名 |
+| ⭐4 | `search_type="reference"` | `form.main` | 查引用/调用方 |
+| ⭐5 | `search_type="semantic"` | 中文需求 | 以上都搜不到时（需先 build_embedding）|
+
+#### 典型场景与搜索策略
+
+**场景 A：需要调用某个 API**
+```
+❌ 错误做法：
+   delphi_kb(query="帮我找找字符串分割的函数", search_type="semantic")
+
+✅ 正确做法：
+   1. 思考：字符串分割在 Delphi 中通常叫 Split、TStringList.Delimiter、ExtractString
+   2. delphi_kb(query="Split", kb_type="delphi", search_type="function")
+   3. delphi_kb(query="TStringList", kb_type="delphi", search_type="class")
+```
+
+**场景 B：需要写代码引用项目中的类**
+```
+✅ 正确做法：
+   1. delphi_kb(query="TfrmMain", kb_type="project")
+   2. 查看定义行号和文件
+   3. 了解继承链（TForm → TfrmMain）和公开属性后再写代码
+```
+
+**场景 C：修改代码前评估影响**
+```
+✅ 正确做法：
+   1. delphi_kb(query="form.main", kb_type="project", search_type="reference")
+   2. 查看所有引用该单元的文件（88 个引用）
+   3. 评估修改影响范围
+```
+
+#### 编码前查定义的工作流
+
+AI Agent 在写任何涉及 Delphi 类型/函数的代码前，应按以下流程操作：
+
+```mermaid
+graph TD
+    A[需要写代码] --> B{引用已有类型/函数?}
+    B -->|是| C[猜可能的类名/函数名]
+    B -->|否| Z[直接生成代码]
+    C --> D[delphi_kb 精确搜索]
+    D --> E{搜到定义?}
+    E -->|是| F[查看定义/继承链/参数]
+    E -->|否| G[换名再搜或部分匹配]
+    G --> D
+    F --> Z[生成代码]
+    Z --> H[compile_project 验证]
+```
+
+#### 知识库范围选择
+
+| 搜索目标 | 推荐的 kb_type | 说明 |
+|----------|---------------|------|
+| 项目自有代码 | `project` | 当前项目源码，最优先 |
+| VCL/FMX/RTL API | `delphi` | Delphi 官方源码 |
+| 三方组件 | `thirdparty` | 共享三方库知识库 |
+| 全部 | `all`（默认） | 同时搜三个库，结果最多
 
 ### Kind Constants
 
