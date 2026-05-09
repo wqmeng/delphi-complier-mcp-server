@@ -182,8 +182,10 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                             if not ns_prefixes:
                                 # Delphi 2010+ 默认命名空间前缀
                                 ns_prefixes = [
-                                    'Vcl', 'System', 'Winapi', 'Data', 'Xml',
-                                    'Web', 'Soap', 'System.Win', 'Fmx', 'Platform',
+                                    'Winapi', 'System.Win', 'Data.Win', 'Datasnap.Win',
+                                    'Web.Win', 'Soap.Win', 'Xml.Win', 'System', 'Xml',
+                                    'Data', 'Datasnap', 'Web', 'Soap', 'Vcl',
+                                    'Vcl.Imaging', 'Vcl.Touch', 'Vcl.Samples', 'Vcl.Shell',
                                 ]
 
                             pkb = ProjectKnowledgeBase(project_path)
