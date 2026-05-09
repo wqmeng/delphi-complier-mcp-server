@@ -10,7 +10,7 @@ Embedding 服务 —— 为知识库提供真语义搜索
 """
 
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,7 @@ def load_model():
         ]
 
     for ep in _endpoints:
+        old_endpoint = None
         try:
             if ep:
                 logger.info(f"加载 embedding 模型（镜像: {ep}）: {_model_name}")
@@ -64,12 +65,10 @@ def load_model():
             return _model
         except Exception as e:
             logger.warning(f"  镜像 {ep or 'default'} 失败: {e}")
-            if ep:
-                # 恢复原来的端点（如果有的话）
-                if old_endpoint:
-                    os.environ["HF_ENDPOINT"] = old_endpoint
-                else:
-                    os.environ.pop("HF_ENDPOINT", None)
+            if ep and old_endpoint is not None:
+                os.environ["HF_ENDPOINT"] = old_endpoint
+            elif ep:
+                os.environ.pop("HF_ENDPOINT", None)
             continue
 
     logger.warning("所有镜像源均无法加载 embedding 模型")
@@ -125,12 +124,6 @@ def cosine_similarity(query_emb: "numpy.ndarray", db_embs: "numpy.ndarray") -> "
     import numpy as np
     # 已归一化 → dot = cosine
     return np.dot(db_embs, query_emb)
-
-
-def vector_to_blob(vector: "numpy.ndarray") -> bytes:
-    """numpy 向量 → SQLite BLOB"""
-    import numpy as np
-    return np.array(vector, dtype=np.float32).tobytes()
 
 
 def blob_to_vector(blob: bytes) -> Optional["numpy.ndarray"]:
