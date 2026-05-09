@@ -58,15 +58,17 @@ def load_model():
         ]
 
     for ep in _endpoints:
-        old_endpoint = None
+        old_endpoint = os.environ.get("HF_ENDPOINT") if ep else None
         try:
             if ep:
                 logger.info(f"加载 embedding 模型（镜像: {ep}）: {_model_name}")
-                old_endpoint = os.environ.get("HF_ENDPOINT")
                 os.environ["HF_ENDPOINT"] = ep
             else:
                 logger.info(f"加载 embedding 模型: {_model_name}")
 
+            # 强制离线模式（避免联网验证 SSL 证书失败）
+            os.environ["TRANSFORMERS_OFFLINE"] = "1"
+            os.environ["HF_HUB_OFFLINE"] = "1"
             _model = SentenceTransformer(_model_name)
             logger.info("embedding 模型加载完成")
             return _model
