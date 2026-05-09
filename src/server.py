@@ -199,13 +199,14 @@ async def run_server():
                             "  3) action=stats：查看知识库统计（文件/类/函数数量）。用'kb_type'选择知识库范围。\n"
                             "  4) action=build：构建/重建知识库（耗时操作，必须使用async_mode=true）。提交后通过'async_task'工具的action=status + task_id轮询进度。\n"
                             "     - kb_type=document 时不传 directory 则自动检测最新 Delphi 帮助目录\n"
-                            "  5) action=scan：扫描目录添加文档（kb_type=document时）。需要'directory'参数。\n"
-                            "  6) action=web：添加网页文档（kb_type=document时）。需要'url'参数。\n"
-                            "工作流: delphi_kb(action=search) → delphi_kb(action=read).",
+                             "  5) action=scan：扫描目录添加文档（kb_type=document时）。需要'directory'参数。\n"
+                             "  6) action=web：添加网页文档（kb_type=document时）。需要'url'参数。\n"
+                             "  7) action=build_embedding：构建/补充 embedding 向量（需已安装 sentence-transformers）\n"
+                             "工作流: delphi_kb(action=search) → delphi_kb(action=read).",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "action": {"type": "string", "enum": ["search", "read", "stats", "build", "scan", "web"], "default": "search", "description": "操作: search=语义/精确搜索; read=读取内容; stats=查看统计; build=构建知识库; scan=扫描文档目录(kb_type=document); web=添加网页文档(kb_type=document)"},
+                        "action": {"type": "string", "enum": ["search", "read", "stats", "build", "scan", "web", "build_embedding"], "default": "search", "description": "操作: search=语义/精确搜索; read=读取内容; stats=查看统计; build=构建知识库; scan=扫描文档目录(kb_type=document); web=添加网页文档(kb_type=document); build_embedding=构建embedding向量"},
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码, project=项目源码, thirdparty=三方库源码, document=通用文档(txt/md/html/docx/doc/pdf/epub/hlp/网页)"},
                         "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses", "reference"], "default": "all", "description": "实体类型过滤（仅action=search）。all=全部类型, class=类(TC), function=函数(FF), reference=查找引用位置"},
                         "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例: 'TStringList'（精确类名）、'Create'（函数名）、'TfrmMain'（项目自有类）、'SysUtils'（单元名）"},
@@ -446,6 +447,22 @@ async def run_server():
                     else:
                         # 同步模式（非推荐）
                         result = await kb_tools.build_unified_knowledge_base(arguments)
+                elif action == "build_embedding":
+                    # 构建 embedding 向量（不重新扫描源码）
+                    from src.services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+                    from src.tools.knowledge_base import _resolve_project_path
+                    pp = _resolve_project_path(arguments.get("project_path"))
+                    if pp:
+                        try:
+                            pkb = ProjectKnowledgeBase(pp)
+                            pkb.load_knowledge_bases()
+                            counts = pkb.build_vectors(progress_callback=lambda pct, msg: logger.info(f"向量构建: {pct:.0f}% - {msg}"))
+                            pkb.close()
+                            result = {"text": f"向量构建完成: {counts}"}
+                        except Exception as e:
+                            result = {"error": f"向量构建失败: {str(e)}"}
+                    else:
+                        result = {"error": "未检测到项目路径"}
                 elif action == "scan":
                     if kb_type == "document":
                         result = await doc_tools.scan_documents(arguments)
