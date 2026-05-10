@@ -247,7 +247,7 @@ class DocxProcessor(DocumentProcessor):
             if p.style.name.startswith('Heading'):
                 try:
                     level = int(p.style.name.split()[-1])
-                except:
+                except (ValueError, IndexError):
                     level = 1
                 sections.append({'level': level, 'title': p.text})
         return sections
@@ -286,7 +286,8 @@ class DocProcessor(DocumentProcessor):
                 text=True,
                 encoding='utf-8',
                 errors='ignore',
-                timeout=30
+                timeout=30,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
             
             if result.returncode == 0:
@@ -298,7 +299,8 @@ class DocProcessor(DocumentProcessor):
                     text=True,
                     encoding='utf-8',
                     errors='ignore',
-                    timeout=30
+                    timeout=30,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 )
                 if result.returncode != 0:
                     return None
@@ -622,7 +624,8 @@ class ChmProcessor(DocumentProcessor):
             result = subprocess.run(
                 [sevenzip, 'x', '-y', f'-o{tmpdir}', str(file_path), *self.EXCLUDE_PATTERNS],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                timeout=600
+                timeout=600,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             )
             if result.returncode != 0:
                 return None

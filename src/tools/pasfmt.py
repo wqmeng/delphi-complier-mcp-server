@@ -286,7 +286,8 @@ async def format_file(
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=30  # 30秒超时
+            timeout=30,  # 30秒超时
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         
         # 处理输出
@@ -444,7 +445,8 @@ async def format_code(
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=30  # 30秒超时
+            timeout=30,  # 30秒超时
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         
         # 清理输入临时文件
@@ -708,7 +710,7 @@ async def download_and_install_pasfmt(install_dir: str = None) -> Dict[str, Any]
             try:
                 os.unlink(temp_zip)
                 logger.info(f"清理临时文件: {temp_zip}")
-            except:
+            except OSError:
                 pass
             
             return {
@@ -884,7 +886,7 @@ async def download_and_install_pasfmt_rad(
         try:
             os.unlink(temp_bpl)
             logger.info(f"清理临时文件: {temp_bpl}")
-        except:
+        except OSError:
             pass
         
         # 注册到 IDE（Windows 注册表）
@@ -1169,7 +1171,8 @@ async def compile_from_source(
                     ["git", "clone", "--depth", "1", repo_url, temp_dir],
                     capture_output=True,
                     text=True,
-                    timeout=300
+                    timeout=300,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 )
                 
                 if result.returncode == 0:
@@ -1185,7 +1188,8 @@ async def compile_from_source(
                         ["git", "clone", "--depth", "1", repo_mirror, temp_dir],
                         capture_output=True,
                         text=True,
-                        timeout=300
+                        timeout=300,
+                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                     )
                     
                     if result.returncode == 0:
@@ -1221,7 +1225,7 @@ async def compile_from_source(
                 
                 # 安装 Rust 工具链（如果未安装）
                 try:
-                    rustc_check = subprocess.run(["rustc", "--version"], capture_output=True, text=True)
+                    rustc_check = subprocess.run(["rustc", "--version"], capture_output=True, text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
                     if rustc_check.returncode != 0:
                         logger.warning("Rust 工具链未安装，尝试安装...")
                         # 这里可以添加 Rust 安装逻辑
@@ -1239,7 +1243,8 @@ async def compile_from_source(
                         cwd=temp_dir,
                         capture_output=True,
                         text=True,
-                        timeout=600
+                        timeout=600,
+                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                     )
                     
                     if result.returncode != 0:

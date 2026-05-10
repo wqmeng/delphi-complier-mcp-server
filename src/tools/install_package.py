@@ -282,7 +282,8 @@ dcc32 -b "{dpk_path}" -U"{lib_path}" -LE"{bpl_dir}" -LN"{dcp_dir}"
             ['cmd.exe', '/c', batch_file],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=Path(dpk_path).parent
+            cwd=Path(dpk_path).parent,
+            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         )
         
         try:
@@ -316,7 +317,7 @@ dcc32 -b "{dpk_path}" -U"{lib_path}" -LE"{bpl_dir}" -LN"{dcp_dir}"
     finally:
         try:
             os.unlink(batch_file)
-        except:
+        except OSError:
             pass
 
 
@@ -378,7 +379,7 @@ def _is_runtime_only_package(project_path: str) -> bool:
                 if tag == 'RuntimeOnlyPackage':
                     return child.text.strip().lower() == 'true'
         return False
-    except:
+    except Exception:
         return False
 
 
