@@ -84,7 +84,7 @@ class DelphiKnowledgeBaseService:
                     version_path = winreg.OpenKey(key, version_key)
                     try:
                         root_dir = winreg.QueryValueEx(version_path, "RootDir")[0]
-                    except:
+                    except OSError:
                         continue
                     finally:
                         winreg.CloseKey(version_path)
@@ -320,7 +320,7 @@ class DelphiKnowledgeBaseService:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
                 db_file_name = config.get("database", {}).get("file", "knowledge.sqlite")
-            except:
+            except (OSError, json.JSONDecodeError):
                 pass
         
         db_file = self.kb_dir / db_file_name

@@ -321,6 +321,36 @@ async def get_task_result(arguments: Any) -> CallToolResult:
     return CallToolResult(content=[{"type": "text", "text": result_text}])
 
 
+async def cancel_task(arguments: Any) -> CallToolResult:
+    """
+    取消任务
+
+    Args:
+        arguments: 包含以下参数:
+            - task_id: 任务ID (必需)
+
+    Returns:
+        操作结果
+    """
+    task_id = arguments.get("task_id")
+    if not task_id:
+        return CallToolResult(
+            content=[{"type": "text", "text": "请提供任务ID"}],
+            isError=True
+        )
+
+    task_manager = get_task_manager()
+    success = task_manager.cancel_task(task_id)
+
+    if success:
+        return CallToolResult(content=[{"type": "text", "text": f"任务 {task_id} 已取消"}])
+    else:
+        return CallToolResult(
+            content=[{"type": "text", "text": f"无法取消任务 {task_id}（任务不存在或已完成）"}],
+            isError=True
+        )
+
+
 async def list_tasks(arguments: Any) -> CallToolResult:
     """
     列出所有任务

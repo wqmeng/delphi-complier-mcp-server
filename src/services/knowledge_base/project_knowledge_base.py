@@ -112,7 +112,7 @@ class ProjectKnowledgeBase:
                         if root_dir:
                             # 添加 Delphi 安装路径及其子目录
                             delphi_paths.add(Path(root_dir).resolve())
-                    except:
+                    except OSError:
                         pass
                     finally:
                         winreg.CloseKey(version_path)

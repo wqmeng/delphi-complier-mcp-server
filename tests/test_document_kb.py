@@ -250,7 +250,8 @@ def test_scanner_search():
     print("测试 6: 搜索文档")
     print("=" * 60)
     
-    with tempfile.TemporaryDirectory() as tmpdir:
+    tmpdir = tempfile.mkdtemp()
+    try:
         test_dir = Path(tmpdir) / "docs"
         create_test_documents(test_dir)
         
@@ -268,6 +269,11 @@ def test_scanner_search():
             print(f"    {i}. {doc['title']} ({doc['content_type']})")
         
         print("  ✓ 测试通过")
+    finally:
+        import gc
+        gc.collect()
+        gc.collect()
+        shutil.rmtree(tmpdir, ignore_errors=True)
     
     return True
 
@@ -278,7 +284,8 @@ def test_scanner_content_type_filter():
     print("测试 7: 按类型过滤搜索")
     print("=" * 60)
     
-    with tempfile.TemporaryDirectory() as tmpdir:
+    tmpdir = tempfile.mkdtemp()
+    try:
         test_dir = Path(tmpdir) / "docs"
         create_test_documents(test_dir)
         
@@ -295,6 +302,11 @@ def test_scanner_content_type_filter():
             assert doc['content_type'] == 'markdown', "结果类型应为 markdown"
         
         print("  ✓ 测试通过")
+    finally:
+        import gc
+        gc.collect()
+        gc.collect()
+        shutil.rmtree(tmpdir, ignore_errors=True)
     
     return True
 

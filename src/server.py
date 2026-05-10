@@ -558,7 +558,7 @@ async def run_server():
                 elif action == "list":
                     result = await async_tools.list_tasks(arguments)
                 elif action == "cancel":
-                    result = await help_kb_tools.cancel_task(arguments)
+                    result = await async_tools.cancel_task(arguments)
                 else:
                     result = {"error": f"未知action: {action}"}
             

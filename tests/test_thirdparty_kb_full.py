@@ -84,9 +84,9 @@ def test_search_class(kb):
         if results:
             print(f"  ✓ 找到 {len(results)} 个结果")
             for i, result in enumerate(results[:3], 1):  # 只显示前3个
-                print(f"    {i}. {result['class']['name']}")
+                print(f"    {i}. {result['name']}")
                 print(f"       文件: {result['file']['path']}")
-                print(f"       基类: {result['class']['base_class']}")
+                print(f"       基类: {result.get('parent', '')}")
         else:
             print(f"  - 未找到")
         print()
@@ -108,9 +108,9 @@ def test_search_function(kb):
         if results:
             print(f"  ✓ 找到 {len(results)} 个结果")
             for i, result in enumerate(results[:3], 1):  # 只显示前3个
-                print(f"    {i}. {result['function']['name']}")
+                print(f"    {i}. {result['name']}")
                 print(f"       文件: {result['file']['path']}")
-                print(f"       类型: {result['function']['type']}")
+                print(f"       类型: {result.get('kind', '')}")
         else:
             print(f"  - 未找到")
         print()

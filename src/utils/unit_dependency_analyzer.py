@@ -131,7 +131,7 @@ class UnitDependencyAnalyzer:
                     return False
             
             return True
-        except:
+        except ValueError:
             return True
     
     def _extract_uses_from_file(self, file_path: Path) -> Set[UnitInfo]:
