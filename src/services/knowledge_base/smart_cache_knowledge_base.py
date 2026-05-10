@@ -17,8 +17,11 @@ import threading
 import time
 import re
 import hashlib
+import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
+
+logger = logging.getLogger(__name__)
 from collections import Counter, OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
@@ -103,7 +106,7 @@ class SourcePathResolver:
         # 如果files目录不存在，创建它
         if not files_dir.exists():
             files_dir.mkdir(parents=True, exist_ok=True)
-            print(f"创建缓存目录: {files_dir}")
+            logger.info(f"创建缓存目录: {files_dir}")
         
         return [files_dir]
     
@@ -328,7 +331,7 @@ class SmartCacheKnowledgeBase:
             for row in cursor.fetchall():
                 self.vocabulary[row['word']] = row['id']
                 self.idf_weights[row['word']] = row['idf_weight']
-        except:
+        except Exception:
             pass
         finally:
             conn.close()
@@ -426,7 +429,7 @@ class SmartCacheKnowledgeBase:
             source_paths: 外部指定的源码路径列表(为None时使用config中的路径)
         """
         if self._building:
-            print("构建已在进行中...")
+            logger.info("构建已在进行中...")
             return
         
         # 获取源码路径
@@ -435,17 +438,17 @@ class SmartCacheKnowledgeBase:
             resolved_paths = [Path(p) for p in source_paths]
         else:
             resolved_paths = self.path_resolver.get_source_paths()
-        print(f"源码路径: {[str(p) for p in resolved_paths]}")
+        logger.info(f"源码路径: {[str(p) for p in resolved_paths]}")
         
         # 阶段1：初始化（同步）
-        print("\n阶段1：初始化...")
+        logger.info("\n阶段1：初始化...")
         self._rebuild_init(resolved_paths, incremental=incremental)
         
         # 阶段2：启动异步构建
-        print("\n阶段2：启动异步向量构建...")
+        logger.info("\n阶段2：启动异步向量构建...")
         self._start_async_build(self.progress_callback)
         
-        print("\n知识库已可用，向量正在后台构建中...")
+        logger.info("\n知识库已可用，向量正在后台构建中...")
     
     @staticmethod
     def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict]]:
@@ -798,7 +801,7 @@ class SmartCacheKnowledgeBase:
                 })
             
         except Exception as e:
-            print(f"  解析文件失败 {file_path}: {e}")
+            logger.warning(f"  解析文件失败 {file_path}: {e}")
         
         return items
     
@@ -820,7 +823,7 @@ class SmartCacheKnowledgeBase:
                 conn.commit()
                 cursor.execute("SELECT id, full_path, hash FROM files")
                 existing_files = {row[1]: (row[0], row[2]) for row in cursor.fetchall()}
-                print(f"  增量模式: 数据库中已有 {len(existing_files)} 个文件记录")
+                logger.info(f"  增量模式: 数据库中已有 {len(existing_files)} 个文件记录")
             else:
                 cursor.execute("DELETE FROM vocabularies")
                 cursor.execute("DELETE FROM files")
@@ -830,7 +833,7 @@ class SmartCacheKnowledgeBase:
                 conn.commit()
                 existing_files = {}
             
-            print("  扫描文件...")
+            logger.info("  扫描文件...")
             
             if self.progress_callback:
                 self.progress_callback(0, "阶段1/2: 初始化...")
@@ -846,7 +849,7 @@ class SmartCacheKnowledgeBase:
             total_files = 0
             for source_path in source_paths:
                 if not source_path.exists():
-                    print(f"  警告: 路径不存在 {source_path}")
+                    logger.warning(f"  路径不存在 {source_path}")
                     continue
                 
                 category = source_path.name
@@ -901,9 +904,9 @@ class SmartCacheKnowledgeBase:
                             pass
             
             if incremental:
-                print(f"  增量模式: 跳过 {skipped} 个未变化文件, 更新 {updated} 个已修改文件, 新增 {len(files_data)} 个文件")
+                logger.info(f"  增量模式: 跳过 {skipped} 个未变化文件, 更新 {updated} 个已修改文件, 新增 {len(files_data)} 个文件")
             else:
-                print(f"  扫描到 {len(files_data)} 个文件")
+                logger.info(f"  扫描到 {len(files_data)} 个文件")
             
             if self.progress_callback:
                 self.progress_callback(15, f"扫描完成: {len(files_data) + len(changed_file_ids)} 个文件需处理，开始解析...")
@@ -923,7 +926,7 @@ class SmartCacheKnowledgeBase:
             
             if not all_files_to_parse:
                 if incremental:
-                    print("  增量模式: 所有文件均未变化，无需更新")
+                    logger.info("  增量模式: 所有文件均未变化，无需更新")
                     conn.commit()
                     return
             
@@ -932,7 +935,7 @@ class SmartCacheKnowledgeBase:
             file_path_to_id = {row[1]: row[0] for row in cursor.fetchall()}
             
             # 解析文件
-            print("  并行解析文件...")
+            logger.info("  并行解析文件...")
             
             if self.progress_callback:
                 self.progress_callback(10, "阶段1/2: 解析文件...")
@@ -940,7 +943,7 @@ class SmartCacheKnowledgeBase:
             n_workers = max(2, cpu_count() - 1)
             file_chunksize = max(500, len(all_files_to_parse) // n_workers)
             
-            print(f"  使用 {n_workers} 进程并行解析 (chunksize={file_chunksize})...")
+            logger.info(f"  使用 {n_workers} 进程并行解析 (chunksize={file_chunksize})...")
             
             with ProcessPoolExecutor(max_workers=n_workers) as executor:
                 parsed_results = list(executor.map(
@@ -984,7 +987,7 @@ class SmartCacheKnowledgeBase:
                     'pending'
                 ))
             
-            print(f"  提取到 {len(items_data)} 个词汇项目")
+            logger.info(f"  提取到 {len(items_data)} 个词汇项目")
             
             if items_data:
                 cursor.executemany("""
@@ -993,7 +996,7 @@ class SmartCacheKnowledgeBase:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, items_data)
             
-            print("  构建词汇表...")
+            logger.info("  构建词汇表...")
             
             if self.progress_callback:
                 self.progress_callback(70, "阶段1/2: 构建词汇表...")
@@ -1013,7 +1016,7 @@ class SmartCacheKnowledgeBase:
             
             conn.commit()
             
-            print(f"  初始化完成：{len(all_files_to_parse)}个文件需处理，{len(items_data)}个项目")
+            logger.info(f"  初始化完成：{len(all_files_to_parse)}个文件需处理，{len(items_data)}个项目")
         finally:
             conn.close()
     
@@ -1052,7 +1055,7 @@ class SmartCacheKnowledgeBase:
                 VALUES (?, ?, ?, ?)
             """, vocab_data)
         
-        print(f"  词汇表大小: {len(vocab_data)}")
+        logger.info(f"  词汇表大小: {len(vocab_data)}")
     
     def _start_async_build(self, progress_callback: callable = None):
         """启动异步构建线程"""
@@ -1083,10 +1086,10 @@ class SmartCacheKnowledgeBase:
             total = cursor.fetchone()[0]
             
             if total == 0:
-                print("  没有需要构建的项目")
+                logger.info("  没有需要构建的项目")
                 return
             
-            print(f"  开始构建向量，共{total}个项目...")
+            logger.info(f"  开始构建向量，共{total}个项目...")
             
             # 动态计算worker数和chunksize
             parallel_workers_config = self.config.get('build', {}).get('parallel_workers')
@@ -1097,7 +1100,7 @@ class SmartCacheKnowledgeBase:
             batch_size = self.config.get('build', {}).get('batch_size', 1000)
             vector_chunksize = max(500, batch_size // n_workers)
             
-            print(f"  使用 {n_workers} 进程并行计算向量 (chunksize={vector_chunksize})...")
+            logger.info(f"  使用 {n_workers} 进程并行计算向量 (chunksize={vector_chunksize})...")
             
             processed = 0
             vocab = self.vocabulary
@@ -1160,17 +1163,17 @@ class SmartCacheKnowledgeBase:
                     progress_callback(progress, f"构建向量中：{processed}/{total}")
                 
                 if processed % 1000 == 0 or processed == total:
-                    print(f"  构建进度：{processed}/{total} ({progress}%)")
+                    logger.info(f"  构建进度：{processed}/{total} ({progress}%)")
             
             # 完成
             cursor.execute("UPDATE metadata SET value='completed' WHERE key='build_status'")
             cursor.execute("UPDATE metadata SET value='100' WHERE key='build_progress'")
             conn.commit()
             
-            print(f"  向量构建完成：{processed}/{total}")
+            logger.info(f"  向量构建完成：{processed}/{total}")
             
         except Exception as e:
-            print(f"  构建错误: {e}")
+            logger.error(f"  构建错误: {e}")
             cursor.execute("UPDATE metadata SET value='failed' WHERE key='build_status'")
             conn.commit()
         finally:

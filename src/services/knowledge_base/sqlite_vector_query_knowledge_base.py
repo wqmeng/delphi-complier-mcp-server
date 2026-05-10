@@ -81,11 +81,11 @@ class SQLiteVectorKnowledgeBase:
                 cursor.execute("SELECT value FROM metadata WHERE key = 'total_files'")
                 row = cursor.fetchone()
                 if row:
-                    print(f"知识库加载成功! 包含 {row[0]} 个文件")
+                    logger.info(f"知识库加载成功! 包含 {row[0]} 个文件")
                 else:
-                    print("知识库加载成功!")
+                    logger.info("知识库加载成功!")
 
-                print("使用缓存的索引")
+                logger.info("使用缓存的索引")
                 self.load_vocabulary()
 
                 # 检查 schema 版本
@@ -96,25 +96,25 @@ class SQLiteVectorKnowledgeBase:
                 cursor.execute("PRAGMA table_info(vocabularies)")
                 columns = {row[1] for row in cursor.fetchall()}
                 if 'name_lower_rev' not in columns:
-                    print("迁移: 添加 name_lower_rev 列...")
+                    logger.info("迁移: 添加 name_lower_rev 列...")
                     cursor.execute("ALTER TABLE vocabularies ADD COLUMN name_lower_rev TEXT")
                     conn.commit()
                     # 填充反转数据
-                    print("迁移: 填充 name_lower_rev 数据...")
+                    logger.info("迁移: 填充 name_lower_rev 数据...")
                     cursor.execute("SELECT COUNT(*) FROM vocabularies")
                     total = cursor.fetchone()[0]
-                    print(f"  共 {total} 行，分批处理...")
+                    logger.info(f"  共 {total} 行，分批处理...")
                     # 注册反转函数
                     conn.create_function("my_reverse", 1, lambda s: s[::-1] if s else '')
                     cursor.execute("UPDATE vocabularies SET name_lower_rev = my_reverse(name_lower) WHERE name_lower_rev IS NULL")
                     conn.commit()
-                    print(f"  填充完成")
+                    logger.info(f"  填充完成")
                 else:
                     # 确保已有列但没有数据的行被填充
                     cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE name_lower_rev IS NULL AND name_lower IS NOT NULL")
                     missing = cursor.fetchone()[0]
                     if missing > 0:
-                        print(f"迁移: 补填 {missing} 行 name_lower_rev 数据...")
+                        logger.info(f"迁移: 补填 {missing} 行 name_lower_rev 数据...")
                         conn.create_function("my_reverse", 1, lambda s: s[::-1] if s else '')
                         cursor.execute("UPDATE vocabularies SET name_lower_rev = my_reverse(name_lower) WHERE name_lower_rev IS NULL AND name_lower IS NOT NULL")
                         conn.commit()
@@ -122,12 +122,12 @@ class SQLiteVectorKnowledgeBase:
                 # 确保反转列索引存在
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_vocabularies_name_lower_rev'")
                 if not cursor.fetchone():
-                    print("迁移: 创建 name_lower_rev 索引...")
+                    logger.info("迁移: 创建 name_lower_rev 索引...")
                     cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name_lower_rev ON vocabularies(name_lower_rev)")
                     conn.commit()
 
         except Exception as e:
-            print(f"加载知识库失败: {e}")
+            logger.error(f"加载知识库失败: {e}")
             self._close_connection()
             raise
 
@@ -199,10 +199,10 @@ class SQLiteVectorKnowledgeBase:
                     key = (row['file_path'], row['name'])
                     func_vectors[key] = row['vector']
             
-            print(f"  已加载现有向量: {len(class_vectors)} 类, {len(func_vectors)} 函数")
+            logger.info(f"  已加载现有向量: {len(class_vectors)} 类, {len(func_vectors)} 函数")
             
         except Exception as e:
-            print(f"  加载现有向量失败: {e}")
+                logger.warning(f"  加载现有向量失败: {e}")
         
         return class_vectors, func_vectors
 
@@ -231,7 +231,7 @@ class SQLiteVectorKnowledgeBase:
                 return True
                 
             return False
-        except:
+        except Exception:
             return True
 
     def tokenize(self, text: str) -> List[str]:
@@ -547,7 +547,7 @@ class SQLiteVectorKnowledgeBase:
         Args:
             incremental: 是否使用增量模式（保留现有向量，只计算新增/变化的）
         """
-        print("正在构建 SQLite 向量索引...")
+        logger.info("正在构建 SQLite 向量索引...")
         start_time = time.time()
 
         conn = self._get_connection()
@@ -580,7 +580,7 @@ class SQLiteVectorKnowledgeBase:
                 deleted_files = existing_files - current_files
                 
                 if deleted_files:
-                    print(f"  发现 {len(deleted_files)} 个已删除文件，清理关联数据...")
+                    logger.info(f"  发现 {len(deleted_files)} 个已删除文件，清理关联数据...")
                     # 删除已不存在文件的向量数据
                     for del_file in deleted_files:
                         cursor.execute("DELETE FROM classes WHERE file_path=?", (del_file,))
@@ -588,13 +588,13 @@ class SQLiteVectorKnowledgeBase:
                     cursor.execute("DELETE FROM files WHERE full_path IN ({})".format(
                         ','.join('?' * len(deleted_files))
                     ), tuple(deleted_files))
-                    print(f"  清理完成：删除 {len(deleted_files)} 个文件的向量数据")
+                    logger.info(f"  清理完成：删除 {len(deleted_files)} 个文件的向量数据")
                 
                 # 只清空 files/keywords/units，重新插入
                 cursor.execute("DELETE FROM files")
                 cursor.execute("DELETE FROM keywords")
                 cursor.execute("DELETE FROM units")
-                print("  增量模式：保留现有向量和词汇表")
+                logger.info("  增量模式：保留现有向量和词汇表")
         else:
             # 完整模式：删除现有表并重建
             cursor.execute("DROP TABLE IF EXISTS metadata")
@@ -635,7 +635,7 @@ class SQLiteVectorKnowledgeBase:
                 all_documents.append(func_desc)
 
         # 构建词汇表
-        print("正在构建词汇表...")
+        logger.info("正在构建词汇表...")
         
         # 增量模式：加载现有词汇表
         existing_vocab = {}
@@ -649,9 +649,9 @@ class SQLiteVectorKnowledgeBase:
                     for row in rows:
                         existing_vocab[row['word']] = row['id']
                         existing_idf[row['word']] = row['idf_weight']
-                    print(f"  已加载现有词汇: {len(existing_vocab)}")
+                    logger.info(f"  已加载现有词汇: {len(existing_vocab)}")
                     vocab_loaded = True
-            except:
+            except Exception:
                 pass
         
         # 检查是否需要重建词汇表（当源文件变化时需要重建）
@@ -661,7 +661,7 @@ class SQLiteVectorKnowledgeBase:
             # 词汇表已存在且完整，直接使用
             self.vocabulary = existing_vocab
             self.idf_weights = existing_idf
-            print(f"  使用现有词汇表: {len(self.vocabulary)}")
+            logger.info(f"  使用现有词汇表: {len(self.vocabulary)}")
         else:
             # 构建新词汇表
             new_vocab, new_idf = self.build_vocabulary(all_documents)
@@ -681,13 +681,13 @@ class SQLiteVectorKnowledgeBase:
                 
                 self.vocabulary = existing_vocab
                 self.idf_weights = existing_idf
-                print(f"  词汇表: 现有 {len(existing_vocab)}, 新增 {new_count}, 总计 {len(self.vocabulary)}")
+                logger.info(f"  词汇表: 现有 {len(existing_vocab)}, 新增 {new_count}, 总计 {len(self.vocabulary)}")
             else:
                 self.vocabulary = new_vocab
                 self.idf_weights = new_idf
 
         # 保存词汇表到数据库 (批量插入)
-        print("正在保存词汇表...")
+        logger.info("正在保存词汇表...")
         vocab_data = [(word_id, word, self.idf_weights[word]) for word, word_id in self.vocabulary.items()]
         
         if incremental:
@@ -727,7 +727,7 @@ class SQLiteVectorKnowledgeBase:
             ))
 
         # 处理文件和插入数据 (批量插入,带进度显示)
-        print("正在处理文件和构建向量...")
+        logger.info("正在处理文件和构建向量...")
         
         # 去重：使用完整路径 (full_path) 作为唯一键，保留最后一个出现的
         # 注意：不能使用相对路径 path，因为不同目录下可能有同名文件
@@ -741,13 +741,13 @@ class SQLiteVectorKnowledgeBase:
         
         deduped_files = list(unique_files.values())
         if len(deduped_files) < len(source_index['files']):
-            print(f"去重: 从 {len(source_index['files'])} 个文件减少到 {len(deduped_files)} 个")
+            logger.info(f"去重: 从 {len(source_index['files'])} 个文件减少到 {len(deduped_files)} 个")
             if duplicates:
-                print(f"  发现 {len(duplicates)} 个重复项（基于完整路径）")
+                logger.info(f"  发现 {len(duplicates)} 个重复项（基于完整路径）")
                 for full_path, path in duplicates[:5]:  # 只显示前5个
-                    print(f"    - {path}")
+                    logger.info(f"    - {path}")
                 if len(duplicates) > 5:
-                    print(f"    ... 还有 {len(duplicates) - 5} 个")
+                    logger.info(f"    ... 还有 {len(duplicates) - 5} 个")
         
         total_files = len(deduped_files)
         
@@ -756,7 +756,7 @@ class SQLiteVectorKnowledgeBase:
         units_data = []
         keywords_data = []
         
-        print("第一阶段: 收集文件、单元和关键词数据...")
+        logger.info("第一阶段: 收集文件、单元和关键词数据...")
         
         for file_info in deduped_files:
             file_path = file_info['path']
@@ -797,10 +797,10 @@ class SQLiteVectorKnowledgeBase:
             for keyword in keywords:
                 keywords_data.append((keyword, keyword, full_path))
         
-        print(f"  文件: {len(files_data)}, 单元: {len(units_data)}, 关键词: {len(keywords_data)}")
+        logger.info(f"  文件: {len(files_data)}, 单元: {len(units_data)}, 关键词: {len(keywords_data)}")
         
         # 第二阶段：并行计算向量（支持增量构建）
-        print("第二阶段: 并行计算向量...")
+        logger.info("第二阶段: 并行计算向量...")
         
         from concurrent.futures import ProcessPoolExecutor
         from multiprocessing import cpu_count
@@ -851,8 +851,8 @@ class SQLiteVectorKnowledgeBase:
         
         # 增量模式早期返回：所有向量已存在
         if incremental and len(class_items) == 0 and len(func_items) == 0:
-            print(f"  所有向量已存在，跳过向量计算!")
-            print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
+            logger.info(f"  所有向量已存在，跳过向量计算!")
+            logger.info(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
             
             # 更新元数据和时间戳
             source_dir = source_index.get('source_directory', '')
@@ -869,16 +869,16 @@ class SQLiteVectorKnowledgeBase:
             conn.commit()
             
             elapsed = time.time() - start_time
-            print(f"增量索引构建完成! 耗时: {elapsed*1000:.2f}ms")
+            logger.info(f"增量索引构建完成! 耗时: {elapsed*1000:.2f}ms")
             return
         
         # 报告向量计算情况
         if len(class_items) == 0 and len(func_items) == 0:
-            print(f"  所有向量已存在，跳过向量计算!")
-            print(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
+            logger.info(f"  所有向量已存在，跳过向量计算!")
+            logger.info(f"  复用向量: {total_classes} 类, {total_funcs} 函数")
         else:
-            print(f"  需要计算向量: {len(class_items)} 类 (新增), {len(func_items)} 函数 (新增)")
-            print(f"  复用向量: {total_classes - len(class_items)} 类, {total_funcs - len(func_items)} 函数")
+            logger.info(f"  需要计算向量: {len(class_items)} 类 (新增), {len(func_items)} 函数 (新增)")
+            logger.info(f"  复用向量: {total_classes - len(class_items)} 类, {total_funcs - len(func_items)} 函数")
         
         # 动态计算worker数和chunksize
         # 目标：减少IPC开销，每个chunk处理更多数据
@@ -889,7 +889,7 @@ class SQLiteVectorKnowledgeBase:
         class_chunksize = max(500, len(class_items) // n_workers)
         func_chunksize = max(500, len(func_items) // n_workers)
         
-        print(f"  使用 {n_workers} 进程并行计算 (类chunksize={class_chunksize}, 函数chunksize={func_chunksize})...")
+        logger.info(f"  使用 {n_workers} 进程并行计算 (类chunksize={class_chunksize}, 函数chunksize={func_chunksize})...")
         
         def compute_class_vector(item):
             cls, full_path, desc = item
@@ -913,7 +913,7 @@ class SQLiteVectorKnowledgeBase:
             results = list(executor.map(func, class_items, chunksize=class_chunksize))
             classes_data = results
         
-        print(f"  类向量计算完成: {len(classes_data)}")
+        logger.info(f"  类向量计算完成: {len(classes_data)}")
         
         # 并行计算函数向量
         with ProcessPoolExecutor(max_workers=n_workers) as executor:
@@ -922,22 +922,22 @@ class SQLiteVectorKnowledgeBase:
             results = list(executor.map(func, func_items, chunksize=func_chunksize))
             functions_data = results
         
-        print(f"  函数向量计算完成: {len(functions_data)}")
+        logger.info(f"  函数向量计算完成: {len(functions_data)}")
 
         # 批量插入数据 - 使用单事务提高性能
-        print("正在批量插入数据...")
+        logger.info("正在批量插入数据...")
         
         try:
-            print(f"  - 插入文件数据 ({len(files_data)} 条)...")
+            logger.info(f"  - 插入文件数据 ({len(files_data)} 条)...")
             cursor.executemany("""
                 INSERT INTO files (
                     full_path, path, extension, size, line_count,
                     hash, last_modified, units, uses, description
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, files_data)
-            print(f"  - 文件数据插入完成")
+            logger.info(f"  - 文件数据插入完成")
 
-            print(f"  - 插入类数据 ({len(classes_data)} 条)...")
+            logger.info(f"  - 插入类数据 ({len(classes_data)} 条)...")
             # 增量模式下先删除已存在的类
             if incremental and classes_data:
                 for cd in classes_data:
@@ -946,9 +946,9 @@ class SQLiteVectorKnowledgeBase:
                 INSERT INTO classes (name_lower, name, base_class, type_kind, line, file_path, description, definition, vector)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, classes_data)
-            print(f"  - 类数据插入完成")
+            logger.info(f"  - 类数据插入完成")
 
-            print(f"  - 插入函数数据 ({len(functions_data)} 条)...")
+            logger.info(f"  - 插入函数数据 ({len(functions_data)} 条)...")
             # 增量模式下先删除已存在的函数
             if incremental and functions_data:
                 for fd in functions_data:
@@ -957,28 +957,28 @@ class SQLiteVectorKnowledgeBase:
                 INSERT INTO functions (name_lower, name, line, type, file_path, description, vector)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, functions_data)
-            print(f"  - 函数数据插入完成")
+            logger.info(f"  - 函数数据插入完成")
 
-            print(f"  - 插入单元数据 ({len(units_data)} 条)...")
+            logger.info(f"  - 插入单元数据 ({len(units_data)} 条)...")
             cursor.executemany("""
                 INSERT INTO units (name_lower, name, file_path, description)
                 VALUES (?, ?, ?, ?)
             """, units_data)
-            print(f"  - 单元数据插入完成")
+            logger.info(f"  - 单元数据插入完成")
 
-            print(f"  - 插入关键词数据 ({len(keywords_data)} 条)...")
+            logger.info(f"  - 插入关键词数据 ({len(keywords_data)} 条)...")
             cursor.executemany("""
                 INSERT INTO keywords (keyword_lower, keyword, file_path)
                 VALUES (?, ?, ?)
             """, keywords_data)
-            print(f"  - 关键词数据插入完成")
+            logger.info(f"  - 关键词数据插入完成")
             
             conn.commit()
-            print("  - 数据提交完成")
+            logger.info("  - 数据提交完成")
             
         except Exception as e:
             conn.rollback()
-            print(f"  - 数据插入失败: {e}")
+            logger.warning(f"  - 数据插入失败: {e}")
             raise
 
         # 提交事务
@@ -989,12 +989,12 @@ class SQLiteVectorKnowledgeBase:
         conn.commit()
 
         elapsed = (time.time() - start_time) * 1000
-        print(f"SQLite 向量索引构建完成! 耗时: {elapsed:.2f}ms")
-        print(f"词汇表大小: {len(self.vocabulary)}")
+        logger.info(f"SQLite 向量索引构建完成! 耗时: {elapsed:.2f}ms")
+        logger.info(f"词汇表大小: {len(self.vocabulary)}")
 
     def load_vocabulary(self):
         """从数据库加载词汇表"""
-        print("正在加载词汇表...")
+        logger.info("正在加载词汇表...")
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -1005,9 +1005,9 @@ class SQLiteVectorKnowledgeBase:
             for row in cursor.fetchall():
                 self.vocabulary[row['word']] = row['id']
                 self.idf_weights[row['word']] = row['idf_weight']
-            print(f"词汇表加载完成! 大小: {len(self.vocabulary)}")
+            logger.info(f"词汇表加载完成! 大小: {len(self.vocabulary)}")
         else:
-            print("词汇表不存在，跳过加载（精确查询仍可用）")
+            logger.info("词汇表不存在，跳过加载（精确查询仍可用）")
 
     def _semantic_search_embedding(self, query: str, type_filter: tuple, top_k: int = 10) -> List[Tuple[str, float]]:
         """
