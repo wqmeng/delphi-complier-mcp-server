@@ -2062,7 +2062,7 @@ class GenericDocumentScanner:
         """
         if use_fts5:
             # 使用 FTS5 懒加载搜索（自动降级 + 后台构建）
-            return self.fts5_manager.search(
+            results = self.fts5_manager.search(
                 query=query,
                 search_func=lambda q: self._reverse_index_search(q, content_type, top_k),
                 top_k=top_k,
@@ -2070,7 +2070,12 @@ class GenericDocumentScanner:
             )
         else:
             # 直接使用逆序索引搜索
-            return self._reverse_index_search(query, content_type, top_k)
+            results = self._reverse_index_search(query, content_type, top_k)
+        
+        # 后置 content_type 过滤（弥补 FTS5 _fts_search 不支持 content_type 过滤的问题）
+        if content_type and results:
+            results = [r for r in results if r.get('content_type') == content_type]
+        return results
     
     def _reverse_index_search(self, query: str, content_type: Optional[str] = None, top_k: int = 10) -> List[Dict]:
         """
@@ -2303,10 +2308,14 @@ class GenericDocumentScanner:
             """)
             by_extension = dict(cursor.fetchall())
             
+            # 实际数据库文件磁盘大小
+            db_size_mb = self.db_path.stat().st_size / (1024 * 1024)
+            
             return {
                 'total_documents': total_documents,
                 'by_type': by_type,
                 'by_extension': by_extension,
+                'database_size_mb': round(db_size_mb, 2),
             }
         finally:
             conn.close()

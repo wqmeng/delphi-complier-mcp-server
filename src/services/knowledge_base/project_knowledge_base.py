@@ -505,7 +505,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
         # 构建向量索引 (加载 SQLiteVectorKnowledgeBase 用于查询)
         logger.info("加载三方库向量索引...")
-        self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir))
+        self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir), db_file="knowledge.sqlite")
 
         # 更新元数据
         self.metadata["thirdparty_paths"] = thirdparty_paths
@@ -832,26 +832,26 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             # 优先检测新格式 (SQLite vector format)
             new_format_db = self.kb_dir / "knowledge.sqlite"
             if new_format_db.exists():
-                self.project_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir))
+                self.project_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file="knowledge.sqlite")
                 logger.info(f"项目源码知识库加载成功 (新格式): {new_format_db}")
             else:
                 # 回退检测旧格式 (JSON index format)
                 project_kb_dir = self.kb_dir / "project"
                 if (project_kb_dir / "index" / "source_index.json").exists():
-                    self.project_kb = SQLiteVectorKnowledgeBase(str(project_kb_dir))
+                    self.project_kb = SQLiteVectorKnowledgeBase(str(project_kb_dir), db_file="knowledge.sqlite")
                     logger.info("项目源码知识库加载成功 (旧格式)")
 
             # 加载三方库知识库 - 同样支持两种格式
             # 新格式: .delphi-kb/thirdparty/knowledge.sqlite
             thirdparty_new_db = self.kb_dir / "thirdparty" / "knowledge.sqlite"
             if thirdparty_new_db.exists():
-                self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir / "thirdparty"))
+                self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(self.kb_dir / "thirdparty"), db_file="knowledge.sqlite")
                 logger.info(f"三方库知识库加载成功 (新格式): {thirdparty_new_db}")
             else:
                 # 旧格式
                 thirdparty_kb_dir = self.kb_dir / "thirdparty"
                 if (thirdparty_kb_dir / "index" / "source_index.json").exists():
-                    self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir))
+                    self.thirdparty_kb = SQLiteVectorKnowledgeBase(str(thirdparty_kb_dir), db_file="knowledge.sqlite")
                     logger.info("三方库知识库加载成功 (旧格式)")
 
             return True

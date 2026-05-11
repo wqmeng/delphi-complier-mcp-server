@@ -26,8 +26,6 @@ delphi-complier-mcp-server/
 ├── config/                  # Configuration files
 ├── data/                    # Knowledge base data
 ├── docs/                    # Documentation
-├── build_kb.py             # Knowledge base builder (full source)
-├── build_kb_fmx.py         # Knowledge base builder (FMX only)
 └── pyproject.toml          # Project configuration
 ```
 
@@ -131,21 +129,20 @@ python src/server.py --config config/config.json
 
 ### Building Knowledge Bases
 
+知识库构建已整合到 MCP 工具中，通过 `delphi_kb` 工具调用：
+
 ```bash
-# Build FMX only knowledge base (~30s, 311 files)
-python build_kb_fmx.py
-
-# Build full source knowledge base (~65s, 2768 files, 3.5M lines)
-python build_kb.py
-
-# Build project knowledge base (via MCP tool, project_path 可选——不传时自动从 CWD 检测 .dproj)
+# Build project knowledge base (project_path 可选——不传时自动从 CWD 检测 .dproj)
 # delphi_kb(action="build", kb_type="project", project_path="path/to/project.dproj")
 
-# Build Delphi help document knowledge base (via MCP tool, async)
+# Build Delphi help document knowledge base (async)
 # delphi_kb(action="build", kb_type="document", directory="C:\Program Files (x86)\Embarcadero\Studio\22.0\Help\Doc", extensions=[".chm"], async_mode=true)
 
-# Run with custom paths
-python build_kb.py --source C:\Delphi\Source --output data/delphi-kb/
+# Build Delphi official source knowledge base
+# delphi_kb(action="build", kb_type="delphi", version="22.0", async_mode=true)
+
+# Build third-party library knowledge base
+# delphi_kb(action="build", kb_type="thirdparty", version="22.0", async_mode=true)
 ```
 
 ---

@@ -6,6 +6,7 @@
 
 import sys
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -148,7 +149,8 @@ def test_search_empty_query():
     """测试空查询"""
     print("\n测试 7: 空查询字符串")
     
-    with tempfile.TemporaryDirectory() as tmpdir:
+    tmpdir = tempfile.mkdtemp()
+    try:
         db_path = Path(tmpdir) / "test.db"
         scanner = GenericDocumentScanner(str(db_path.parent), config={'database': {'file': 'test.db'}})
         
@@ -156,6 +158,13 @@ def test_search_empty_query():
         
         print(f"  空查询返回 {len(results)} 个结果")
         print("  ✓ 测试通过")
+    finally:
+        # 确保 scanner 和所有连接释放后再删除临时目录
+        del scanner
+        import gc
+        gc.collect()
+        gc.collect()
+        shutil.rmtree(tmpdir, ignore_errors=True)
     
     return True
 

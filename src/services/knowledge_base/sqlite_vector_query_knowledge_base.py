@@ -29,7 +29,7 @@ class SQLiteVectorKnowledgeBase:
         if db_file:
             self.db_file = self.kb_dir / db_file
         else:
-            self.db_file = self.kb_dir / "knowledge.sqlite"
+            self.db_file = self.kb_dir / "knowledge_base.sqlite"
         # 用于构建时读取源数据
         self.source_index_file = self.index_dir / "source_index.json"
         self.source_dir = None

@@ -6,7 +6,7 @@
 
 import asyncio
 import os
-from typing import Tuple, Optional
+from typing import Callable, Tuple, Optional
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -137,8 +137,8 @@ class ProcessManager:
         executable: str,
         args: list,
         timeout: int,
-        stdout_callback: Optional[callable] = None,
-        stderr_callback: Optional[callable] = None
+        stdout_callback: Optional[Callable] = None,
+        stderr_callback: Optional[Callable] = None
     ) -> Tuple[int, str, str]:
         """
         执行编译器进程,支持实时输出回调

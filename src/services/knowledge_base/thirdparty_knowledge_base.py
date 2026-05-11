@@ -176,30 +176,8 @@ class ThirdPartyKnowledgeBase:
 
     def _get_delphi_version_name(self, version_key: str) -> str:
         """获取 Delphi 版本名称"""
-        version_names = {
-            "37.0": "Delphi 13 Florence",
-            "23.0": "Delphi 12 Athens",
-            "22.0": "Delphi 11 Alexandria",
-            "21.0": "Delphi 10.4 Sydney",
-            "20.0": "Delphi 10.3 Rio",
-            "19.0": "Delphi 10.2 Tokyo",
-            "18.0": "Delphi 10.1 Berlin",
-            "17.0": "Delphi 10 Seattle",
-            "16.0": "Delphi XE8",
-            "15.0": "Delphi XE7",
-            "14.0": "Delphi XE6",
-            "12.0": "Delphi XE5",
-            "11.0": "Delphi XE4",
-            "10.0": "Delphi XE3",
-            "9.0": "Delphi XE2",
-            "8.0": "Delphi XE",
-            "7.0": "Delphi 2010",
-            "6.0": "Delphi 2009",
-            "5.0": "Delphi 2007",
-            "4.0": "Delphi 2006",
-            "3.0": "Delphi 2005"
-        }
-        return version_names.get(version_key, f"Delphi {version_key}")
+        from src.utils.delphi_versions import get_version_name
+        return get_version_name(version_key)
 
     def _load_environment_variables(self, version: str) -> Dict[str, str]:
         """
@@ -1053,7 +1031,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         try:
             if self.kb_instance is None:
-                self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir))
+                # 三方库知识库固定使用 knowledge.sqlite
+                self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file="knowledge.sqlite")
             return True
         except Exception as e:
             logger.error(f"加载知识库失败: {e}")

@@ -9,7 +9,6 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 """
 
 import os
-import sys
 
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 
@@ -18,13 +17,13 @@ import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Callable
 
-# 添加当前目录到 Python 路径
-current_dir = Path(__file__).parent
-if str(current_dir) not in sys.path:
-    sys.path.insert(0, str(current_dir))
+from src.utils.delphi_versions import get_version_name
+from ...utils.logger import get_logger
 
-from sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
-from smart_cache_knowledge_base import SmartCacheKnowledgeBase
+from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
+from .smart_cache_knowledge_base import SmartCacheKnowledgeBase
+
+logger = get_logger(__name__)
 
 
 class DelphiKnowledgeBaseService:
@@ -108,37 +107,16 @@ class DelphiKnowledgeBaseService:
             winreg.CloseKey(key)
 
         except Exception as e:
-            print(f"检测 Delphi 版本失败: {e}")
+            logger.error(f"检测 Delphi 版本失败: {e}")
 
+        # 按版本号降序排序，确保 [0] 始终是最新版
+        versions.sort(key=lambda x: tuple(int(p) for p in x["version"].split('.')), reverse=True)
         self.delphi_versions = versions
         return versions
 
     def get_delphi_version_name(self, version_key: str) -> str:
         """获取 Delphi 版本名称"""
-        version_names = {
-            "37.0": "Delphi 13 Florence",
-            "23.0": "Delphi 12 Athens",
-            "22.0": "Delphi 11 Alexandria",
-            "21.0": "Delphi 10.4 Sydney",
-            "20.0": "Delphi 10.3 Rio",
-            "19.0": "Delphi 10.2 Tokyo",
-            "18.0": "Delphi 10.1 Berlin",
-            "17.0": "Delphi 10 Seattle",
-            "16.0": "Delphi XE8",
-            "15.0": "Delphi XE7",
-            "14.0": "Delphi XE6",
-            "12.0": "Delphi XE5",
-            "11.0": "Delphi XE4",
-            "10.0": "Delphi XE3",
-            "9.0": "Delphi XE2",
-            "8.0": "Delphi XE",
-            "7.0": "Delphi 2010",
-            "6.0": "Delphi 2009",
-            "5.0": "Delphi 2007",
-            "4.0": "Delphi 2006",
-            "3.0": "Delphi 2005"
-        }
-        return version_names.get(version_key, f"Delphi {version_key}")
+        return get_version_name(version_key)
 
     def select_delphi_version(self, version: Optional[str] = None) -> Optional[Dict]:
         """
@@ -179,16 +157,16 @@ class DelphiKnowledgeBaseService:
         # 选择 Delphi 版本
         selected_version = self.select_delphi_version(version)
         if not selected_version:
-            print("未找到可用的 Delphi 版本")
+            logger.error("未找到可用的 Delphi 版本")
             return False
 
         self.source_dir = selected_version["source_dir"]
-        print(f"使用 Delphi 版本: {selected_version['name']} ({selected_version['version']})")
-        print(f"源码目录: {self.source_dir}")
+        logger.info(f"使用 Delphi 版本: {selected_version['name']} ({selected_version['version']})")
+        logger.info(f"源码目录: {self.source_dir}")
 
         # 检查源码目录是否存在
         if not Path(self.source_dir).exists():
-            print(f"源码目录不存在: {self.source_dir}")
+            logger.error(f"源码目录不存在: {self.source_dir}")
             return False
 
         # 使用智能缓存方案
@@ -197,9 +175,9 @@ class DelphiKnowledgeBaseService:
     def _build_with_smart_cache(self, force_rebuild: bool = False, incremental: bool = False) -> bool:
         """使用智能缓存方案构建知识库"""
         if incremental and not force_rebuild:
-            print("使用智能缓存方案增量构建知识库...")
+            logger.info("使用智能缓存方案增量构建知识库...")
         else:
-            print("使用智能缓存方案构建知识库...")
+            logger.info("使用智能缓存方案构建知识库...")
         
         # 创建配置文件
         config = {
@@ -240,8 +218,8 @@ class DelphiKnowledgeBaseService:
         self.kb_instance.rebuild_async(incremental=incremental and not force_rebuild)
         
         elapsed = (time.time() - start_time) * 1000
-        print(f"知识库初始化完成! 耗时: {elapsed:.2f}ms")
-        print("向量正在后台构建中，知识库已可用...")
+        logger.info(f"知识库初始化完成! 耗时: {elapsed:.2f}ms")
+        logger.info("向量正在后台构建中，知识库已可用...")
         
         return True
     
@@ -256,20 +234,20 @@ class DelphiKnowledgeBaseService:
             if self.kb_instance is None:
                 # 读取 config.json 获取数据库文件名
                 config_path = self.kb_dir / "config.json"
-                db_file = "knowledge.sqlite"  # 默认值
+                db_file = "knowledge_base.sqlite"  # 默认值
                 if config_path.exists():
                     import json
                     try:
                         with open(config_path, encoding='utf-8') as f:
                             config = json.load(f)
-                        db_file = config.get('database', {}).get('file', 'knowledge.sqlite')
+                        db_file = config.get('database', {}).get('file', 'knowledge_base.sqlite')
                     except Exception as e:
-                        print(f"[WARNING] 读取config.json失败: {e}, 使用默认数据库")
+                        logger.warning(f"读取config.json失败: {e}, 使用默认数据库")
                 
                 self.kb_instance = SQLiteVectorKnowledgeBase(str(self.kb_dir), db_file=db_file)
             return True
         except Exception as e:
-            print(f"加载知识库失败: {e}")
+            logger.error(f"加载知识库失败: {e}")
             return False
 
     def search_by_name(self, name: str) -> List[Dict]:
@@ -277,6 +255,7 @@ class DelphiKnowledgeBaseService:
         if not self.load_knowledge_base():
             return []
         return self.kb_instance.search_by_name(name)
+
     def search_by_keyword(self, keyword: str) -> List[Dict]:
         """根据关键词搜索"""
         if not self.load_knowledge_base():
@@ -314,12 +293,12 @@ class DelphiKnowledgeBaseService:
         # 读取 config.json 获取数据库文件名
         import sqlite3
         config_path = self.kb_dir / "config.json"
-        db_file_name = "knowledge.sqlite"
+        db_file_name = "knowledge_base.sqlite"
         if config_path.exists():
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = json.load(f)
-                db_file_name = config.get("database", {}).get("file", "knowledge.sqlite")
+                db_file_name = config.get("database", {}).get("file", "knowledge_base.sqlite")
             except (OSError, json.JSONDecodeError):
                 pass
         

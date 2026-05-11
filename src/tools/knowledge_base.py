@@ -530,10 +530,13 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                 cursor.execute("SELECT content_type, COUNT(*) FROM documents GROUP BY content_type ORDER BY COUNT(*) DESC")
                 by_type = dict(cursor.fetchall())
                 conn.close()
+                # 实际数据库文件大小
+                db_size_mb = round(db_path.stat().st_size / (1024 * 1024), 2)
                 results["document"] = {
                     "total_documents": total,
                     "by_type": by_type,
                     "by_extension": by_ext,
+                    "database_size_mb": db_size_mb,
                 }
             else:
                 results["document"] = {"error": f"文档知识库不存在: {db_path}"}
@@ -550,6 +553,9 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
             if isinstance(stats, dict) and 'by_type' in stats and 'total_documents' in stats:
                 # Document KB stats has different key structure (by_type + total_documents)
                 output += f"  总文档数: {stats.get('total_documents', 0)}\n"
+                db_size = stats.get('database_size_mb')
+                if db_size is not None:
+                    output += f"  数据库: {db_size:.2f} MB\n"
                 by_type = stats.get('by_type', {})
                 if by_type:
                     output += f"  按类型统计:\n"
@@ -564,7 +570,7 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
             output += f"  文件: {stats.get('total_documents', stats.get('files', 0))}\n"
             output += f"  类: {stats.get('total_classes', stats.get('classes', 0))}\n"
             output += f"  函数: {stats.get('total_functions', stats.get('functions', 0))}\n"
-            output += f"  数据库: {stats.get('database_size_mb', 0)} MB\n"
+            output += f"  数据库: {stats.get('database_size_mb', 0):.2f} MB\n"
             # 文件类型/扩展名分布
             by_ext = stats.get('by_extension', {})
             if by_ext:

@@ -52,13 +52,15 @@ def check_schema_version(cursor, kb_name: str = "unknown") -> bool:
     检查 schema 版本是否匹配。
     返回 True 表示版本匹配或可兼容，False 表示需要重建。
     """
+    import logging
+    logger = logging.getLogger(__name__)
     stored = get_schema_version_from_db(cursor)
     if stored == 0:
-        print(f"[{kb_name}] 知识库无版本信息，假定为旧版 schema (v1)")
+        logger.info(f"[{kb_name}] 知识库无版本信息，假定为旧版 schema (v1)")
         return True  # 旧版兼容处理
     if stored == SCHEMA_VERSION:
         return True  # 版本匹配
-    print(f"[{kb_name}] 知识库 schema 版本不匹配: 当前 v{stored}, 期望 v{SCHEMA_VERSION}，建议重建")
+    logger.warning(f"[{kb_name}] 知识库 schema 版本不匹配: 当前 v{stored}, 期望 v{SCHEMA_VERSION}，建议重建")
     return False
 
 

@@ -131,24 +131,8 @@ class ConfigManager:
                 logger.warning("未配置默认编译器")
             return compiler
 
-    PROJECT_VERSION_MAP = {
-        "19": "Delphi 10.4 Sydney",
-        "18": "Delphi 10.3 Rio",
-        "17": "Delphi 10.2 Tokyo",
-        "16": "Delphi 10.1 Berlin",
-        "15": "Delphi XE10",
-        "14": "Delphi XE9",
-        "13": "Delphi XE8",
-        "12": "Delphi XE7",
-        "11": "Delphi XE6",
-        "10": "Delphi XE5",
-        "9": "Delphi XE4",
-        "8": "Delphi XE3",
-        "7": "Delphi XE2",
-        "21": "Delphi 12 Athens",
-        "22": "Delphi 11 Alexandria",
-        "23": "Delphi 12 Athens",
-    }
+    from src.utils.delphi_versions import PROJECT_VERSION_PREFIX_MAP
+    PROJECT_VERSION_MAP = PROJECT_VERSION_PREFIX_MAP.copy()
 
     def get_compiler_for_project(self, project_version: str, platform: str = "win32") -> Optional[CompilerConfig]:
         """
@@ -481,40 +465,6 @@ class ConfigManager:
         Returns:
             Delphi 版本名称
         """
-        # 从路径中提取版本号
-        import re
-        # 移除末尾的反斜杠
-        delphi_path = delphi_path.rstrip("\\/")
-        match = re.search(r"(\d+\.\d+)$", delphi_path)
-        if not match:
-            return "Delphi Unknown"
-
-        version = match.group(1)
-
-        # 版本号到名称的映射
-        version_map = {
-            "37.0": "Delphi 13 Florence",
-            "23.0": "Delphi 12 Athens",
-            "22.0": "Delphi 11 Alexandria",
-            "21.0": "Delphi 10.4 Sydney",
-            "20.0": "Delphi 10.3 Rio",
-            "19.0": "Delphi 10.2 Tokyo",
-            "18.0": "Delphi 10.1 Berlin",
-            "17.0": "Delphi 10 Seattle",
-            "16.0": "Delphi XE8",
-            "15.0": "Delphi XE7",
-            "14.0": "Delphi XE6",
-            "12.0": "Delphi XE5",
-            "11.0": "Delphi XE4",
-            "10.0": "Delphi XE3",
-            "9.0": "Delphi XE2",
-            "8.0": "Delphi XE",
-            "7.0": "Delphi 2010",
-            "6.0": "Delphi 2009",
-            "5.0": "Delphi 2007",
-            "4.0": "Delphi 2006",
-            "3.0": "Delphi 2005",
-        }
-
-        return version_map.get(version, f"Delphi {version}")
+        from src.utils.delphi_versions import get_version_name_from_path
+        return get_version_name_from_path(delphi_path)
 

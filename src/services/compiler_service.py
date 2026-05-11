@@ -349,9 +349,10 @@ class CompilerService:
         Returns:
             合并后的编译选项
         """
-        # 如果传入的是 .dpr 文件,查找对应的 .dproj 文件
-        if project_path.endswith('.dpr'):
-            dproj_path = project_path.replace('.dpr', '.dproj')
+        # 如果传入的是 .dpr/.dpk 文件,查找对应的 .dproj 文件
+        if project_path.endswith('.dpr') or project_path.endswith('.dpk'):
+            ext = '.dpr' if project_path.endswith('.dpr') else '.dpk'
+            dproj_path = project_path[:-len(ext)] + '.dproj'
             if not Path(dproj_path).exists():
                 logger.info(f"未找到对应的 .dproj 文件: {dproj_path}")
                 return options
@@ -736,8 +737,9 @@ class CompilerService:
                 )
             
             # 3. 确定项目文件(.dproj)
-            if request.project_path.endswith('.dpr'):
-                dproj_path = request.project_path.replace('.dpr', '.dproj')
+            if request.project_path.endswith(('.dpr', '.dpk')):
+                ext = '.dpr' if request.project_path.endswith('.dpr') else '.dpk'
+                dproj_path = request.project_path[:-len(ext)] + '.dproj'
                 if not Path(dproj_path).exists():
                     error_msg = f"未找到对应的 .dproj 文件: {dproj_path}"
                     logger.error(error_msg)
@@ -750,7 +752,7 @@ class CompilerService:
             elif request.project_path.endswith('.dproj'):
                 dproj_path = request.project_path
             else:
-                error_msg = "项目文件必须是 .dpr 或 .dproj 文件"
+                error_msg = "项目文件必须是 .dpr、.dpk 或 .dproj 文件"
                 logger.error(error_msg)
                 return CompileResult(
                     status=CompileStatus.FAILED,
@@ -1014,21 +1016,23 @@ class CompilerService:
         """
         logger.info(f"开始编译工程: {request.project_path}")
 
-        # 检查项目类型
-        is_dpr_only = request.project_path.lower().endswith('.dpr')
+        # 检查项目类型（.dpr/.dpk 可以直编，.dproj 只能 MSBuild）
+        ext = Path(request.project_path).suffix.lower()
+        can_compile_direct = ext in ('.dpr', '.dpk')
+        is_source_file = ext in ('.dpr', '.dpk')
         
         # 检查是否存在 .dproj 文件
         dproj_exists = False
-        if is_dpr_only:
-            dproj_path = request.project_path.replace('.dpr', '.dproj')
+        if is_source_file:
+            dproj_path = request.project_path[:-len(ext)] + '.dproj'
             dproj_exists = Path(dproj_path).exists()
             if not dproj_exists:
-                logger.info(f"未找到 .dproj 文件，将使用 dcc32 直接编译 .dpr 文件")
+                logger.info(f"未找到 .dproj 文件，将使用 dcc32 直接编译{ext} 文件")
         
-        # 如果是 .dpr 文件且没有 .dproj 文件，或者 MSBuild 不可用，使用直接编译
-        if (is_dpr_only and not dproj_exists) or not self.msbuild_path:
-            if is_dpr_only and not dproj_exists:
-                logger.info("使用 dcc32 直接编译 .dpr 文件")
+        # 如果是源码文件且没有 .dproj 文件，或者 MSBuild 不可用，使用直接编译
+        if (is_source_file and not dproj_exists) or not self.msbuild_path:
+            if is_source_file and not dproj_exists:
+                logger.info(f"使用 dcc32 直接编译{ext} 文件")
             else:
                 logger.info("MSBuild 不可用，使用直接编译器调用")
             return await self.compile_dpr_direct(request)
