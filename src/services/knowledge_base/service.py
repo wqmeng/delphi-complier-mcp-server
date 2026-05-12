@@ -131,8 +131,13 @@ class DelphiKnowledgeBaseService:
             return None
 
         if version is None:
-            # 选择最新版本
-            return self.delphi_versions[0]
+            # 选择最新版本（按 version 数值降序）
+            sorted_versions = sorted(
+                self.delphi_versions,
+                key=lambda v: [int(x) for x in v["version"].split(".")],
+                reverse=True
+            )
+            return sorted_versions[0]
 
         # 查找指定版本
         for v in self.delphi_versions:
@@ -256,12 +261,12 @@ class DelphiKnowledgeBaseService:
         return self.kb_instance.search_by_name(name)
 
     def search_by_keyword(self, keyword: str) -> List[Dict]:
-        """根据关键词搜索"""
+        """根据关键词搜索（精确匹配 name_lower）"""
         if not self.load_knowledge_base():
             return []
         
-        results = self.kb_instance.semantic_search(keyword, top_k=10)
-        return [{'name': r['name'], 'type': r['type_name'], 'similarity': r['similarity']} for r in results]
+        results = self.kb_instance.search_by_keyword(keyword)
+        return results
 
     def search_by_unit_name(self, unit_name: str) -> List[Dict]:
         """根据单元名搜索"""
@@ -349,6 +354,18 @@ class DelphiKnowledgeBaseService:
 
             # 获取文件大小
             stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
+
+            # 末次构建信息
+            try:
+                cursor.execute("SELECT value FROM metadata WHERE key='last_build_time'")
+                row = cursor.fetchone()
+                stats["last_build_time"] = row[0] if row else None
+                cursor.execute("SELECT value FROM metadata WHERE key='last_build_duration'")
+                row = cursor.fetchone()
+                stats["last_build_duration"] = int(row[0]) if row else None
+            except Exception:
+                stats["last_build_time"] = None
+                stats["last_build_duration"] = None
 
         finally:
             conn.close()

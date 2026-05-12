@@ -65,6 +65,7 @@ async def analyze_project_dependencies(arguments: Any) -> CallToolResult:
                 delphi_kb = DelphiKnowledgeBaseService()
                 delphi_kb.load_knowledge_base()
                 
+                # SQLiteVectorKnowledgeBase 现在直接提供 search_by_class_name/search_by_function_name
                 kb_thirdparty = thirdparty_kb.kb_instance
                 kb_delphi = delphi_kb.kb_instance
                 

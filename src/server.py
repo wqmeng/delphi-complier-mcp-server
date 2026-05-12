@@ -19,11 +19,6 @@ import io
 os.environ['PYTHONIOENCODING'] = 'utf-8'
 os.environ['PYTHONUTF8'] = '1'
 
-if hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-if hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=False)
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=False)
 
@@ -118,6 +113,93 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
     return None
 
 
+def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
+    """
+    智能提示：根据工具名和返回结果，生成下一步建议。
+
+    Args:
+        name: 工具名
+        result: 工具返回结果（dict 或 CallToolResult）
+        arguments: 调用参数
+
+    Returns:
+        建议文本，无建议时返回 None
+    """
+    if name == "compile_project":
+        proj_path = arguments.get("project_path", "")
+        is_pas = proj_path.lower().endswith('.pas')
+        if isinstance(result, CallToolResult):
+            is_error = result.isError
+        elif isinstance(result, dict):
+            is_error = (
+                result.get('status') == 'failed'
+                or result.get('success') == False
+                or 'error' in result
+            )
+        else:
+            is_error = False
+
+        if is_error:
+            if is_pas:
+                return ("✨ 提示：编译失败。试试：\n"
+                        "  check_environment(action='detect') — 重新检测编译器\n"
+                        "  compile_project(..., get_args_only=True) — 预览编译参数")
+            return ("✨ 提示：编译失败。试试：\n"
+                    "  check_environment(action='detect') — 重新检测编译器\n"
+                    "  check_environment(action='check') — 检查编译环境\n"
+                    "  compile_project(..., get_args_only=True) — 预览编译参数")
+        elif not is_pas and not arguments.get("get_args_only"):
+            return ("✨ 提示：建议用 format_delphi(action='file', file_path=...) "
+                    "统一格式化代码风格")
+
+    elif name == "delphi_kb":
+        action = arguments.get("action", "search")
+        if action == "search":
+            if isinstance(result, dict):
+                results = result.get('results') or result.get('data') or []
+                if isinstance(results, list) and len(results) > 0:
+                    return ("✨ 提示：找到目标后，可用 "
+                            "read_source_file 读取完整源码定义")
+        elif action == "stats":
+            return ("✨ 提示：如果知识库数据过期，"
+                    "可用 delphi_kb(action='build', kb_type='project') 重建")
+
+    elif name == "get_coding_rules":
+        if isinstance(result, dict) and result.get('message'):
+            return ("✨ 提示：获取规则后，可开始编写代码，"
+                    "完成后用 compile_project 编译验证、format_delphi 格式化")
+
+    elif name == "check_environment":
+        action = arguments.get("action", "check")
+        if action == "detect" or action == "check":
+            if isinstance(result, dict):
+                compilers = result.get('compilers') or result.get('data')
+                if compilers and len(compilers) > 0:
+                    return ("✨ 提示：环境已就绪，"
+                            "可用 compile_project 开始编译验证")
+                else:
+                    return ("✨ 提示：未检测到编译器，"
+                            "请检查 Delphi 是否已安装，"
+                            "或用 check_environment(action='detect', search_path=...) 指定自定义路径")
+
+    elif name == "install_package":
+        if isinstance(result, CallToolResult):
+            is_error = result.isError
+        elif isinstance(result, dict):
+            is_error = (
+                result.get('status') == 'failed'
+                or result.get('success') == False
+                or 'error' in result
+            )
+        else:
+            is_error = False
+        if not is_error:
+            return ("✨ 提示：安装完成，"
+                    "可用 list_installed_packages 验证组件已注册到 IDE")
+
+    return None
+
+
 async def run_server():
     """运行 MCP Server"""
     logger.info(f"启动 Delphi MCP Server v{__version__}")
@@ -167,20 +249,17 @@ async def run_server():
         return [
             Tool(
                 name="compile_project",
-                description="【优先级 ⭐⭐⭐】编译/检查 — 必须使用此工具构建 Delphi\n"
-                            "【触发词】编译、构建、生成exe、语法检查、编译报错、编译参数、build、compile、msbuild、dcc32\n"
-                            "【何时用 vs 通用工具】\n"
-                            "  ❌ 禁止：不得用通用 bash/cmd/powershell 运行 dcc32/msbuild，这会绕过 MSBuild 集成、编译事件、依赖解析\n"
-                            "  ✅ 必须：编译 Delphi 项目(.dproj/.dpr/.dpk)或检查 .pas 语法时，必须用此工具\n"
-                            "【为何必须用】自动处理 MSBuild 集成、编译事件、依赖解析、多平台编译、编译器自动检测\n"
-                            "【协作链】写代码前先 get_coding_rules → 按规则写代码 → compile_project 编译验证 → 编译失败时 check_environment 诊断\n"
-                            "【降级策略】MSBuild 不可用时自动降级为 dcc32 直接编译；get_args_only=True 可先预览编译参数再执行\n"
-                            "【参数组合】output_type/runtime_library/optimization_enabled/conditional_defines 等参数仅在编译 .dproj/.dpr 时生效；编译 .pas 文件只检查语法，仅 file_path(通过 project_path 传入)/unit_search_paths/warning_level/disabled_warnings/compiler_version 生效\n"
-                            "【使用示例】\n"
-                            '   compile_project(project_path="path/to/project.dproj")  # 默认Debug+Win32编译\n'
-                            '   compile_project(project_path="path/to/project.dproj", build_configuration="Release", target_platform="win64")\n'
-                            '   compile_project(project_path="path/to/unit.pas")  # 仅语法检查\n'
-                            '   compile_project(project_path="path/to/project.dproj", get_args_only=True)  # 预览参数',
+                description="【优先级 ⭐⭐⭐】编译/检查 — 构建 Delphi\n"
+                            "【触发词】编译、构建、生成exe、语法检查、编译报错、build、compile、msbuild、dcc32\n"
+                            "❌ 不得用 bash/cmd 运行 dcc32/msbuild（绕过 MSBuild/事件/依赖）\n"
+                            "✅ 编译 .dproj/.dpr/.dpk 或检查 .pas 语法必须用此\n"
+                            "【协作链】get_coding_rules→写代码→compile→失败→check_environment\n"
+                            "【降级】MSBuild 不可用→dcc32；get_args_only 预览参数\n"
+                            "【示例】\n"
+                            '   compile_project(build_configuration="Release")  # "编译Release版本"\n'
+                            '   compile_project(target_platform="win64")        # "生成64位exe"\n'
+                            '   compile_project(project_path="unit.pas")        # "检查语法"\n'
+                            '   compile_project(get_args_only=True)             # "只看参数不执行"',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -207,36 +286,21 @@ async def run_server():
             ),
             Tool(
                 name="delphi_kb",
-                description="【优先级 ⭐⭐⭐】知识库搜索/统计/构建 — 所有 Delphi 代码搜索问题的首选工具\n"
-                            "【触发词】搜索Delphi类、查找函数定义、T开头类型、Delphi API、VCL/FMX/RTL、类名、函数签名、接口定义、uses单元、查找引用、代码搜索、怎样用Delphi、Delphi示例\n"
-                            "【何时用 vs 通用工具】\n"
-                            "  ❌ 禁止：不得用通用 grep/read/websearch 搜索 Delphi 代码。通用工具无结构化索引，无法按实体类型过滤，无法跨知识库搜索\n"
-                            "  ✅ 必须：所有 Delphi 代码搜索场景必须用此工具\n"
-                            "【为何必须用】\n"
-                            "  - 预建索引的 Delphi RTL/VCL/FMX 源码知识库（3081文件、17731类、168925函数）\n"
-                            "  - 按实体类型搜索：search_type=class（只搜类）、function（只搜函数+过程）、interface（只搜接口）\n"
-                            "  - 跨知识库搜索：一次调用同时搜索 Delphi 官方源码 + 项目代码 + 第三方组件 + 文档\n"
-                            "  - 引用搜索：search_type=reference 查找某个类型在哪里被使用\n"
-                            "【协作链】先 delphi_kb 搜索定位 → read_source_file 读取具体定义内容\n"
-                            "【降级策略】精确搜索无结果时：1)换相近名称重试 2)用 search_type=fuzzy 模糊搜索 3)用 search_type=semantic 语义搜索；KB 未构建时会自动触发构建\n"
-                            "【参数组合】action=search 必须传 query；action=read 需传 url/doc_id/file_path 之一；action=build 需 kb_type + async_mode=true；search_type=class/function/interface 只查特定实体类型\n"
-                            "【使用示例】\n"
-                            '   delphi_kb(query="TStringList")                     # 搜索所有知识库\n'
-                            '   delphi_kb(query="Create", search_type="function")  # 只搜函数\n'
-                            '   delphi_kb(query="TfrmMain", kb_type="project")    # 仅搜项目知识库\n'
-                            '   delphi_kb(query="form.main", search_type="reference") # 查找引用\n'
-                            '   delphi_kb(action=stats)                            # 看各KB统计\n'
-                            '   delphi_kb(action=build, kb_type=project)           # 构建项目KB\n'
-                            "\n"
-                            "【action 模式】\n"
-                            "  1) action=search（默认）：搜索符号/文档。需'query'参数，'search_type'过滤实体类型，'kb_type'选择知识库范围，'top_k'控制结果数(默认200,最大500)\n"
-                            "  2) action=read：读取文档/源码内容。需'url'/'doc_id'(文档)或'file_path'(源码)，支持offset/limit分页\n"
-                            "  3) action=stats：查看各知识库统计（文件/类/函数数量）。用'kb_type'选择范围\n"
-                            "  4) action=build：构建/重建知识库（耗时操作，必须async_mode=true）。提交后返回task_id，通过async_task查进度\n"
-                            "     - kb_type=document 时不传directory则自动检测最新Delphi帮助目录\n"
-                            "  5) action=scan：扫描目录添加文档（kb_type=document时）。需'directory'参数\n"
-                            "  6) action=web：添加网页文档（kb_type=document时）。需'url'参数\n"
-                            "  7) action=build_embedding：构建/补充embedding向量（需已安装sentence-transformers）",
+                description="【优先级 ⭐⭐⭐】知识库搜索/统计/构建 — 搜 Delphi 代码\n"
+                            "【触发词】搜索Delphi类、查找函数定义、T开头类型、Delphi API、VCL/FMX/RTL、类名、函数签名、接口定义、uses单元、查找引用、代码搜索\n"
+                            "❌ 不得用 grep/read/websearch 搜 Delphi 代码（无结构化索引）\n"
+                            "✅ 所有 Delphi 代码搜索必须用此（预建：3081文件、17731类、168925函数）\n"
+                            "【协作链】delphi_kb→read_source_file\n"
+                            "【降级】精确搜无结果:1)换名 2)fuzzy 3)semantic；KB未构建自动触发\n"
+                            "【首次】先 stats 检查 KB 状态，空则 build\n"
+                            "【示例】\n"
+                            '   delphi_kb(query="TStringList")                    # 搜所有KB\n'
+                            '   delphi_kb(query="TfrmMain", kb_type="project", search_type="class")  # "项目中的TfrmMain"\n'
+                            '   delphi_kb(query="Create", search_type="function")  # "查找Create函数"\n'
+                            '   delphi_kb(query="form.main", search_type="reference")  # "谁用了form.main"\n'
+                            '   delphi_kb(action=stats)                           # KB统计\n'
+                            '   delphi_kb(action=build, kb_type=project)          # 构建项目KB\n'
+                            "【action】search(默认)需query; read需url/doc_id; stats=统计; build(必须async)→async_task轮询; scan/scan目录; web=加网页; build_embedding=建向量",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -273,19 +337,16 @@ async def run_server():
             ),
             Tool(
                 name="read_source_file",
-                description="【优先级 ⭐⭐】读取 Delphi 源码 — 按路径或按类名/函数名定位读取\n"
+                description="【优先级 ⭐⭐】读取 Delphi 源码 — 按路径/类名/函数名定位读\n"
                             "【触发词】读取源码、查看定义、打开文件、看代码、类实现、函数体\n"
-                            "【何时用 vs 通用 read】\n"
-                            "  ❌ 禁止：不得用通用 read 搜索 Delphi 类/函数定义。通用 read 只能按已知路径读取，无法自动定位\n"
-                            "  ✅ 必须：需要读取 Delphi 源文件内容时用此工具\n"
-                            "【为何必须用】1)支持 search_type=class 按类名自动定位并读取 2)支持 search_type=function 按函数名读取 3)支持 search_type=reference 按引用位置读取 4)自动在 Delphi 官方/项目/三方库知识库中查找文件路径\n"
-                            "【协作链】delphi_kb(action=search) 搜索定位 → read_source_file 读取内容\n"
-                            "【降级策略】按 file_path 未找到文件时，自动在知识库中多策略路径匹配（尝试相对路径、大小写不敏感、文件名匹配等）\n"
-                            "【参数组合】search_type=class 必须传 type_name；search_type=function 必须传 function_name；search_type=reference 必须传 file_path + 可选的 type_name/function_name\n"
-                            "【使用示例】\n"
-                            '   read_source_file(file_path="C:\\Project\\Unit1.pas")  # 按路径读取\n'
-                            '   read_source_file(search_type="class", type_name="TButton")  # 搜类名并读取\n'
-                            '   read_source_file(search_type="function", function_name="Create")  # 搜函数并读取',
+                            "❌ 不得用通用 read 搜 Delphi 类/函数定义（只能按已知路径）\n"
+                            "✅ 读 Delphi 源文件用此（自动按类名/函数名/引用定位+KB匹配）\n"
+                            "【协作链】delphi_kb→read_source_file\n"
+                            "【降级】file_path 未找到自动多策略路径匹配\n"
+                            "【示例】\n"
+                            '   read_source_file(search_type="class", type_name="TButton")  # "查看TButton定义"\n'
+                            '   read_source_file(search_type="function", function_name="Create")  # "看Create实现"\n'
+                            '   read_source_file(file_path="Unit1.pas")                  # 按路径读取',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -302,19 +363,16 @@ async def run_server():
             ),
             Tool(
                 name="check_environment",
-                description="【优先级 ⭐⭐】环境诊断 — 首次使用或编译器报\u201c未找到\u201d时先调用此工具\n"
-                            "【触发词】检查环境、编译器找不到、诊断、安装Delphi、检测版本、环境配置、pasfmt安装\n"
-                            "【何时用 vs 通用工具】\n"
-                            "  \u274c 禁止：不得用 bash/generate_terminal 检查环境变量或搜索编译器路径，这不可靠且无法检测注册表\n"
-                            "  \u2705 必须：诊断 Delphi 编译环境时用此工具\n"
-                            "【为何必须用】自动从注册表检测已安装的 Delphi 版本和编译器路径，检测 MSBuild，诊断常见环境问题\n"
-                            "【协作链】编译器未找到 → check_environment(action=detect) 重新检测 → compile_project 重试编译\n"
-                            "【降级策略】注册表检测失败时：1)自动在 Program Files 常见路径搜索 dcc32.exe 2)运行 dcc32 --version 从输出解析版本号 3)以上均失败则使用硬编码默认值\n"
-                            "【使用示例】\n"
-                            '   check_environment(action="check")  # 诊断当前环境\n'
-                            '   check_environment(action="detect")  # 重新检测编译器\n'
-                            '   check_environment(action="install")  # 安装pasfmt格式化工具\n'
-                            "【action】check=诊断当前环境; detect=重新检测编译器; install=安装pasfmt; format_install=安装pasfmt-rad IDE插件",
+                description="【优先级 ⭐⭐】环境诊断 — 编译器\u201c未找到\u201d时先调用\n"
+                            "【触发词】检查环境、编译器找不到、诊断、检测版本、环境配置、pasfmt安装\n"
+                            "❌ 不得用 bash 检查环境变量或搜编译器路径（不可靠）\n"
+                            "✅ 诊断 Delphi 编译环境必须用此（注册表检测+MSBuild+常见问题）\n"
+                            "【协作链】check_environment→compile_project\n"
+                            "【降级】注册表→搜 dcc32.exe→--version 解析→默认值\n"
+                            "【首次】接触 Delphi: check→kb_stats→rules→compile\n"
+                            "【示例】\n"
+                            '   check_environment(action="check")   # 诊断环境\n'
+                            '   check_environment(action="detect")  # 重检测编译器',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -328,17 +386,15 @@ async def run_server():
             ),
             Tool(
                 name="format_delphi",
-                description="【优先级 ⭐⭐】代码格式化 — 格式化 Delphi 源码或检查格式规范\n"
+                description="【优先级 ⭐⭐】代码格式化 — 统一 Delphi 源码风格\n"
                             "【触发词】格式化代码、整理格式、代码风格、pasfmt、自动排版\n"
-                            "【何时用 vs 通用工具】\n"
-                            "  ❌ 禁止：不得手动调整缩进排版（手动排版容易引入不一致，且无法保证项目风格统一）\n"
-                            "  ✅ 必须：需要统一 Delphi 源码格式风格时必须用此工具\n"
-                            "【协作链】修改 Delphi 代码后 → format_delphi 格式化 → compile_project 编译验证\n"
-                            "【使用示例】\n"
+                            "❌ 不得手动调整缩进排版（不一致）\n"
+                            "✅ 统一 Delphi 代码风格必须用此（自动应用项目格式规则）\n"
+                            "【协作链】改代码→format→compile\n"
+                            "【示例】\n"
                             '   format_delphi(action="file", file_path="src/Unit1.pas")  # 格式化文件\n'
-                            '   format_delphi(action="code", code="unit Test;\\ninterface\\n...")  # 格式化代码字符串\n'
-                            '   format_delphi(action="check", file_path="src/Unit1.pas")  # 仅检查不修改\n'
-                            "【action】file=格式化文件; code=格式化代码字符串; check=仅检查不修改; status=检查pasfmt安装状态",
+                            '   format_delphi(action="check", file_path="src/Unit1.pas")  # 仅检查\n'
+                            "【action】file=格式化; code=格式化代码; check=检查; status=检查安装; set_path=设路径",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -356,16 +412,13 @@ async def run_server():
             ),
             Tool(
                 name="async_task",
-                description="【优先级 ⭐⭐】后台任务管理 — 用于查看 delphi_kb(action=build) 提交的异步构建进度\n"
-                            "【触发词】任务进度、构建状态、后台任务、task_id、异步任务、查看进度、构建结果、异步查询\n"
-                            "【何时用】\n"
-                            "  【强制触发】调用 delphi_kb(action=build) 后，必须用此工具轮询进度\n"
-                            "  ✅ 必须：delphi_kb(action=build, async_mode=true) 提交后立即返回 task_id，AI Agent 必须调用此工具轮询直至完成\n"
-                            "【使用示例】\n"
-                            '   async_task(action="status", task_id="task_xxx")  # 查进度（推荐 long_poll_seconds=120）\n'
-                            '   async_task(action="result", task_id="task_xxx")  # 取结果\n'
-                            '   async_task(action="list")  # 列出所有后台任务\n'
-                            "【action】status=查进度(推荐 long_poll_seconds=120 减少轮询); result=取结果; list=列出所有任务; cancel=取消任务",
+                description="【优先级 ⭐⭐】后台任务管理 — 查看 delphi_kb(build) 进度\n"
+                            "【触发词】任务进度、构建状态、后台任务、task_id、异步任务、查看进度、构建结果\n"
+                            "❌ 不得用 delphi_kb(sync) 等（阻塞超时）\n"
+                            "✅ delphi_kb(build) 后必须用此轮询（支持长轮询减少 AI 调用）\n"
+                            "【示例】\n"
+                            '   async_task(action="status", task_id="task_xxx")  # 查进度（推荐 long_poll=30s，MCP 请求通道约 60s 超时）\n'
+                            '   async_task(action="result", task_id="task_xxx")  # 取结果',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -374,23 +427,21 @@ async def run_server():
                         "task_params": {"type": "object", "description": "任务参数: version(Delphi版本), force_rebuild, project_path, exclude_dirs(文档KB时可选，排除多语言子目录如['ja','fr','de']), extensions 等"},
                         "task_id": {"type": "string", "description": "任务ID (action=status/result/cancel时需要)"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
-                        "long_poll_seconds": {"type": "integer", "default": 0, "description": "长轮询秒数（action=status时有效，等待进度变化再返回，默认0即立即返回，推荐120秒减少AI轮询次数）"}
+                        "long_poll_seconds": {"type": "integer", "default": 0, "description": "长轮询秒数（action=status时有效，等待进度变化再返回，默认0即立即返回。注意：MCP 请求通道有超时限制，建议不超过 30 秒，超时后切换短轮询）"}
                     },
                     "required": []
                 }
             ),
             Tool(
                 name="install_package",
-                description="【优先级 ⭐⭐】组件安装 — 编译并安装 Delphi 组件包(.dpk/.dproj/.groupproj)到 IDE\n"
+                description="【优先级 ⭐⭐】组件安装 — 编译安装 Delphi 组件包到 IDE\n"
                             "【触发词】安装组件、安装包、安装控件、注册组件、dpk、bpl、设计期包\n"
-                            "【何时用 vs 通用工具】\n"
-                            "  ❌ 禁止：不得用 compile_project 编译 .dpk 包，这不会注册到 IDE\n"
-                            "  ✅ 必须：需要编译并将 Delphi 组件包安装到 IDE 时使用\n"
-                            "【为何必须用】自动识别设计期包/运行期包，设计期包编译成功后自动注册到 IDE\n"
-                            "【协作链】先 compile_project 纯编译验证代码无错 → install_package 安装到 IDE → list_installed_packages 验证注册成功\n"
-                            "【降级策略】设计期包安装到 IDE 失败时，在返回结果中给出 BPL 文件路径提示手动安装\n"
-                            "【使用示例】\n"
-                            '   install_package(package_path="path/to/package.dpk")  # 编译并安装到IDE',
+                            "❌ 不得用 compile 编译 .dpk（不注册 IDE）\n"
+                            "✅ 编译安装 .dpk/.dproj 必须用此（自动注册设计期包）\n"
+                            "【协作链】compile→install→list_installed\n"
+                            "【降级】安装失败返回 BPL 路径提示手动安装\n"
+                            "【示例】\n"
+                            '   install_package(package_path="path/to/package.dpk")',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -405,10 +456,10 @@ async def run_server():
             ),
             Tool(
                 name="list_installed_packages",
-                description="【优先级 ⭐】已安装包列表 — 列出已注册到 IDE 的 Delphi 组件包\n"
+                description="【优先级 ⭐】已安装包列表 — 查看注册到 IDE 的组件包\n"
                             "【触发词】已安装的包、注册的组件、IDE包列表、bpl列表\n"
-                            "【何时用】查看当前 IDE 中已注册安装的所有 Delphi 组件包\n"
-                            "【协作链】install_package 安装包后 → list_installed_packages 验证注册成功",
+                            "【协作链】install→list_installed 验证\n"
+                            "【示例】list_installed_packages()",
                 inputSchema={
                     "type": "object",
                     "properties": {},
@@ -417,16 +468,15 @@ async def run_server():
             ),
             Tool(
                 name="get_coding_rules",
-                description="【优先级 ⭐⭐⭐】编码规则 — 写 Delphi 代码前必须先调用此工具获取规范\n"
+                description="【优先级 ⭐⭐⭐】编码规则 — 写 Delphi 代码前必须先调用\n"
                             "【触发词】编码规范、命名规则、代码风格、代码规范、编码规则、写代码前\n"
-                            "【何时用 vs 通用猜测】\n"
-                            "  ❌ 禁止：不得凭通用 Delphi 知识猜测项目的编码风格，每个项目可能有自定义规则\n"
-                            "  ✅ 必须：AI Agent 在编写或修改任何 Delphi 代码前，必须调用此工具获取项目级编码规则（命名、格式化、类型声明顺序、修改约束、审核要点）\n"
-                            "【为何必须用】自动合并默认规则 + 项目自定义 CODING_RULES.mdc 规则\n"
-                            "【协作链】get_coding_rules 获取规则 → 按规则写代码 → compile_project 编译验证 → format_delphi 格式化\n"
-                            "【使用示例】\n"
-                            '   get_coding_rules()  # 获取默认编码规则\n'
-                            '   get_coding_rules(project_path="path/to/project.dproj")  # 获取项目自定义规则',
+                            "❌ 不得凭通用知识猜测项目编码风格（每个项目有自定义规则）\n"
+                            "✅ 编写/修改 Delphi 代码前必须调用（默认规则+项目 CODING_RULES.mdc）\n"
+                            "【协作链】rules→写代码→compile→format\n"
+                            "【首次】每次新编码任务前重新获取\n"
+                            "【示例】\n"
+                            '   get_coding_rules()  # 默认\n'
+                            '   get_coding_rules(project_path="path/to/project.dproj")  # 含项目自定义',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -527,7 +577,8 @@ async def run_server():
                                 "max_depth": arguments.get("max_depth", 3),
                                 "domain_filter": arguments.get("domain_filter"),
                                 "url_pattern": arguments.get("url_pattern"),
-                                "exclude_dirs": arguments.get("exclude_dirs")
+                                "exclude_dirs": arguments.get("exclude_dirs"),
+                                "force_rebuild": arguments.get("force_rebuild", False)
                             }
                         elif task_type == "init_project_knowledge_base":
                             from src.tools.knowledge_base import _resolve_project_path
@@ -689,10 +740,28 @@ async def run_server():
             else:
                 raise ValueError(f"未知工具: {name}")
 
+            # ============================================================
+            # P2: 智能提示 — 在工具返回结果中注入下一步建议
+            # ============================================================
+            hint = _get_smart_hint(name, result, arguments)
+            if hint:
+                if isinstance(result, CallToolResult):
+                    if result.content and hasattr(result.content[0], 'text'):
+                        original_text = result.content[0].text
+                        result.content[0].text = original_text + "\n\n" + hint
+                elif isinstance(result, dict):
+                    msg = result.get('message', '')
+                    if isinstance(msg, str):
+                        result['message'] = msg + "\n\n" + hint
+
             # 统一返回格式：确保返回 CallToolResult
             if isinstance(result, dict):
                 text = str(result.get('message', str(result)))
-                is_error = result.get('status') == 'failed' or result.get('success') == False
+                is_error = (
+                    result.get('status') == 'failed'
+                    or result.get('success') == False
+                    or 'error' in result
+                )
                 return CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
             else:
                 return result

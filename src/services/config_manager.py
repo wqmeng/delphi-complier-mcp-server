@@ -25,14 +25,24 @@ logger = get_logger(__name__)
 class ConfigManager:
     """配置管理器"""
 
-    def __init__(self, config_path: str = "config/compilers.json", history_path: str = "config/history.json"):
+    def __init__(self, config_path: Optional[str] = None, history_path: Optional[str] = None):
         """
         初始化配置管理器
 
         Args:
-            config_path: 编译器配置文件路径
-            history_path: 编译历史文件路径
+            config_path: 编译器配置文件路径，默认相对于项目根目录 config/compilers.json
+            history_path: 编译历史文件路径，默认相对于项目根目录 config/history.json
         """
+        if config_path is None:
+            # 相对于本文件位置计算项目根目录，避免 CWD 依赖
+            _default_root = Path(__file__).parent.parent
+            config_path = str(_default_root / "config" / "compilers.json")
+        if history_path is None:
+            if config_path is None:
+                _default_root = Path(__file__).parent.parent
+            else:
+                _default_root = Path(config_path).parent
+            history_path = str(_default_root / "history.json")
         self.config_path = Path(config_path)
         self.history_path = Path(history_path)
         self.config: ConfigFile = self._load_config()

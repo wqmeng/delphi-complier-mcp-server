@@ -479,6 +479,8 @@ class ThirdPartyKnowledgeBase:
                 self.kb_instance.close()
                 self.kb_instance = None
 
+        import time; _build_start = time.time()
+
         # 合并所有路径进行扫描
         all_source_files = []
         all_help_docs = []
@@ -549,7 +551,6 @@ class ThirdPartyKnowledgeBase:
             try:
                 cursor.execute("DELETE FROM files")
                 cursor.execute("DELETE FROM vocabularies")
-                cursor.execute("DELETE FROM vocabulary")
                 cursor.execute("DELETE FROM metadata")
                 conn.commit()
                 logger.info("已清空旧知识库数据")
@@ -572,51 +573,9 @@ class ThirdPartyKnowledgeBase:
                 existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
             logger.info(f"现有文件数: {len(existing_files)}")
         
-        # 确保表存在
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_path TEXT,
-                relative_path TEXT,
-                extension TEXT,
-                size INTEGER,
-                line_count INTEGER,
-                hash TEXT,
-                last_modified TEXT,
-                category TEXT,
-                units_defined TEXT,
-                units_imported TEXT,
-                description TEXT,
-                scan_timestamp REAL,
-                created_at REAL,
-                updated_at REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS vocabularies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT,
-                name TEXT,
-                name_lower TEXT,
-                name_lower_rev TEXT,
-                file_id INTEGER,
-                line INTEGER,
-                base_class TEXT,
-                description TEXT,
-                vector BLOB,
-                vector_status TEXT,
-                attributes TEXT,
-                created_at REAL,
-                updated_at REAL
-            )
-        """)
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at REAL
-            )
-        """)
+        # 使用统一 schema 创建表
+        from src.services.knowledge_base.schema import create_source_tables
+        create_source_tables(cursor)
         
         # 插入源文件
         logger.info("保存源文件到数据库...")
@@ -728,7 +687,23 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     file_id, const.get('line', 0), '', const.get('definition', ''),
                     None, 'pending', None, current_time, current_time
                 ))
-            
+
+            # 插入 vocabularies (单元名 UI)
+            unit_names = file_info.get('units', [])
+            if not unit_names:
+                unit_names = [Path(file_info.get('path', '')).stem]
+            for unit_name in unit_names:
+                if unit_name:
+                    cursor.execute("""
+INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class,
+    description, vector, vector_status, attributes, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        'UI', unit_name, unit_name.lower(), unit_name.lower()[::-1],
+                        file_id, 0, '', f"Unit {unit_name}",
+                        None, 'pending', None, current_time, current_time
+                    ))
+
             if (i + 1) % batch_size == 0:
                 conn.commit()
                 logger.info(f"  已处理 {i+1}/{len(unique_files)} 源文件")
@@ -849,6 +824,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ('total_functions', str(func_count), current_time))
         cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", 
             ('build_time', datetime.now().isoformat(), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
+            ('last_build_time', datetime.now().isoformat(), current_time))
+        cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
+            ('last_build_duration', str(int(time.time() - _build_start)), current_time))
         # 记录 schema 版本号
         from src.services.knowledge_base import set_schema_version_in_db
         set_schema_version_in_db(cursor)
@@ -1109,11 +1088,19 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """)
                 stats["by_extension"] = dict(cursor.fetchall())
 
-            if 'vocabulary' in tables:
-                cursor.execute("SELECT COUNT(*) FROM vocabulary")
-                stats["vocabulary_size"] = cursor.fetchone()[0]
-            
             stats["database_size_mb"] = db_file.stat().st_size / (1024 * 1024)
+
+            # 末次构建信息
+            try:
+                cursor.execute("SELECT value FROM metadata WHERE key='last_build_time'")
+                row = cursor.fetchone()
+                stats["last_build_time"] = row[0] if row else None
+                cursor.execute("SELECT value FROM metadata WHERE key='last_build_duration'")
+                row = cursor.fetchone()
+                stats["last_build_duration"] = int(row[0]) if row else None
+            except Exception:
+                stats["last_build_time"] = None
+                stats["last_build_duration"] = None
 
         finally:
             conn.close()

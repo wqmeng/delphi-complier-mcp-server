@@ -71,7 +71,6 @@ async def build_thirdparty_knowledge_base(arguments: Any) -> CallToolResult:
                             f"- 类数量: {stats.get('classes', 0)}\n"
                             f"- 函数数量: {stats.get('functions', 0)}\n"
                             f"- 文件数量: {stats.get('files', 0)}\n"
-                            f"- 词汇表大小: {stats.get('vocabulary_size', 0)}\n"
                             f"- 数据库大小: {stats.get('database_size_mb', 0):.2f} MB\n\n"
                             f"扫描的第三方库路径:\n" +
                             "\n".join([f"  - {p}" for p in paths[:10]]) +
@@ -301,7 +300,6 @@ async def get_thirdparty_kb_stats(arguments: Any) -> CallToolResult:
         output += f"- 类数量: {stats.get('classes', 0)}\n"
         output += f"- 函数数量: {stats.get('functions', 0)}\n"
         output += f"- 文件数量: {stats.get('files', 0)}\n"
-        output += f"- 词汇表大小: {stats.get('vocabulary_size', 0)}\n"
         output += f"- 数据库大小: {stats.get('database_size_mb', 0):.2f} MB\n"
         output += f"- 第三方库路径数: {stats.get('thirdparty_paths_count', 0)}\n"
         output += f"- Delphi 版本: {stats.get('delphi_version', 'Unknown')}\n"

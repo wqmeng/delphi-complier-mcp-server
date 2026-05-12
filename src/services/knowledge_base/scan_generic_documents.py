@@ -589,7 +589,10 @@ class ChmProcessor(DocumentProcessor):
     def _find_7zip(self) -> Optional[str]:
         if self._sevenzip_path:
             return self._sevenzip_path
-        self._sevenzip_path = self._find_7zip_path()
+        # _find_7zip_path 是 GenericDocumentScanner 的静态方法（同一模块，运行时已加载）
+        import sys
+        _mod = sys.modules[__name__]
+        self._sevenzip_path = _mod.GenericDocumentScanner._find_7zip_path()
         return self._sevenzip_path
 
     def process(self, file_path: Path) -> Optional[List[Dict]]:
@@ -1590,46 +1593,19 @@ class GenericDocumentScanner:
         self._apply_performance_pragmas(conn)
         cursor = conn.cursor()
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS documents (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                path TEXT NOT NULL,
-                full_path TEXT NOT NULL,
-                extension TEXT,
-                title TEXT,
-                title_lower TEXT,
-                title_rev TEXT,
-                content TEXT,
-                content_type TEXT,
-                file_size INTEGER,
-                size INTEGER,
-                line_count INTEGER,
-                hash TEXT,
-                last_modified TEXT,
-                sections TEXT,
-                code_examples TEXT,
-                url TEXT,
-                requires_extraction INTEGER DEFAULT 0
-            )
-        """)
+        # 使用统一 schema 创建文档知识库表
+        from .schema import create_document_tables
+        create_document_tables(cursor)
         
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS document_entities (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id INTEGER NOT NULL,
-                name TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                line INTEGER,
-                definition TEXT,
-                FOREIGN KEY (document_id) REFERENCES documents(id)
-            )
-        """)
-        
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_path ON documents(path)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_documents_hash ON documents(hash)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_entities_name ON document_entities(name)")
-        
+        # Schema 迁移：确保 metadata 表存在（旧库升级）
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='metadata'")
+        if not cursor.fetchone():
+            from .schema import DOCUMENTS_METADATA_TABLE_SQL
+            cursor.execute(DOCUMENTS_METADATA_TABLE_SQL)
+            logger.info("迁移: 创建 metadata 表")
+
         # Schema 迁移：添加 title_lower 和 title_rev 字段
+        # （create_document_tables 已创建这些列，此处保留旧迁移代码兼容旧库升级）
         cursor.execute("PRAGMA table_info(documents)")
         columns = [row[1] for row in cursor.fetchall()]
         
@@ -1675,7 +1651,8 @@ class GenericDocumentScanner:
     
     def scan_directory(self, directory: str, extensions: Optional[List[str]] = None,
                       max_workers: Optional[int] = None,
-                      exclude_dirs: Optional[List[str]] = None) -> Dict:
+                      exclude_dirs: Optional[List[str]] = None,
+                      force_rebuild: bool = False) -> Dict:
         """
         扫描目录中的文档
         
@@ -1684,6 +1661,7 @@ class GenericDocumentScanner:
             extensions: 要处理的文件扩展名列表
             max_workers: 最大工作进程数
             exclude_dirs: 要排除的子目录名列表（默认排除多语言帮助子目录）
+            force_rebuild: 是否强制重建（跳过 mtime 对比，重新处理所有文件）
         
         Returns:
             扫描统计信息
@@ -1794,49 +1772,71 @@ class GenericDocumentScanner:
         conn = sqlite3.connect(str(self.db_path))
         self._apply_performance_pragmas(conn, for_build=True)
         cursor = conn.cursor()
+        import time; _build_start = time.time()
         
-        existing_mtimes = {}
-        try:
-            cursor.execute("SELECT full_path, last_modified FROM documents")
-            for r in cursor.fetchall():
-                existing_mtimes[r[0]] = r[1]
-        except Exception:
-            pass
-        
-        changed = []
-        for fx in all_files:
+        if force_rebuild:
+            # 强制重建：truncate 旧数据，跳过 mtime 对比，全部重新处理
+            logger.info("强制重建：清空旧数据...")
+            cursor.execute("DELETE FROM document_entities")
+            cursor.execute("DELETE FROM documents_fts")
+            cursor.execute("DELETE FROM documents")
+            conn.commit()
+            logger.info("  旧数据已清空")
+            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                ('rebuilding', '1'))
+            conn.commit()
+            changed = list(all_files)
+            skipped = 0
+        else:
+            existing_mtimes = {}
             try:
-                stx = fx.stat()
-                mt = datetime.fromtimestamp(stx.st_mtime).isoformat()
-                if existing_mtimes.get(str(fx)) == mt:
-                    continue
-                changed.append(fx)
+                cursor.execute("SELECT full_path, last_modified FROM documents")
+                for r in cursor.fetchall():
+                    existing_mtimes[r[0]] = r[1]
             except Exception:
-                changed.append(fx)
+                pass
+            
+            changed = []
+            for fx in all_files:
+                try:
+                    stx = fx.stat()
+                    mt = datetime.fromtimestamp(stx.st_mtime).isoformat()
+                    if existing_mtimes.get(str(fx)) == mt:
+                        continue
+                    changed.append(fx)
+                except Exception:
+                    changed.append(fx)
         
         skipped = total_files - len(changed)
         all_files = changed
         
         if not all_files:
+            # 无变更也写入末次构建时间（用时 0 表示增量扫描）
+            try:
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    ('last_build_time', datetime.now().isoformat()))
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    ('last_build_duration', '0'))
+                conn.commit()
+            except Exception:
+                pass
             conn.close()
             return {'total_files': total_files, 'processed': 0, 'failed': 0,
                     'skipped': skipped, 'warnings': warnings, 'install_hints': install_hints}
         
-        for fx in all_files:
-            try:
-                # 先获取要删除的文档ID
-                cursor.execute("SELECT id FROM documents WHERE full_path = ?", (str(fx),))
-                doc_ids = [row[0] for row in cursor.fetchall()]
-                
-                # 删除documents表记录
-                cursor.execute("DELETE FROM documents WHERE full_path = ?", (str(fx),))
-                
-                # 同步删除FTS5索引
-                for doc_id in doc_ids:
-                    cursor.execute("DELETE FROM documents_fts WHERE rowid = ?", (doc_id,))
-            except Exception:
-                pass
-        conn.commit()
+        if not force_rebuild:
+            # 增量模式：逐条删除已变更文件的旧记录
+            for fx in all_files:
+                try:
+                    cursor.execute("SELECT id FROM documents WHERE full_path = ?", (str(fx),))
+                    doc_ids = [row[0] for row in cursor.fetchall()]
+                    cursor.execute("DELETE FROM documents WHERE full_path = ?", (str(fx),))
+                    for doc_id in doc_ids:
+                        cursor.execute("DELETE FROM documents_fts WHERE rowid = ?", (doc_id,))
+                except Exception:
+                    pass
+            conn.commit()
+        # 强制重建模式：数据已在前面 truncate，此处跳过逐行删除
         
         try:
             COMMIT_INTERVAL = 500  # 每处理多少文档提交一次
@@ -1939,13 +1939,25 @@ class GenericDocumentScanner:
                     logger.warning(f"FTS5 索引构建失败（后续查询自动降级）: {e}")
             
         finally:
+            # 记录末次构建信息并清除重建标志
+            try:
+                duration = int(time.time() - _build_start)
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    ('last_build_time', datetime.now().isoformat()))
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    ('last_build_duration', str(duration)))
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+                    ('rebuilding', '0'))
+                conn.commit()
+            except Exception:
+                pass
             # 恢复 synchronous 为非构建模式
             try:
                 conn.execute("PRAGMA synchronous=NORMAL")
             except Exception:
                 pass
             conn.close()
-        
+
         return {
             'total_files': total_files,
             'processed': processed,
@@ -2342,11 +2354,25 @@ class GenericDocumentScanner:
             # 实际数据库文件磁盘大小
             db_size_mb = self.db_path.stat().st_size / (1024 * 1024)
             
+            # 末次构建时间：优先从 metadata 表读取
+            try:
+                cursor.execute("SELECT value FROM metadata WHERE key='last_build_time'")
+                row = cursor.fetchone()
+                last_build = row[0] if row else None
+                cursor.execute("SELECT value FROM metadata WHERE key='last_build_duration'")
+                row = cursor.fetchone()
+                last_build_duration = int(row[0]) if row else None
+            except Exception:
+                last_build = None
+                last_build_duration = None
+
             return {
                 'total_documents': total_documents,
                 'by_type': by_type,
                 'by_extension': by_extension,
                 'database_size_mb': round(db_size_mb, 2),
+                'last_build_time': last_build,
+                'last_build_duration': last_build_duration,
             }
         finally:
             conn.close()

@@ -21,6 +21,10 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 
+from contextlib import contextmanager
+
+
+@contextmanager
 def suppress_logs():
     """临时提升日志级别以抑制 warning/info 输出"""
     logger = logging.getLogger('src.services.knowledge_base')

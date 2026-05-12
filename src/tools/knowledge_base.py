@@ -16,42 +16,63 @@ from mcp.types import CallToolResult
 _delphi_kb_service = None
 _thirdparty_kb_service = None
 
+# 项目知识库缓存 {project_path: ProjectKnowledgeBase instance}
+_pkb_cache = {}
+
+
+def _format_build_info(s: dict) -> str:
+    """格式化末次构建信息"""
+    parts = []
+    bt = s.get('last_build_time')
+    if bt:
+        # ISO 时间取到分钟
+        parts.append(bt[:16].replace('T', ' '))
+    dur = s.get('last_build_duration')
+    if dur is not None:
+        if dur < 60:
+            parts.append(f'{dur}秒')
+        else:
+            parts.append(f'{dur//60}分{dur%60}秒')
+    return f' (末次构建: {", ".join(parts)})' if parts else ''
+
 
 def _append_stats_guide(guide: str, kb_type: str) -> str:
     """向 guide 字符串追加知识库统计信息，返回修改后的字符串"""
     if kb_type in ("all", "delphi") and _delphi_kb_service:
         try:
             s = _delphi_kb_service.get_statistics()
+            bi = _format_build_info(s)
             guide += (
                 f"  Delphi KB:  {s.get('files', 0)} 文件, "
                 f"{s.get('classes', 0)} 类, "
-                f"{s.get('functions', 0)} 函数\n"
+                f"{s.get('functions', 0)} 函数{bi}\n"
             )
         except Exception:
             pass
     if kb_type in ("all", "project"):
         try:
-            from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
             pp = _resolve_project_path(None)
             if pp:
-                pkb = ProjectKnowledgeBase(pp)
+                pkb = _get_or_create_pkb(pp)
                 pkb.load_knowledge_bases()
                 s = pkb.get_statistics()
                 pj = s.get("project") or {}
+                bi = _format_build_info(pj)
                 guide += (
                     f"  Project KB: {pj.get('files', 0)} 文件, "
                     f"{pj.get('classes', 0)} 类, "
-                    f"{pj.get('functions', 0)} 函数\n"
+                    f"{pj.get('functions', 0)} 函数{bi}\n"
                 )
         except Exception:
             pass
     if kb_type in ("all", "thirdparty") and _thirdparty_kb_service:
         try:
             s = _thirdparty_kb_service.get_statistics()
+            bi = _format_build_info(s)
             guide += (
                 f"  Thirdparty: {s.get('files', 0)} 文件, "
                 f"{s.get('classes', 0)} 类, "
-                f"{s.get('functions', 0)} 函数\n"
+                f"{s.get('functions', 0)} 函数{bi}\n"
             )
         except Exception:
             pass
@@ -106,6 +127,15 @@ def set_thirdparty_kb_service(service):
     """设置第三方库知识库服务实例"""
     global _thirdparty_kb_service
     _thirdparty_kb_service = service
+
+
+def _get_or_create_pkb(project_path: str):
+    """获取或创建项目知识库实例（带缓存）"""
+    global _pkb_cache
+    if project_path not in _pkb_cache:
+        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+        _pkb_cache[project_path] = ProjectKnowledgeBase(project_path)
+    return _pkb_cache[project_path]
 
 
 async def search_knowledge(arguments: Any) -> CallToolResult:
@@ -168,7 +198,6 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 elif kb == "project":
                     project_path = _resolve_project_path(arguments.get("project_path"))
                     if project_path:
-                        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
                         try:
                             # 从 .dproj 读取命名空间前缀，用于解析省略前缀的单元引用
                             # 未配置时使用 Delphi 2010+ 默认前缀
@@ -188,17 +217,15 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                                     'Vcl.Imaging', 'Vcl.Touch', 'Vcl.Samples', 'Vcl.Shell',
                                 ]
 
-                            pkb = ProjectKnowledgeBase(project_path)
+                            pkb = _get_or_create_pkb(project_path)
                             pkb.load_knowledge_bases()
                             if pkb.project_kb is None:
-                                # 知识库未构建，自动构建
-                                logger.info(f"项目知识库不存在，自动构建: {project_path}")
-                                try:
-                                    pkb.build_project_knowledge_base(force_rebuild=False)
-                                    pkb.load_knowledge_bases()
-                                except Exception as build_err:
-                                    logger.error(f"自动构建项目知识库失败: {build_err}")
-                            if pkb.project_kb:
+                                results["project_error"] = (
+                                    f"项目知识库未构建。请先执行：\n"
+                                    f"  delphi_kb(action='build', kb_type='project', project_path='{project_path}')\n"
+                                    f"构建完成后再搜索。"
+                                )
+                            else:
                                 refs = pkb.project_kb.search_usages(query, namespace_prefixes=ns_prefixes)
                                 if refs:
                                     results["project_references"] = refs
@@ -245,47 +272,40 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 if not project_path:
                     results["project_error"] = "请提供 project_path 参数（当前目录未自动检测到 .dproj 文件）"
                 else:
-                    from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
                     try:
-                        pkb = ProjectKnowledgeBase(project_path)
+                        pkb = _get_or_create_pkb(project_path)
                         pkb.load_knowledge_bases()
-                        # 如果知识库未构建，自动构建
+                        # 如果知识库未构建，返回提示而非自动构建
                         if pkb.project_kb is None:
-                            logger.info(f"项目知识库不存在，自动构建: {project_path}")
-                            try:
-                                pkb.build_project_knowledge_base(force_rebuild=False)
-                                # 构建后重新加载
-                                pkb.load_knowledge_bases()
-                            except Exception as build_err:
-                                logger.error(f"自动构建项目知识库失败: {build_err}")
-                                results["project_error"] = f"项目知识库未构建且自动构建失败: {build_err}"
-                                continue
+                            results["project_error"] = (
+                                f"项目知识库未构建。请先执行：\n"
+                                f"  delphi_kb(action='build', kb_type='project', project_path='{project_path}')\n"
+                                f"构建完成后再搜索。"
+                            )
+                            continue
                         
-                        if pkb.project_kb:
-                            # 名称搜索（search_by_name 返回与 Delphi KB 相同格式）
-                            project_results = pkb.project_kb.search_by_name(query)
-                            filtered_by_type = _filter_by_search_type(project_results, search_type)
-                            total_before_cut = len(filtered_by_type)
-                            filtered = filtered_by_type[:top_k]
-                            if filtered:
-                                results["project_symbols"] = filtered
-                                results["project_symbols_total"] = total_before_cut
-                            # 语义搜索（直接使用 tuple 格式兼容已有输出逻辑）
-                            if search_type in ("semantic", "all"):
-                                try:
-                                    sc = pkb.project_kb.semantic_search_classes(query, top_k=top_k)
-                                    if sc:
-                                        results["project_semantic_classes"] = sc
-                                except Exception:
-                                    pass
-                                try:
-                                    sf = pkb.project_kb.semantic_search_functions(query, top_k=top_k)
-                                    if sf:
-                                        results["project_semantic_functions"] = sf
-                                except Exception:
-                                    pass
-                        else:
-                            results["project_error"] = "项目知识库未构建，请先构建"
+                        # 名称搜索（search_by_name 返回与 Delphi KB 相同格式）
+                        project_results = pkb.project_kb.search_by_name(query)
+                        filtered_by_type = _filter_by_search_type(project_results, search_type)
+                        total_before_cut = len(filtered_by_type)
+                        filtered = filtered_by_type[:top_k]
+                        if filtered:
+                            results["project_symbols"] = filtered
+                            results["project_symbols_total"] = total_before_cut
+                        # 语义搜索（直接使用 tuple 格式兼容已有输出逻辑）
+                        if search_type in ("semantic", "all"):
+                            try:
+                                sc = pkb.project_kb.semantic_search_classes(query, top_k=top_k)
+                                if sc:
+                                    results["project_semantic_classes"] = sc
+                            except Exception:
+                                pass
+                            try:
+                                sf = pkb.project_kb.semantic_search_functions(query, top_k=top_k)
+                                if sf:
+                                    results["project_semantic_functions"] = sf
+                            except Exception:
+                                pass
                     except Exception as e:
                         results["project_error"] = str(e)
 
@@ -488,15 +508,17 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
     for kb in kb_types:
         try:
             if kb == "delphi" and _delphi_kb_service:
+                # build 前关闭已有连接（SQLiteVectorKnowledgeBase 以 WAL 模式打开，会阻止其他连接）
+                _delphi_kb_service.close()
                 success = _delphi_kb_service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
                 results["delphi"] = "成功" if success else "失败"
             elif kb == "project" and project_path:
-                from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
-                pkb = ProjectKnowledgeBase(project_path)
+                pkb = _get_or_create_pkb(project_path)
                 success = pkb.build_project_knowledge_base(force_rebuild=force_rebuild)
                 pkb.close()
                 results["project"] = "成功" if success else "失败"
             elif kb == "thirdparty" and _thirdparty_kb_service:
+                _thirdparty_kb_service.close()
                 success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
                 results["thirdparty"] = "成功" if success else "失败"
         except Exception as e:
@@ -545,8 +567,7 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                     results["project"] = {"error": "请提供 project_path 参数（当前目录未自动检测到 .dproj 文件）"}
                 else:
                     try:
-                        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
-                        pkb = ProjectKnowledgeBase(project_path)
+                        pkb = _get_or_create_pkb(project_path)
                         ok = pkb.load_knowledge_bases()
                         if not ok or not pkb.project_kb:
                             results["project"] = {"error": "项目知识库加载失败，请先构建或检查 .delphi-kb/knowledge.sqlite 是否存在"}
@@ -569,22 +590,25 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
             server_root = Path(__file__).parent.parent.parent
             db_path = server_root / "data" / "document-knowledge-base" / "documents.sqlite"
             if db_path.exists():
-                conn = sqlite3.connect(str(db_path))
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM documents")
-                total = cursor.fetchone()[0]
-                cursor.execute("SELECT extension, COUNT(*) FROM documents GROUP BY extension ORDER BY COUNT(*) DESC")
-                by_ext = dict(cursor.fetchall())
-                cursor.execute("SELECT content_type, COUNT(*) FROM documents GROUP BY content_type ORDER BY COUNT(*) DESC")
-                by_type = dict(cursor.fetchall())
-                conn.close()
+                with sqlite3.connect(str(db_path)) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT COUNT(*) FROM documents")
+                    total = cursor.fetchone()[0]
+                    cursor.execute("SELECT extension, COUNT(*) FROM documents GROUP BY extension ORDER BY COUNT(*) DESC")
+                    by_ext = dict(cursor.fetchall())
+                    cursor.execute("SELECT content_type, COUNT(*) FROM documents GROUP BY content_type ORDER BY COUNT(*) DESC")
+                    by_type = dict(cursor.fetchall())
                 # 实际数据库文件大小
-                db_size_mb = round(db_path.stat().st_size / (1024 * 1024), 2)
+                db_stat = db_path.stat()
+                db_size_mb = round(db_stat.st_size / (1024 * 1024), 2)
+                from datetime import datetime
+                last_build = datetime.fromtimestamp(db_stat.st_mtime).isoformat()
                 results["document"] = {
                     "total_documents": total,
                     "by_type": by_type,
                     "by_extension": by_ext,
                     "database_size_mb": db_size_mb,
+                    "last_build_time": last_build,
                 }
             else:
                 results["document"] = {"error": f"文档知识库不存在: {db_path}"}
@@ -604,6 +628,9 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
                 db_size = stats.get('database_size_mb')
                 if db_size is not None:
                     output += f"  数据库: {db_size:.2f} MB\n"
+                bt = stats.get('last_build_time')
+                if bt:
+                    output += f"  末次构建: {bt[:16].replace('T', ' ')}\n"
                 by_type = stats.get('by_type', {})
                 if by_type:
                     output += f"  按类型统计:\n"
@@ -619,6 +646,13 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
             output += f"  类: {stats.get('total_classes', stats.get('classes', 0))}\n"
             output += f"  函数: {stats.get('total_functions', stats.get('functions', 0))}\n"
             output += f"  数据库: {stats.get('database_size_mb', 0):.2f} MB\n"
+            bt = stats.get('last_build_time')
+            dur = stats.get('last_build_duration')
+            if bt:
+                output += f"  末次构建: {bt[:16].replace('T', ' ')}"
+                if dur is not None:
+                    output += f" (用时 {dur//60}分{dur%60}秒)" if dur >= 60 else f" (用时 {dur}秒)"
+                output += "\n"
             # 文件类型/扩展名分布
             by_ext = stats.get('by_extension', {})
             if by_ext:

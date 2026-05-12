@@ -136,6 +136,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             domain_filter = kwargs.get("domain_filter")
             url_pattern = kwargs.get("url_pattern")
             exclude_dirs = kwargs.get("exclude_dirs")
+            force_rebuild = kwargs.get("force_rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
             
             server_root = FilePath(__file__).parent.parent.parent
@@ -169,7 +170,8 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             
             # 扫描目录
             if directory:
-                scan_result = scanner.scan_directory(directory, extensions=extensions, exclude_dirs=exclude_dirs)
+                scan_result = scanner.scan_directory(directory, extensions=extensions, exclude_dirs=exclude_dirs,
+                                                     force_rebuild=force_rebuild)
                 results["scan"] = scan_result
             
             return results
@@ -236,7 +238,7 @@ async def get_task_status(arguments: Any) -> CallToolResult:
     Args:
         arguments: 包含以下参数:
             - task_id: 任务ID (必需)
-            - long_poll_seconds: 长轮询等待秒数（可选，默认0即立即返回）
+            - long_poll_seconds: 长轮询等待秒数（可选，默认0即立即返回。MCP请求通道有超时限制，建议≤30秒，超时改用短轮询）
 
     Returns:
         任务状态信息

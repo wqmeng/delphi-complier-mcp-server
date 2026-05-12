@@ -434,21 +434,244 @@ graph TD
 | 三方组件 | `thirdparty` | 共享三方库知识库 |
 | 全部 | `all`（默认） | 同时搜三个库，结果最多
 
+### Knowledge Base Schema (Current)
+
+All knowledge bases (Delphi/project/thirdparty) use the **same unified schema** via `SmartCacheKnowledgeBase`:
+
+```
+files 表（统一文件索引）
+├── id              INTEGER PRIMARY KEY
+├── full_path       TEXT UNIQUE           ← 去重键
+├── relative_path   TEXT
+├── extension       TEXT
+├── size/line_count/hash/last_modified
+├── units_defined   TEXT                  ← 该文件定义的所有单元名（逗号分隔）
+├── units_imported  TEXT                  ← 该文件 uses 的所有单元名（逗号分隔）
+└── ...
+
+vocabularies 表（统一实体索引——替代废弃的 classes/functions 分表）
+├── id              INTEGER PRIMARY KEY
+├── type            TEXT NOT NULL         ← 两字母 kind code: TC/TR/TI/TE/TS/TY/FF/FP/CC/CR
+├── name            TEXT NOT NULL
+├── name_lower      TEXT NOT NULL
+├── name_lower_rev  TEXT                  ← 反转字符串，用于反转索引（前缀搜索加速）
+├── file_id         INTEGER              ← FK → files(id)
+├── line            INTEGER
+├── base_class      TEXT                  ← 仅类型（class/record/interface）有
+├── description     TEXT
+├── vector          BLOB                 ← 稀疏向量（TF-IDF），按需构建
+├── vector_status   TEXT DEFAULT 'pending'
+└── ...
+
+vocabulary 表（已废弃——原 TF-IDF 词表，已被 SQLite FTS5 替代。保留以兼容旧库读取）
+├── id              INTEGER PRIMARY KEY
+├── word            TEXT UNIQUE
+├── idf_weight      REAL
+└── ...
+【v2026.05.12 起从建表代码中移除，旧库升级时自动清理此表】
+
+metadata 表（key-value 格式）
+├── key             TEXT PRIMARY KEY
+├── value           TEXT
+└── ...
+```
+
+**注意**：
+- `vocabularies`（复数）= 实体表，存所有类/函数/常量等；`vocabulary`（单数）= 词表，存 TF-IDF 词频
+- 所有类型统一存储在 `vocabularies` 表，不再拆分 `classes`/`functions`/`constants` 等分表
+- `SQLiteVectorKnowledgeBase._create_tables()` 中的 `classes`/`functions` 表是**废弃 schema**，`SQLiteVectorKnowledgeBase` 只用于查询已建好的库，不负责建表
+- 建表由 `SmartCacheKnowledgeBase._create_tables()` 或 `ProjectKnowledgeBase._create_*_tables()` 完成
+
 ### Kind Constants
 
-Use two-letter codes defined in `scan_delphi_sources.py`:
+Use two-letter codes defined in `scan_delphi_sources.py`, stored in `vocabularies.type`:
 
 ```python
 KIND_CLASS = 'TC'      # class
-KIND_RECORD = 'TR'    # record
-KIND_INTERFACE = 'TI' # interface
+KIND_RECORD = 'TR'     # record
+KIND_INTERFACE = 'TI'  # interface
 KIND_ENUM = 'TE'       # enum
 KIND_SET = 'TS'        # set of
 KIND_TYPE = 'TY'       # type alias
+KIND_HELPER = 'TH'     # class/record helper
 KIND_FUNC = 'FF'       # function
-KIND_PROC = 'FP'      # procedure
-KIND_CONST = 'CC'     # const
-KIND_RESOURCE = 'CR'  # resourcestring
+KIND_PROC = 'FP'       # procedure
+KIND_CONST = 'CC'      # const
+KIND_RESOURCE = 'CR'   # resourcestring
+```
+
+---
+
+## Agent 自身操作规范
+
+### 1. 避免 `python -c` 内联脚本——始终写文件
+
+**典型场景**：用 `bash` 工具执行 `python -c "..."` 测试逻辑。
+
+**问题**：
+- PowerShell 对引号的处理与 cmd/Linux 完全不同。双引号内的 `$`、`\`、`"` 等字符会被 PowerShell 拦截
+- Python f-string 中的 `{x["key"]}` 含有双引号，在 PowerShell 中极难正确转义
+- 嵌套引号（`'` 内套 `"` 内套 `'`）几乎必然出错
+
+**案例**：本次调试中数十次 `SyntaxError: unterminated string literal`，全部来自 `python -c "..."` 方式。
+
+**原则**：
+- ✅ **始终用 `write` 工具创建 `.py` 文件，然后用 `bash` 执行 `python script.py`**
+- ❌ 绝不用 `python -c "..."` 或 `python -c '...'` 内联方式
+- 脚本用完后用 `Remove-Item script.py` 清理
+
+### 2. 字符串模板用 `.format()` 而非 f-string 混合引号
+
+**典型场景**：f-string 内嵌字典访问 `f'{d["key"]}'`。
+
+**问题**：f-string 内的引号与外部引号冲突，尤其在 SQL 语句中。
+
+**原则**：
+- 含字典/列表访问的字符串用 `.format()` 或 `%` 格式化
+- SQL 查询中的表名列名用变量替代，值用参数化查询
+- f-string 只用于简单变量拼接：`f"文件: {name}"`
+
+### 3. 测试时避免内联，使用独立脚本
+
+**典型场景**：验证某个函数行为时，用 `python -c "import ...; print(...)"`。
+
+**原则**：
+- ✅ 写独立脚本 → 执行 → 清理
+- 脚本文件名前缀 `test_` 便于识别
+- 复杂测试直接放到 `tests/` 目录下
+
+以下是从实战调试中总结的经验，帮助 AI Agent（包括你自己）在排查问题时减少试错。
+
+### 1. 表结构变更 → 全面清理残留引用
+
+**典型场景**：删除一个表或列后，代码中仍有 DELETE/INSERT/SELECT 引用。
+
+**案例**：`vocabulary`（单数）表从 `_create_tables()` 移除后，`_rebuild_init` 中尚有 `DELETE FROM vocabulary`，`_build_vocabulary_table` 中尚有 `INSERT INTO vocabulary`，`get_statistics` 中尚有 `SELECT COUNT(*) FROM vocabulary`。三处全部漏删，运行时崩溃。
+
+**原则**：
+- 修改 `_create_tables` 后，必须 `grep` 全项目搜索旧表名/列名的**所有引用**（INSERT/DELETE/SELECT/ALTER）
+- 不只是 DDL 语句，所有的 DML 语句也要查
+- 测试要覆盖「全新 DB 创建」和「旧 DB 升级」两个路径
+
+### 2. Python 局部变量作用域陷阱：`from X import Y` 放在循环内
+
+**典型场景**：在函数内部的 `for`/`if` 块中局部 import。
+
+**案例**：
+```python
+# BUG: Path 在循环内被 import，Python 视其为整个函数局部变量
+def build_thirdparty_knowledge_base(self, ...):
+    for path in thirdparty_paths:
+        try:
+            source_dir = Path(path)   # ❌ UnboundLocalError: 局部 Path 尚未赋值
+            ...
+        except Exception as e:
+            pass
+    ...
+    for file_info in all_files:
+        ...
+        if not unit_names:
+            from pathlib import Path   # ← 这个局部 import 导致上面的 Path 调用失败
+            unit_names = [Path(file_info.get('path', '')).stem]
+```
+
+**原则**：
+- Python 中**同一函数内任何地方**出现 `from X import Y`，都会使 `Y` 在整个函数范围内成为局部变量
+- 如果该 `import` 在函数尾部的一个分支里，函数头部引用 `Y` 时会 `UnboundLocalError`
+- ✅ 始终将 `import` 放在文件顶部，不要在函数内局部 import（除非有充分理由）
+- 如果必须局部 import，也要放在函数最前面，不可放在分支内部
+
+### 3. 多处冗余 DDL → 统一为共享 schema 模块
+
+**典型场景**：3+ 个地方各自 `CREATE TABLE`，列定义、约束、默认值不完全一致。
+
+**案例**：SmartCache、ProjectKB（2 处）、ThirdPartyKB 各自有 `CREATE TABLE files (...)`，有些用 `full_path TEXT`（无约束），有些用 `full_path TEXT UNIQUE NOT NULL`，有些列有 `DEFAULT` 有些没有。
+
+**原则**：
+- 所有建表语句集中到 `schema.py`，各 builder 调用 `create_source_tables()` / `create_document_tables()`
+- `CREATE TABLE IF NOT EXISTS` 虽然不会重复建表，但**不保证列约束一致**
+- grep 全项目 `CREATE TABLE` 确认没有漏网之鱼
+- 索引（`CREATE INDEX`）也统一管理，不要散落在各处
+
+### 4. 跨类方法访问：确认方法属于哪个类
+
+**典型场景**：A 类调用 B 类的 `@staticmethod`，代码审查时只看了方法名没看属于哪个类。
+
+**案例**：`ChmProcessor._find_7zip()` 调用 `self._find_7zip_path()`，但 `_find_7zip_path` 是 `GenericDocumentScanner` 的静态方法，不属于 `ChmProcessor` → `AttributeError` → 所有 CHM 文件提取失败 → 160328 个文档消失。
+
+**原则**：
+- 调用 `self.some_method()` 时，确认该方法**在当前类或父类中确实存在**
+- 对于大文件（2000+ 行），跨类引用很容易漏检
+- 静态方法用 `ClassName.method()` 调用更清晰，避免 `self.method()` 歧义
+
+### 5. WAL 模式 vs DELETE 模式冲突导致 locked
+
+**典型场景**：多个组件打开同一 SQLite 文件，一个用 WAL 其他尝试切到 DELETE。
+
+**案例**：SQLiteVectorKnowledgeBase 用 `PRAGMA journal_mode=WAL` 打开 DB → 创建 `.shm` 文件。SmartCache 启动时执行 `PRAGMA journal_mode=DELETE` → 需要 checkpoint WAL → 要求独占锁 → 被 SQLiteVectorKnowledgeBase 占用 → `database is locked`。
+
+**原则**：
+- 同一 DB 文件的所有连接应使用**相同的 journal 模式**
+- 切换 `journal_mode` 需要独占锁，运行中有其他连接时必然失败
+- 本项目统一使用 WAL 模式即可：写入性能好，读不阻塞写
+
+### 6. Python `if dur:` 与 `if dur is not None:` 的区别
+
+**典型场景**：用 `if x:` 判断是否有值，但 `x=0` 是合法值。
+
+**案例**：文档 KB 强制重建无变更时 `last_build_duration = 0`，展示代码用 `if dur:` 判断，0 被当作 False → 用时未显示。
+
+**原则**：
+- `if x:` 对 `0`、`0.0`、`""`、`[]`、`None` 都是 False
+- 如果 0 是合法值，用 `if x is not None:` 判断
+- 数字类型的可选参数使用 `Optional[int]` 类型标注提醒自己
+
+### 7. 构建元数据：末次构建时间 + 用时统一记录
+
+**典型场景**：构建完成后不知道上一次构建时间、耗时。
+
+**修复**：
+- 所有 KB 的 metadata 表记录 `last_build_time` 和 `last_build_duration`
+- 构建开始时记录 `rebuilding=1`，结束时清除
+- 强制重建时先 truncate 后 INSERT（不要逐行 DELETE + INSERT）
+
+### 8. MCP 长轮询超时问题
+
+**典型场景**：`long_poll_seconds=120` 结果返回 `MCP error -32001`。
+
+**原理**：MCP 协议本身的请求通道有约 60 秒超时限制。长轮询虽然内部能等 120 秒，但 MCP 传输层先断掉。
+
+**原则**：
+- 长轮询推荐值 ≤ 30 秒
+- 超时后切换为短轮询（不带 `long_poll_seconds` 直接调 `status`）
+- 工具描述中标注超时限制，误导推荐值（如原 `推荐 long_poll=120s` 需要修正）
+
+### 9. 删除旧数据的方式：truncate vs 逐行 DELETE
+
+**场景**：强制重建时需清空 16 万条数据。
+
+| 方式 | 代码 | 操作次数 |
+|------|------|---------|
+| ❌ 逐行 | `DELETE FROM doc WHERE full_path=?` per file | 160328 |
+| ✅ truncate | `DELETE FROM documents`（SQLite 自动优化） | 1 |
+
+SQLite 的 `DELETE FROM table` 无 WHERE 子句时会自动做 truncate 优化（直接重置 B-Tree），不必用 `TRUNCATE TABLE` 语法。
+
+### 10. 重构流程 checklist
+
+当需要做类似的大规模重构时：
+
+```
+[ ] 1. 找到所有重复 DDL 统一为 schema 模块
+[ ] 2. grep 旧表名/列名的所有 CRUD 引用
+[ ] 3. 删除废弃方法后验证无外部调用
+[ ] 4. 检查同一个函数内有局部 import 导致的作用域问题
+[ ] 5. 同一 SQLite 文件的 journal 模式保持一致
+[ ] 6. 0 值判定用 is not None 而非 if x:
+[ ] 7. 构建结束时记录 metadata（时间+用时+状态）
+[ ] 8. 强制重建用 truncate 而非逐行 DELETE
+[ ] 9. 全量测试（pytest）+ 手动触发各 KB 构建验证
+[ ] 10. MCP 工具的超时说明要准确
 ```
 
 

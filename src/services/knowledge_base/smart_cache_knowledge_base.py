@@ -11,50 +11,16 @@
 import json
 import os
 import sqlite3
-import math
-import struct
-import threading
-import time
 import re
 import hashlib
 import logging
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
-from collections import Counter, OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
-
-
-class LRUCache:
-    """LRU缓存实现"""
-    
-    def __init__(self, maxsize: int = 10000):
-        self.maxsize = maxsize
-        self.cache: OrderedDict = OrderedDict()
-    
-    def get(self, key: int) -> Optional[Dict]:
-        if key in self.cache:
-            # 移到最后（最近使用）
-            self.cache.move_to_end(key)
-            return self.cache[key]
-        return None
-    
-    def set(self, key: int, value: Dict):
-        if key in self.cache:
-            self.cache.move_to_end(key)
-        else:
-            if len(self.cache) >= self.maxsize:
-                # 删除最旧的
-                self.cache.popitem(last=False)
-        self.cache[key] = value
-    
-    def __contains__(self, key: int) -> bool:
-        return key in self.cache
-    
-    def __len__(self) -> int:
-        return len(self.cache)
 
 
 class SourcePathResolver:
@@ -156,24 +122,9 @@ class SmartCacheKnowledgeBase:
         self.db_path = self.kb_dir / self.config['database']['file']
         self._init_database()
         
-        # 向量缓存（LRU）
-        cache_size = self.config['database'].get('cache_size', 10000)
-        self._vector_cache = LRUCache(maxsize=cache_size)
-        
-        # 词汇表
-        self.vocabulary: Dict[str, int] = {}
-        self.idf_weights: Dict[str, float] = {}
-        
-        # 构建状态
-        self._building = False
-        self._build_thread: Optional[threading.Thread] = None
-        
         # 源码路径解析器
         self.path_resolver = SourcePathResolver(self.kb_dir, self.config)
         
-        # 加载词汇表
-        self._load_vocabulary()
-    
     def _load_config(self) -> Dict:
         """加载配置文件"""
         config_path = self.kb_dir / "config.json"
@@ -200,10 +151,11 @@ class SmartCacheKnowledgeBase:
         # 性能优化
         if use_wal:
             conn.execute("PRAGMA journal_mode=WAL")      # 构建时用WAL，提升写入性能
-            conn.execute("PRAGMA synchronous=NORMAL")
         else:
-            conn.execute("PRAGMA journal_mode=DELETE")   # 查询时用DELETE，不留.wal文件
-            conn.execute("PRAGMA synchronous=NORMAL")
+            # 不切 journal_mode（不尝试 DELETE），避免与已有 WAL 连接冲突
+            # 其他组件（SQLiteVectorKnowledgeBase）已用 WAL 模式打开 DB
+            pass
+        conn.execute("PRAGMA synchronous=NORMAL")
         
         conn.execute("PRAGMA cache_size=-200000")       # ~200MB 缓存
         conn.execute("PRAGMA temp_store=MEMORY")
@@ -213,236 +165,30 @@ class SmartCacheKnowledgeBase:
         return conn
     
     def _init_database(self):
-        """初始化数据库"""
-        # 确保目录存在
+        """初始化数据库——使用统一 schema（使用 WAL 模式避免与已有连接冲突）"""
         self.kb_dir.mkdir(parents=True, exist_ok=True)
         
-        conn = self._get_connection()
+        conn = self._get_connection(use_wal=True)
         cursor = conn.cursor()
         
-        # 创建表结构
-        self._create_tables(cursor)
-        conn.commit()
-        conn.close()
-    
-    def _create_tables(self, cursor):
-        """创建数据库表"""
-        # 检测旧schema并删除旧表(force_rebuild时由调用方处理)
+        # 检测旧 schema：files 表无 relative_path 列视为超旧版，重建
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='files'")
         if cursor.fetchone():
             cursor.execute("PRAGMA table_info(files)")
-            files_columns = [row[1] for row in cursor.fetchall()]
-            if 'relative_path' not in files_columns:
-                cursor.execute("DROP TABLE IF EXISTS build_queue")
-                cursor.execute("DROP TABLE IF EXISTS vocabularies")
-                cursor.execute("DROP TABLE IF EXISTS vocabulary")
-                cursor.execute("DROP TABLE IF EXISTS metadata")
-                cursor.execute("DROP TABLE IF EXISTS files")
+            files_cols = {row[1] for row in cursor.fetchall()}
+            if 'relative_path' not in files_cols:
+                from .schema import drop_source_tables
+                drop_source_tables(cursor)
         
-        # files表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_path TEXT UNIQUE NOT NULL,
-                relative_path TEXT,
-                extension TEXT,
-                size INTEGER,
-                line_count INTEGER,
-                hash TEXT,
-                last_modified TEXT,
-                category TEXT,
-                units_defined TEXT,
-                units_imported TEXT,
-                description TEXT,
-                scan_timestamp REAL,
-                created_at REAL DEFAULT (julianday('now')),
-                updated_at REAL DEFAULT (julianday('now'))
-            )
-        """)
+        # 使用统一 schema
+        from .schema import create_source_tables
+        create_source_tables(cursor)
         
-        # vocabularies表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS vocabularies (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                type TEXT NOT NULL,
-                name TEXT NOT NULL,
-                name_lower TEXT NOT NULL,
-                name_lower_rev TEXT,
-                file_id INTEGER,
-                line INTEGER,
-                base_class TEXT,
-                description TEXT,
-                vector BLOB,
-                vector_status TEXT DEFAULT 'pending',
-                attributes TEXT,
-                created_at REAL DEFAULT (julianday('now')),
-                updated_at REAL DEFAULT (julianday('now')),
-                FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # vocabulary表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS vocabulary (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                word TEXT UNIQUE NOT NULL,
-                idf_weight REAL,
-                document_frequency INTEGER,
-                is_stopword INTEGER DEFAULT 0,
-                created_at REAL DEFAULT (julianday('now'))
-            )
-        """)
-        
-        # metadata表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at REAL DEFAULT (julianday('now'))
-            )
-        """)
-        
-        # build_queue表
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS build_queue (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                item_id INTEGER NOT NULL,
-                item_type TEXT NOT NULL,
-                priority INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'pending',
-                retry_count INTEGER DEFAULT 0,
-                error_message TEXT,
-                created_at REAL DEFAULT (julianday('now')),
-                processed_at REAL,
-                FOREIGN KEY (item_id) REFERENCES vocabularies(id) ON DELETE CASCADE
-            )
-        """)
-        
-        # 创建索引
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_path ON files(relative_path)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_extension ON files(extension)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_files_category ON files(category)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_type ON vocabularies(type)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name ON vocabularies(name)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name_lower ON vocabularies(name_lower)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_name_lower_rev ON vocabularies(name_lower_rev)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_file_id ON vocabularies(file_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabularies_vector_status ON vocabularies(vector_status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_vocabulary_word ON vocabulary(word)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_build_queue_status ON build_queue(status)")
-    
-    def _load_vocabulary(self):
-        """加载词汇表"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("SELECT id, word, idf_weight FROM vocabulary")
-            for row in cursor.fetchall():
-                self.vocabulary[row['word']] = row['id']
-                self.idf_weights[row['word']] = row['idf_weight']
-        except Exception:
-            pass
-        finally:
-            conn.close()
-    
-    def tokenize(self, text: str) -> List[str]:
-        """分词函数 - 支持驼峰命名和蛇形命名"""
-        if not text:
-            return []
-        
-        # 处理驼峰命名
-        text = re.sub(r'(?<!^)(?=[A-Z])', ' ', text)
-        # 替换下划线为空格
-        text = text.replace('_', ' ')
-        # 转换为小写
-        text = text.lower()
-        # 提取单词
-        words = re.findall(r'[a-z]+', text)
-        
-        # 停用词
-        stop_words = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been',
-                      'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
-                      'would', 'could', 'should', 'may', 'might', 'must', 'shall',
-                      'can', 'need', 'dare', 'ought', 'used', 'to', 'of', 'in',
-                      'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into',
-                      'through', 'during', 'before', 'after', 'above', 'below',
-                      'between', 'under', 'and', 'but', 'or', 'yet', 'so'}
-        
-        return [w for w in words if len(w) > 2 and w not in stop_words]
-    
-    def text_to_vector(self, text: str) -> Dict[int, float]:
-        """将文本转换为TF-IDF稀疏向量"""
-        words = self.tokenize(text)
-        if not words:
-            return {}
-        
-        word_freq = Counter(words)
-        vector = {}
-        
-        for word, freq in word_freq.items():
-            if word in self.vocabulary:
-                tf = freq / len(words)
-                idf = self.idf_weights.get(word, 1.0)
-                vector[self.vocabulary[word]] = tf * idf
-        
-        return vector
-    
-    def _pack_vector(self, vec: Dict[int, float]) -> bytes:
-        """打包向量为二进制格式"""
-        if not vec:
-            return struct.pack('I', 0)
-        
-        items = sorted(vec.items())
-        count = len(items)
-        packed = struct.pack('I', count)
-        for word_id, weight in items:
-            packed += struct.pack('If', word_id, weight)
-        return packed
-    
-    def _unpack_vector(self, data: bytes) -> Dict[int, float]:
-        """解包稀疏向量"""
-        if not data or len(data) < 4:
-            return {}
-        
-        count = struct.unpack('I', data[:4])[0]
-        if count == 0:
-            return {}
-        
-        vec = {}
-        offset = 4
-        for _ in range(count):
-            word_id, weight = struct.unpack('If', data[offset:offset+8])
-            vec[word_id] = weight
-            offset += 8
-        return vec
-    
-    def _cosine_similarity(self, vec1: Dict[int, float], vec2: Dict[int, float]) -> float:
-        """计算余弦相似度"""
-        # 点积
-        dot_product = sum(vec1[k] * vec2[k] for k in vec1 if k in vec2)
-        
-        # 范数
-        norm1 = math.sqrt(sum(v * v for v in vec1.values()))
-        norm2 = math.sqrt(sum(v * v for v in vec2.values()))
-        
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-        
-        return dot_product / (norm1 * norm2)
+        conn.commit()
+        conn.close()
     
     def rebuild_async(self, incremental: bool = False, source_paths: Optional[List[str]] = None):
-        """异步重建知识库
-        
-        Args:
-            incremental: 是否增量构建(跳过未变化的文件)
-            source_paths: 外部指定的源码路径列表(为None时使用config中的路径)
-        """
-        if self._building:
-            logger.info("构建已在进行中...")
-            return
-        
-        # 获取源码路径
+        """同步重建知识库（TF-IDF 已废弃，仅执行实体扫描入库）"""
         if source_paths is not None:
             from pathlib import Path
             resolved_paths = [Path(p) for p in source_paths]
@@ -450,29 +196,34 @@ class SmartCacheKnowledgeBase:
             resolved_paths = self.path_resolver.get_source_paths()
         logger.info(f"源码路径: {[str(p) for p in resolved_paths]}")
         
-        # 阶段1：初始化（同步）
-        logger.info("\n阶段1：初始化...")
-        self._rebuild_init(resolved_paths, incremental=incremental)
+        import time
+        _start = time.time()
+        logger.info("阶段1：初始化...")
+        self._rebuild_init(resolved_paths, incremental=incremental, build_start_time=_start)
         
-        # 阶段2：启动异步构建
-        logger.info("\n阶段2：启动异步向量构建...")
-        self._start_async_build(self.progress_callback)
-        
-        logger.info("\n知识库已可用，向量正在后台构建中...")
+        logger.info("知识库构建完成")
     
     @staticmethod
-    def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict]]:
-        """静态方法：解析Delphi源文件（用于多进程）- 复用 _extract_all_entities"""
+    def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict], int, List[str]]:
+        """静态方法：解析Delphi源文件（用于多进程）
+        
+        Returns:
+            (file_path_str, items, line_count, uses_list)
+        """
         import re
         from pathlib import Path
-        from src.services.knowledge_base.scan_delphi_sources import _extract_all_entities
+        from src.services.knowledge_base.scan_delphi_sources import _extract_all_entities, _extract_uses
         
         file_path = Path(file_path_str)
         items = []
+        line_count = 0
+        uses_list = []
         
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
+            line_count = content.count('\n') + 1
+            uses_list = _extract_uses(content)
             
             # 核心实体复用 _extract_all_entities
             entities = _extract_all_entities(content)
@@ -716,119 +467,23 @@ class SmartCacheKnowledgeBase:
         except Exception as e:
             pass
         
-        return (file_path_str, items)
+        return (file_path_str, items, line_count, uses_list)
     
-    @staticmethod
-    def _compute_vector_static(item: tuple, vocab: dict, idf_weights: dict) -> tuple:
-        """静态方法：计算TF-IDF向量（用于多进程）"""
-        import re
-        from collections import Counter
-        import struct
-        
-        item_id, description = item
-        
-        # 本地tokenize（避免pickle问题）
-        def tokenize(text):
-            text = re.sub(r'(?<!^)(?=[A-Z])', ' ', text)
-            text = text.replace('_', ' ')
-            words = re.findall(r'[a-z]+', text.lower())
-            stop_words = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been',
-                          'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
-                          'would', 'could', 'should', 'may', 'might', 'must', 'shall',
-                          'can', 'need', 'dare', 'ought', 'used', 'to', 'of', 'in',
-                          'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into',
-                          'through', 'during', 'before', 'after', 'above', 'below',
-                          'between', 'under', 'and', 'but', 'or', 'yet', 'so'}
-            return [w for w in words if len(w) > 2 and w not in stop_words]
-        
-        words = tokenize(description)
-        if not words:
-            return (item_id, struct.pack('I', 0))
-        
-        word_freq = Counter(words)
-        vector = {}
-        for word, freq in word_freq.items():
-            if word in vocab:
-                tf = freq / len(words)
-                idf = idf_weights.get(word, 1.0)
-                vector[vocab[word]] = tf * idf
-        
-        # 打包为二进制格式
-        if not vector:
-            packed = struct.pack('I', 0)
-        else:
-            items_sorted = sorted(vector.items())
-            count = len(items_sorted)
-            packed = struct.pack('I', count)
-            for word_id, weight in items_sorted:
-                packed += struct.pack('If', word_id, weight)
-        
-        return (item_id, packed)
+
     
-    def _parse_delphi_file(self, file_path: Path) -> List[Dict]:
-        """解析Delphi源文件，提取类、函数等"""
-        items = []
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
-            # 提取类定义
-            class_pattern = r'(T[A-Z][a-zA-Z0-9]*)\s*=\s*class\s*\(([^)]+)\)'
-            for match in re.finditer(class_pattern, content):
-                class_name = match.group(1)
-                base_class = match.group(2)
-                # 找到类定义的行号
-                line_num = content[:match.start()].count('\n') + 1
-                
-                items.append({
-                    'type': 'TC',  # class
-                    'name': class_name,
-                    'line': line_num,
-                    'base_class': base_class,
-                    'description': f"Class {class_name} inherits from {base_class}"
-                })
-            
-            # 提取函数/过程定义
-            func_pattern = r'(procedure|function)\s+([A-Za-z][a-zA-Z0-9]*)\s*\('
-            for match in re.finditer(func_pattern, content):
-                func_type = match.group(1)  # procedure or function
-                func_name = match.group(2)
-                line_num = content[:match.start()].count('\n') + 1
-                
-                # 跳过构造函数、析构函数等特殊方法
-                if func_name in ['Create', 'Destroy', 'AfterConstruction', 'BeforeDestruction']:
-                    continue
-                
-                type_code = 'FP' if func_type == 'procedure' else 'FF'
-                
-                items.append({
-                    'type': type_code,
-                    'name': func_name,
-                    'line': line_num,
-                    'base_class': None,
-                    'description': f"{func_type} {func_name}"
-                })
-            
-        except Exception as e:
-            logger.warning(f"  解析文件失败 {file_path}: {e}")
-        
-        return items
-    
-    def _rebuild_init(self, source_paths: List[Path], incremental: bool = False):
+    def _rebuild_init(self, source_paths: List[Path], incremental: bool = False, build_start_time: float = None):
         """重建初始化阶段
         
         Args:
             source_paths: 源码路径列表
             incremental: 是否增量构建(跳过未变化的文件)
+            build_start_time: time.time() 起始时间，用于计算构建耗时
         """
         conn = self._get_connection(use_wal=True)  # 构建时用WAL，提升写入性能
         cursor = conn.cursor()
         
         try:
             if incremental:
-                cursor.execute("DELETE FROM vocabulary")
-                cursor.execute("DELETE FROM build_queue")
                 cursor.execute("DELETE FROM metadata")
                 conn.commit()
                 cursor.execute("SELECT id, full_path, hash FROM files")
@@ -837,8 +492,6 @@ class SmartCacheKnowledgeBase:
             else:
                 cursor.execute("DELETE FROM vocabularies")
                 cursor.execute("DELETE FROM files")
-                cursor.execute("DELETE FROM vocabulary")
-                cursor.execute("DELETE FROM build_queue")
                 cursor.execute("DELETE FROM metadata")
                 conn.commit()
                 existing_files = {}
@@ -886,7 +539,7 @@ class SmartCacheKnowledgeBase:
                                     cursor.execute("DELETE FROM vocabularies WHERE file_id = ?", (old_id,))
                                     cursor.execute("""UPDATE files SET size=?, hash=?, last_modified=?,
                                         updated_at=julianday('now') WHERE id=?""",
-                                        (stat.st_size, file_hash, '', old_id))
+                                        (stat.st_size, file_hash, str(stat.st_mtime), old_id))
                                     changed_file_ids.append((old_id, fp))
                                     updated += 1
                                     continue
@@ -902,13 +555,13 @@ class SmartCacheKnowledgeBase:
                                 str(rel_path),
                                 file_path.suffix,
                                 stat.st_size,
-                                0,
+                                0,  # 行数在解析后回填
                                 new_hash,
-                                '',
+                                str(stat.st_mtime),  # 实际修改时间
                                 category,
-                                '[]',
-                                '[]',
-                                str(file_path)
+                                '[]',  # units_defined 在解析后回填
+                                '[]',  # units_imported 在解析后回填
+                                ''
                             ))
                         except Exception as e:
                             pass
@@ -967,7 +620,8 @@ class SmartCacheKnowledgeBase:
             
             # 合并解析结果
             items_data = []
-            for file_path_str, parsed_items in parsed_results:
+            file_updates = {}  # (file_id, line_count, [unit_names], [uses])
+            for file_path_str, parsed_items, line_count, uses_list in parsed_results:
                 file_id = file_path_to_id.get(file_path_str, 0)
                 if file_id == 0:
                     continue
@@ -996,6 +650,9 @@ class SmartCacheKnowledgeBase:
                     f"Unit {unit_name}",
                     'pending'
                 ))
+                
+                # 收集回填数据
+                file_updates[file_id] = (line_count, [unit_name], uses_list)
             
             logger.info(f"  提取到 {len(items_data)} 个词汇项目")
             
@@ -1006,297 +663,37 @@ class SmartCacheKnowledgeBase:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, items_data)
             
-            logger.info("  构建词汇表...")
+            # 回填 files 表的 line_count、units_defined、units_imported
+            for fid, (line_cnt, unit_names, uses_list) in file_updates.items():
+                cursor.execute(
+                    "UPDATE files SET line_count=?, units_defined=?, units_imported=? WHERE id=?",
+                    (line_cnt,
+                     json.dumps(unit_names, ensure_ascii=False),
+                     json.dumps(uses_list, ensure_ascii=False) if uses_list else '[]',
+                     fid)
+                )
             
-            if self.progress_callback:
-                self.progress_callback(70, "阶段1/2: 构建词汇表...")
-            
-            self._build_vocabulary_table(cursor, items_data)
-            
-            if self.progress_callback:
-                self.progress_callback(91, "阶段1/2: 完成，准备启动向量构建...")
-            
-            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('build_status', 'pending')")
-            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('build_progress', '0')")
+            logger.info("  实体入库完成")
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_files', ?)", (str(total_files),))
             cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('total_items', ?)", (str(len(items_data)),))
+            cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_build_time', ?)",
+                (datetime.now().isoformat(),))
+            if build_start_time:
+                import time
+                duration = int(time.time() - build_start_time)
+                cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_build_duration', ?)",
+                    (str(duration),))
             # 记录 schema 版本号
             from src.services.knowledge_base import set_schema_version_in_db
             set_schema_version_in_db(cursor)
             
             conn.commit()
             
-            # 初始化完成后切换回DELETE模式，避免产生.wal文件
-            cursor.execute("PRAGMA journal_mode=DELETE")
+            # 保持 WAL 模式（不切 DELETE），避免与已有连接冲突
             
             logger.info(f"  初始化完成：{len(all_files_to_parse)}个文件需处理，{len(items_data)}个项目")
         finally:
             conn.close()
-    
-    def _build_vocabulary_table(self, cursor, items_data: List):
-        """构建词汇表"""
-        # 收集所有文档
-        documents = []
-        for item in items_data:
-            if item[6]:  # description
-                documents.append(item[6])
-        
-        if not documents:
-            return
-        
-        # 统计词频
-        doc_freq: Dict[str, int] = {}
-        for doc in documents:
-            words = set(self.tokenize(doc))
-            for word in words:
-                doc_freq[word] = doc_freq.get(word, 0) + 1
-        
-        # 计算IDF
-        doc_count = len(documents)
-        vocab_data = []
-        
-        for i, (word, freq) in enumerate(sorted(doc_freq.items())):
-            idf = math.log(doc_count / (freq + 1)) + 1
-            vocab_data.append((i, word, idf, freq))
-            self.vocabulary[word] = i
-            self.idf_weights[word] = idf
-        
-        # 插入vocabulary表
-        if vocab_data:
-            cursor.executemany("""
-                INSERT OR REPLACE INTO vocabulary (id, word, idf_weight, document_frequency)
-                VALUES (?, ?, ?, ?)
-            """, vocab_data)
-        
-        logger.info(f"  词汇表大小: {len(vocab_data)}")
-    
-    def _start_async_build(self, progress_callback: callable = None):
-        """启动异步构建线程"""
-        self._building = True
-        
-        # 更新状态
-        conn = self._get_connection(use_wal=True)  # 构建时用WAL
-        conn.execute("UPDATE metadata SET value='building' WHERE key='build_status'")
-        conn.commit()
-        conn.close()
-        
-        # 启动构建线程，传递进度回调
-        self._build_thread = threading.Thread(
-            target=self._async_build_worker, 
-            daemon=True,
-            args=(progress_callback,)
-        )
-        self._build_thread.start()
-    
-    def _async_build_worker(self, progress_callback: callable = None):
-        """异步构建工作线程（使用多进程并行计算向量）"""
-        conn = self._get_connection(use_wal=True)  # 构建时用WAL，提升写入性能
-        cursor = conn.cursor()
-        
-        try:
-            # 获取待构建项目总数
-            cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE vector_status='pending'")
-            total = cursor.fetchone()[0]
-            
-            if total == 0:
-                logger.info("  没有需要构建的项目")
-                return
-            
-            logger.info(f"  开始构建向量，共{total}个项目...")
-            
-            # 动态计算worker数和chunksize
-            parallel_workers_config = self.config.get('build', {}).get('parallel_workers')
-            if parallel_workers_config:
-                n_workers = max(1, parallel_workers_config)
-            else:
-                n_workers = max(2, cpu_count() - 1)
-            batch_size = self.config.get('build', {}).get('batch_size', 1000)
-            vector_chunksize = max(500, batch_size // n_workers)
-            
-            logger.info(f"  使用 {n_workers} 进程并行计算向量 (chunksize={vector_chunksize})...")
-            
-            processed = 0
-            vocab = self.vocabulary
-            idf_weights = self.idf_weights
-            
-            # 报告向量构建开始（映射到90-100%范围）
-            if progress_callback:
-                progress_callback(90, f"阶段2/2: 开始构建向量...")
-            
-            # 使用多进程并行计算向量
-            from functools import partial
-            
-            while self._building:
-                # 获取一批待构建项目
-                cursor.execute("""
-                    SELECT id, description
-                    FROM vocabularies
-                    WHERE vector_status='pending'
-                    LIMIT ?
-                """, (batch_size,))
-                
-                items = cursor.fetchall()
-                if not items:
-                    break
-                
-                # 准备计算任务
-                compute_items = [(row['id'], row['description']) for row in items]
-                
-                # 使用partial传递词汇表和IDF权重
-                compute_func = partial(
-                    SmartCacheKnowledgeBase._compute_vector_static,
-                    vocab=vocab,
-                    idf_weights=idf_weights
-                )
-                
-                # 并行计算向量
-                with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                    results = list(executor.map(
-                        compute_func,
-                        compute_items,
-                        chunksize=vector_chunksize
-                    ))
-                
-                # 更新数据库
-                for item_id, packed_vector in results:
-                    cursor.execute("""
-                        UPDATE vocabularies
-                        SET vector=?, vector_status='built', updated_at=julianday('now')
-                        WHERE id=?
-                    """, (packed_vector, item_id))
-                    processed += 1
-                
-# 更新进度（映射到90-100%范围）
-                progress = int(90 + (processed / total * 10))
-                cursor.execute("UPDATE metadata SET value=? WHERE key='build_progress'", (str(progress),))
-                conn.commit()
-                
-                # 调用进度回调（向任务管理器报告进度，每批次更新）
-                if progress_callback:
-                    progress_callback(progress, f"构建向量中：{processed}/{total}")
-                
-                if processed % 1000 == 0 or processed == total:
-                    logger.info(f"  构建进度：{processed}/{total} ({progress}%)")
-            
-            # 完成
-            cursor.execute("UPDATE metadata SET value='completed' WHERE key='build_status'")
-            cursor.execute("UPDATE metadata SET value='100' WHERE key='build_progress'")
-            conn.commit()
-            
-            # 构建完成后切换回DELETE模式，避免产生.wal文件
-            cursor.execute("PRAGMA journal_mode=DELETE")
-            
-            # 执行VACUUM压缩数据库
-            if progress_callback:
-                progress_callback(100, "正在优化数据库文件...")
-            logger.info("  正在优化数据库文件（VACUUM）...")
-            cursor.execute("VACUUM")
-            conn.commit()
-            
-            logger.info(f"  向量构建完成：{processed}/{total}")
-            
-        except Exception as e:
-            logger.error(f"  构建错误: {e}")
-            cursor.execute("UPDATE metadata SET value='failed' WHERE key='build_status'")
-            conn.commit()
-        finally:
-            self._building = False
-            conn.close()
-    
-    def semantic_search(self, query: str, top_k: int = 10,
-                       item_types: List[str] = None) -> List[Dict]:
-        """语义搜索（智能缓存）"""
-        # 计算查询向量
-        query_vector = self.text_to_vector(query)
-        
-        if not query_vector:
-            return []
-        
-        # 快速筛选候选集
-        candidates = self._get_candidates(query, item_types)
-        
-        results = []
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        for item in candidates:
-            # 获取向量（缓存或构建）
-            vector = self._get_or_build_vector(cursor, item['id'], item['description'])
-            
-            if vector:
-                # 计算相似度
-                similarity = self._cosine_similarity(query_vector, vector)
-                if similarity > 0.1:
-                    results.append({
-                        'id': item['id'],
-                        'name': item['name'],
-                        'type': item['type'],
-                        'type_name': self.TYPE_MAP.get(item['type'], 'unknown'),
-                        'file_id': item['file_id'],
-                        'description': item['description'],
-                        'similarity': similarity
-                    })
-        
-        conn.close()
-        
-        # 排序返回
-        results.sort(key=lambda x: x['similarity'], reverse=True)
-        return results[:top_k]
-    
-    def _get_candidates(self, query: str, item_types: List[str] = None) -> List[Dict]:
-        """快速筛选候选集"""
-        conn = self._get_connection()
-        cursor = conn.cursor()
-        
-        query_lower = query.lower()
-        
-        if item_types:
-            type_placeholders = ','.join(['?' for _ in item_types])
-            cursor.execute(f"""
-                SELECT id, type, name, description, file_id
-                FROM vocabularies
-                WHERE name_lower LIKE ?
-                  AND type IN ({type_placeholders})
-                LIMIT 1000
-            """, (f'%{query_lower}%',) + tuple(item_types))
-        else:
-            cursor.execute("""
-                SELECT id, type, name, description, file_id
-                FROM vocabularies
-                WHERE name_lower LIKE ?
-                LIMIT 1000
-            """, (f'%{query_lower}%',))
-        
-        candidates = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        return candidates
-    
-    def _get_or_build_vector(self, cursor, item_id: int, description: str) -> Optional[Dict]:
-        """获取或构建向量（带缓存）"""
-        # 检查缓存
-        cached = self._vector_cache.get(item_id)
-        if cached is not None:
-            return cached
-        
-        # 从数据库获取
-        cursor.execute("""
-            SELECT vector, vector_status FROM vocabularies WHERE id=?
-        """, (item_id,))
-        
-        row = cursor.fetchone()
-        if row and row['vector']:
-            # 解包向量
-            vector = self._unpack_vector(row['vector'])
-            self._vector_cache.set(item_id, vector)
-            return vector
-        
-        # 实时构建
-        vector = self.text_to_vector(description)
-        
-        # 缓存
-        self._vector_cache.set(item_id, vector)
-        
-        return vector
     
     def get_build_status(self) -> Dict:
         """获取构建状态"""
@@ -1314,17 +711,6 @@ class SmartCacheKnowledgeBase:
             'total_files': int(metadata.get('total_files', '0')),
             'total_items': int(metadata.get('total_items', '0'))
         }
-    
-    def stop_build(self):
-        """停止构建"""
-        self._building = False
-        if self._build_thread:
-            self._build_thread.join(timeout=5)
-        
-        conn = self._get_connection()
-        conn.execute("UPDATE metadata SET value='stopped' WHERE key='build_status'")
-        conn.commit()
-        conn.close()
     
     def search_by_name(self, name: str) -> List[Dict]:
         """按名称搜索 (返回所有类型)"""
@@ -1381,12 +767,16 @@ class SmartCacheKnowledgeBase:
         cursor.execute("SELECT vector_status, COUNT(*) as count FROM vocabularies GROUP BY vector_status")
         stats['vector_status'] = {row['vector_status']: row['count'] for row in cursor.fetchall()}
         
-        # 词汇表大小
-        cursor.execute("SELECT COUNT(*) FROM vocabulary")
-        stats['vocabulary_size'] = cursor.fetchone()[0]
+        # 词汇表大小（TF-IDF 已废弃）
+        stats['vocabulary_size'] = 0
         
-        # 缓存大小
-        stats['cache_size'] = len(self._vector_cache)
+        # 末次构建信息
+        cursor.execute("SELECT value FROM metadata WHERE key='last_build_time'")
+        row = cursor.fetchone()
+        stats['last_build_time'] = row['value'] if row else None
+        cursor.execute("SELECT value FROM metadata WHERE key='last_build_duration'")
+        row = cursor.fetchone()
+        stats['last_build_duration'] = int(row['value']) if row else None
         
         conn.close()
         return stats

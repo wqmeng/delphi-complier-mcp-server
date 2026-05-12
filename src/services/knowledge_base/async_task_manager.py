@@ -21,6 +21,11 @@ from ...utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+class CancelledError(Exception):
+    """任务取消异常——由 _cancellation_check 抛出，被 run_task 捕获"""
+    pass
+
+
 class TaskStatus(Enum):
     """任务状态"""
     PENDING = "pending"
@@ -100,7 +105,7 @@ class AsyncTaskManager:
 
                 logger.info(f"任务 {task_id} ({name}) 开始执行")
 
-                # 创建进度更新函数 - 支持多种回调签名
+                # 创建进度更新函数——在回调中嵌入取消检查，下游无需修改
                 def update_progress(*args, **kwargs):
                     # Handle different callback signatures:
                     # 1. ProgressInfo object (from ProgressTracker)
@@ -137,11 +142,22 @@ class AsyncTaskManager:
                         pct = 0
                         msg = str(args) if args else ''
                     
+                    # 在每次进度回调中嵌入取消检查
+                    if self.is_task_cancelled(task_id):
+                        raise CancelledError(f"任务 {task_id} ({name}) 已取消")
+                    
                     logger.debug(f"Progress update: {pct}% - {msg}")
                     self.update_task_progress(task_id, pct, msg)
 
-                # 将进度回调和任务ID传递给任务函数
+                # 创建取消检查函数——任务函数在循环边界调用它来响应取消
+                def _cancellation_check():
+                    """检查任务是否被取消，取消时抛出 CancelledError"""
+                    if self.is_task_cancelled(task_id):
+                        raise CancelledError(f"任务 {task_id} ({name}) 已取消")
+
+                # 将进度回调、取消检查和任务ID传递给任务函数
                 kwargs['_progress_callback'] = update_progress
+                kwargs['_cancellation_check'] = _cancellation_check
                 kwargs['_task_id'] = task_id
 
                 result = func(*args, **kwargs)
@@ -155,12 +171,12 @@ class AsyncTaskManager:
 
                 logger.info(f"任务 {task_id} ({name}) 完成")
 
-            except KeyboardInterrupt:
-                logger.info(f"任务 {task_id} ({name}) 被取消")
+            except CancelledError as e:
+                logger.info(f"任务 {task_id} ({name}) 已取消")
                 with self._lock:
                     task_info.status = TaskStatus.CANCELLED
                     task_info.completed_at = datetime.now()
-                    task_info.message = "任务已取消"
+                    task_info.message = str(e)
 
             except Exception as e:
                 logger.error(f"任务 {task_id} ({name}) 失败: {e}", exc_info=True)
@@ -260,7 +276,10 @@ class AsyncTaskManager:
             task_info.message = "任务已取消"
             task_info.completed_at = datetime.now()
 
-            # 注意：线程无法强制终止，这里只是标记状态
+            # 通知长轮询的 wait_for_progress_change 立即返回
+            self._progress_condition.notify_all()
+
+            # 注意：线程无法强制终止，由 _cancellation_check 在任务函数中响应
             return True
 
     def is_task_cancelled(self, task_id: str) -> bool:
