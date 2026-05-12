@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `match.lastindex` 缺乏 None 检查（3 处，预存 issue）
 - `_extract_functions` 引用已删除的 `_FUNC_PATTERN_2`
 
+### Merged
+
+- **编译器自动检测优化**：从硬编码 5 个特定编译器改为动态扫描 bin 目录下所有 `dcc*.exe`，通过文件名映射表自动识别平台
+- **数据库性能优化**：`SmartCacheKnowledgeBase._get_connection(use_wal=True)` 构建时 WAL 模式提升写入性能，查询时 DELETE 模式避免 `.wal` 文件残留
+- **VACUUM 压缩**：知识库构建完成后自动执行 `VACUUM` 压缩数据库文件体积
+- **文档扫描进度优化**：`_estimate_total_docs()` 预估算 CHM 内子文档数，进度平滑不再跳跃
+- **自动构建项目知识库**：搜索项目知识库时若 KB 不存在则自动构建
+
 ## [2026.05.09] - 2026-05-09
 
 ### Added

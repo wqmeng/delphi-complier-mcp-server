@@ -289,6 +289,11 @@ class ConfigManager:
         """自动检测 Delphi 编译器"""
         detected_compilers = []
 
+        # 首先清空旧的编译器配置，避免旧配置干扰
+        logger.info("清空旧编译器配置，准备重新检测...")
+        self.config.compilers = []
+        self.config.default_compiler = None
+
         # 通过注册表检测 Delphi 安装路径
         delphi_installations = self._detect_delphi_from_registry()
 
@@ -298,7 +303,7 @@ class ConfigManager:
 
         for version, install_path in delphi_installations.items():
             logger.info(f"检测到 Delphi {version}: {install_path}")
-            compilers = self._detect_compilers_from_path(install_path)
+            compilers = self._detect_compilers_from_path(install_path, version)
             detected_compilers.extend(compilers)
 
         if detected_compilers:
@@ -373,12 +378,13 @@ class ConfigManager:
 
         return installations
 
-    def _detect_compilers_from_path(self, delphi_path: str) -> List[CompilerConfig]:
+    def _detect_compilers_from_path(self, delphi_path: str, registry_version: str = None) -> List[CompilerConfig]:
         """
         从 Delphi 安装路径检测编译器
 
         Args:
             delphi_path: Delphi 安装路径
+            registry_version: 从注册表获取的版本号（如果有则优先使用）
 
         Returns:
             检测到的编译器配置列表
@@ -391,67 +397,47 @@ class ConfigManager:
             return compilers
 
         # 检测编译器版本名称
-        version_name = self._get_delphi_version_name(delphi_path)
+        if registry_version:
+            from src.utils.delphi_versions import get_version_name
+            version_name = get_version_name(registry_version)
+        else:
+            version_name = self._get_delphi_version_name(delphi_path)
 
-        # 检测 dcc32.exe (32位编译器)
-        dcc32_path = os.path.join(bin_path, "dcc32.exe")
-        if os.path.exists(dcc32_path):
-            compiler = CompilerConfig(
-                name=f"{version_name} Win32",
-                path=dcc32_path,
-                is_default=False,
-                version=version_name
-            )
-            compilers.append(compiler)
-            logger.debug(f"检测到 32位编译器: {dcc32_path}")
+        # 文件名→平台映射表
+        filename_to_platform = {
+            "dcc32": "Win32",
+            "dcc64": "Win64",
+            "dccaarm": "Android32",
+            "dccaarm64": "Android64",
+            "dcclinux64": "Linux64",
+            "dccosx64": "OSX64",
+            "dccosxarm64": "OSXARM64",
+            "dcciosarm64": "iOSARM64",
+            "dcciossimarm64": "iOSSimARM64",
+            "dccarm": "ARM32",
+            "dccarm64": "ARM64",
+            "dcclinux": "Linux64",
+        }
 
-        # 检测 dcc64.exe (64位编译器)
-        dcc64_path = os.path.join(bin_path, "dcc64.exe")
-        if os.path.exists(dcc64_path):
-            compiler = CompilerConfig(
-                name=f"{version_name} Win64",
-                path=dcc64_path,
-                is_default=False,
-                version=version_name
-            )
-            compilers.append(compiler)
-            logger.debug(f"检测到 64位编译器: {dcc64_path}")
+        # 扫描 bin 目录下所有 dcc*.exe，自动识别平台
+        if os.path.exists(bin_path):
+            for filename in os.listdir(bin_path):
+                lower_filename = filename.lower()
+                if lower_filename.startswith("dcc") and lower_filename.endswith(".exe"):
+                    base_name = lower_filename[:-4]  # 去掉 .exe
+                    platform_name = filename_to_platform.get(base_name)
+                    if not platform_name:
+                        platform_name = base_name.replace("dcc", "").upper()
 
-        # 检测 Linux 交叉编译器
-        dcclinux_path = os.path.join(bin_path, "dcclinux.exe")
-        if os.path.exists(dcclinux_path):
-            compiler = CompilerConfig(
-                name=f"{version_name} Linux64",
-                path=dcclinux_path,
-                is_default=False,
-                version=version_name
-            )
-            compilers.append(compiler)
-            logger.debug(f"检测到 Linux64 编译器: {dcclinux_path}")
-
-        # 检测 ARM 编译器
-        dccarm_path = os.path.join(bin_path, "dccarm.exe")
-        if os.path.exists(dccarm_path):
-            compiler = CompilerConfig(
-                name=f"{version_name} ARM",
-                path=dccarm_path,
-                is_default=False,
-                version=version_name
-            )
-            compilers.append(compiler)
-            logger.debug(f"检测到 ARM 编译器: {dccarm_path}")
-
-        # 检测 ARM64 编译器
-        dccarm64_path = os.path.join(bin_path, "dccarm64.exe")
-        if os.path.exists(dccarm64_path):
-            compiler = CompilerConfig(
-                name=f"{version_name} ARM64",
-                path=dccarm64_path,
-                is_default=False,
-                version=version_name
-            )
-            compilers.append(compiler)
-            logger.debug(f"检测到 ARM64 编译器: {dccarm64_path}")
+                    full_path = os.path.join(bin_path, filename)
+                    compiler = CompilerConfig(
+                        name=f"{version_name} {platform_name}",
+                        path=full_path,
+                        is_default=False,
+                        version=version_name
+                    )
+                    compilers.append(compiler)
+                    logger.debug(f"检测到 {platform_name} 编译器: {full_path}")
 
         return compilers
 

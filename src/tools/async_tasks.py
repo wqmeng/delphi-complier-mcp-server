@@ -53,16 +53,22 @@ async def start_async_task(arguments: Any) -> CallToolResult:
     # 根据任务类型创建任务函数
     if task_type == "build_knowledge_base":
         from ..services.knowledge_base.service import DelphiKnowledgeBaseService
+        from src.utils.delphi_env import get_delphi_version
 
         def build_kb_task(**kwargs):
             version = kwargs.get("version")
             force_rebuild = kwargs.get("force_rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
-
             service = DelphiKnowledgeBaseService(progress_callback=progress_callback)
             return service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
 
-        task_name = f"构建Delphi知识库 (版本: {params.get('version', '最新')})"
+        # 确定显示的版本号
+        display_version = params.get("version")
+        if not display_version:
+            display_version = get_delphi_version()
+        if not display_version:
+            display_version = "最新"
+        task_name = f"构建Delphi知识库 (版本: {display_version})"
 
     elif task_type == "build_thirdparty_knowledge_base":
         from ..services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase

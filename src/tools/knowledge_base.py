@@ -190,6 +190,14 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
                             pkb = ProjectKnowledgeBase(project_path)
                             pkb.load_knowledge_bases()
+                            if pkb.project_kb is None:
+                                # 知识库未构建，自动构建
+                                logger.info(f"项目知识库不存在，自动构建: {project_path}")
+                                try:
+                                    pkb.build_project_knowledge_base(force_rebuild=False)
+                                    pkb.load_knowledge_bases()
+                                except Exception as build_err:
+                                    logger.error(f"自动构建项目知识库失败: {build_err}")
                             if pkb.project_kb:
                                 refs = pkb.project_kb.search_usages(query, namespace_prefixes=ns_prefixes)
                                 if refs:
@@ -241,6 +249,18 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                     try:
                         pkb = ProjectKnowledgeBase(project_path)
                         pkb.load_knowledge_bases()
+                        # 如果知识库未构建，自动构建
+                        if pkb.project_kb is None:
+                            logger.info(f"项目知识库不存在，自动构建: {project_path}")
+                            try:
+                                pkb.build_project_knowledge_base(force_rebuild=False)
+                                # 构建后重新加载
+                                pkb.load_knowledge_bases()
+                            except Exception as build_err:
+                                logger.error(f"自动构建项目知识库失败: {build_err}")
+                                results["project_error"] = f"项目知识库未构建且自动构建失败: {build_err}"
+                                continue
+                        
                         if pkb.project_kb:
                             # 名称搜索（search_by_name 返回与 Delphi KB 相同格式）
                             project_results = pkb.project_kb.search_by_name(query)

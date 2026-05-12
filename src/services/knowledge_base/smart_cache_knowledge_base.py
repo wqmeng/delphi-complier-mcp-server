@@ -188,17 +188,27 @@ class SmartCacheKnowledgeBase:
                 'build': {'parallel_workers': 4, 'batch_size': 1000}
             }
     
-    def _get_connection(self) -> sqlite3.Connection:
-        """获取数据库连接"""
+    def _get_connection(self, use_wal: bool = False) -> sqlite3.Connection:
+        """获取数据库连接
+        
+        Args:
+            use_wal: 是否使用WAL模式（构建时用WAL获得更好写入性能，查询时用DELETE避免.wal文件残留）
+        """
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         
         # 性能优化
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA cache_size=-64000")
+        if use_wal:
+            conn.execute("PRAGMA journal_mode=WAL")      # 构建时用WAL，提升写入性能
+            conn.execute("PRAGMA synchronous=NORMAL")
+        else:
+            conn.execute("PRAGMA journal_mode=DELETE")   # 查询时用DELETE，不留.wal文件
+            conn.execute("PRAGMA synchronous=NORMAL")
+        
+        conn.execute("PRAGMA cache_size=-200000")       # ~200MB 缓存
         conn.execute("PRAGMA temp_store=MEMORY")
-        conn.execute("PRAGMA busy_timeout=10000")  # 等待锁最长10秒，避免 database is locked
+        conn.execute("PRAGMA busy_timeout=10000")        # 等待锁最长10秒
+        conn.execute("PRAGMA locking_mode=NORMAL")
         
         return conn
     
@@ -812,7 +822,7 @@ class SmartCacheKnowledgeBase:
             source_paths: 源码路径列表
             incremental: 是否增量构建(跳过未变化的文件)
         """
-        conn = self._get_connection()
+        conn = self._get_connection(use_wal=True)  # 构建时用WAL，提升写入性能
         cursor = conn.cursor()
         
         try:
@@ -1016,6 +1026,9 @@ class SmartCacheKnowledgeBase:
             
             conn.commit()
             
+            # 初始化完成后切换回DELETE模式，避免产生.wal文件
+            cursor.execute("PRAGMA journal_mode=DELETE")
+            
             logger.info(f"  初始化完成：{len(all_files_to_parse)}个文件需处理，{len(items_data)}个项目")
         finally:
             conn.close()
@@ -1062,7 +1075,7 @@ class SmartCacheKnowledgeBase:
         self._building = True
         
         # 更新状态
-        conn = self._get_connection()
+        conn = self._get_connection(use_wal=True)  # 构建时用WAL
         conn.execute("UPDATE metadata SET value='building' WHERE key='build_status'")
         conn.commit()
         conn.close()
@@ -1077,7 +1090,7 @@ class SmartCacheKnowledgeBase:
     
     def _async_build_worker(self, progress_callback: callable = None):
         """异步构建工作线程（使用多进程并行计算向量）"""
-        conn = self._get_connection()
+        conn = self._get_connection(use_wal=True)  # 构建时用WAL，提升写入性能
         cursor = conn.cursor()
         
         try:
@@ -1108,7 +1121,7 @@ class SmartCacheKnowledgeBase:
             
             # 报告向量构建开始（映射到90-100%范围）
             if progress_callback:
-                progress_callback(92, f"阶段2/2: 开始构建向量...")
+                progress_callback(90, f"阶段2/2: 开始构建向量...")
             
             # 使用多进程并行计算向量
             from functools import partial
@@ -1153,8 +1166,8 @@ class SmartCacheKnowledgeBase:
                     """, (packed_vector, item_id))
                     processed += 1
                 
-# 更新进度（映射到92-100%范围）
-                progress = int(92 + (processed / total * 8))
+# 更新进度（映射到90-100%范围）
+                progress = int(90 + (processed / total * 10))
                 cursor.execute("UPDATE metadata SET value=? WHERE key='build_progress'", (str(progress),))
                 conn.commit()
                 
@@ -1168,6 +1181,16 @@ class SmartCacheKnowledgeBase:
             # 完成
             cursor.execute("UPDATE metadata SET value='completed' WHERE key='build_status'")
             cursor.execute("UPDATE metadata SET value='100' WHERE key='build_progress'")
+            conn.commit()
+            
+            # 构建完成后切换回DELETE模式，避免产生.wal文件
+            cursor.execute("PRAGMA journal_mode=DELETE")
+            
+            # 执行VACUUM压缩数据库
+            if progress_callback:
+                progress_callback(100, "正在优化数据库文件...")
+            logger.info("  正在优化数据库文件（VACUUM）...")
+            cursor.execute("VACUUM")
             conn.commit()
             
             logger.info(f"  向量构建完成：{processed}/{total}")

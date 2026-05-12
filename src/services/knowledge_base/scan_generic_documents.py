@@ -589,18 +589,8 @@ class ChmProcessor(DocumentProcessor):
     def _find_7zip(self) -> Optional[str]:
         if self._sevenzip_path:
             return self._sevenzip_path
-        # 项目 tools 目录（可打包携带）
-        tools_dir = Path(__file__).parent.parent.parent.parent / 'tools'
-        candidates = [
-            str(tools_dir / '7z' / '7z.exe'),
-            r'C:\Program Files\7-Zip\7z.exe',
-            r'C:\Program Files (x86)\7-Zip\7z.exe',
-        ]
-        for p in candidates:
-            if Path(p).exists():
-                self._sevenzip_path = p
-                return p
-        return None
+        self._sevenzip_path = self._find_7zip_path()
+        return self._sevenzip_path
 
     def process(self, file_path: Path) -> Optional[List[Dict]]:
         sevenzip = self._find_7zip()
@@ -1511,6 +1501,47 @@ class GenericDocumentScanner:
         conn.execute("PRAGMA mmap_size=268435456")  # 256MB 内存映射
         conn.execute("PRAGMA busy_timeout=10000")
 
+    @staticmethod
+    def _find_7zip_path() -> Optional[str]:
+        """查找 7-Zip 可执行文件路径"""
+        tools_dir = Path(__file__).parent.parent.parent.parent / 'tools'
+        candidates = [
+            str(tools_dir / '7z' / '7z.exe'),
+            r'C:\Program Files\7-Zip\7z.exe',
+            r'C:\Program Files (x86)\7-Zip\7z.exe',
+        ]
+        for p in candidates:
+            if Path(p).exists():
+                return p
+        return None
+
+    @staticmethod
+    def _estimate_total_docs(all_files: List[Path]) -> int:
+        """估算文档扫描的总文档数（展开 CHM 内子文档数），用于准确进度"""
+        estimated = 0
+        sevenzip = GenericDocumentScanner._find_7zip_path()
+        for f in all_files:
+            suffix = f.suffix.lower()
+            if suffix == '.chm' and sevenzip:
+                try:
+                    result = subprocess.run(
+                        [sevenzip, 'l', '-ba', str(f)],
+                        capture_output=True, text=True, timeout=60,
+                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                    )
+                    if result.returncode == 0:
+                        html_count = sum(1 for line in result.stdout.strip().split('\n') if line.strip())
+                        estimated += max(html_count, 1)
+                    else:
+                        estimated += 5000
+                except Exception:
+                    estimated += 5000
+            elif suffix in ('.chm', '.hlp', '.epub'):
+                estimated += 5000
+            else:
+                estimated += 1
+        return max(estimated, 1)
+
     def _load_config(self) -> Dict:
         """加载配置文件"""
         config_path = self.kb_dir / "config.json"
@@ -1678,6 +1709,7 @@ class GenericDocumentScanner:
             return {'total_files': 0, 'processed': 0, 'failed': 0}
         
         total_files = len(all_files)
+        estimated_total = self._estimate_total_docs(all_files)
         
         parallel_workers_config = self.config.get('build', {}).get('parallel_workers')
         if max_workers is None:
@@ -1885,8 +1917,7 @@ class GenericDocumentScanner:
                     
                     file_idx += 1
                     if self.progress_callback:
-                        # 用已完成的文件数报告进度（相对于总文件数）
-                        self.progress_callback(file_idx, total_files)
+                        self.progress_callback(processed, estimated_total)
             
             conn.commit()
             
