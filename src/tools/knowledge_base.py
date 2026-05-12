@@ -113,7 +113,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     kb_type = arguments.get("kb_type", "all")
     search_type = arguments.get("search_type", "all")
     query = arguments.get("query", "")
-    top_k = arguments.get("top_k", 10)
+    top_k = min(arguments.get("top_k", 200), 500)
     
     if not query:
         # 空 query: 返回知识库状态 + 使用指引，而非简单报错
@@ -146,7 +146,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
     # vocabularies.type 使用 Delphi 双字母编码（与 Delphi KB 一致）
     _SEARCH_TYPE_TO_KIND = {
         'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
-        'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF'], 'procedure': ['FP'],
+        'set': ['TS'], 'type': ['TY', 'AT', 'PT'], 'function': ['FF', 'FP'], 'procedure': ['FP'],
         'const': ['CC'], 'resourcestring': ['CR'], 'property': ['MP'], 'field': ['MF'],
         'method': ['MM'], 'unit': ['UI'], 'event': ['ME'],
     }
@@ -210,9 +210,12 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
             if kb == "delphi" and _delphi_kb_service:
                 # 名称搜索（精确/通配匹配）
                 symbol_results = _delphi_kb_service.search_by_name(query)
-                filtered = _filter_by_search_type(symbol_results, search_type)[:top_k]
+                filtered_by_type = _filter_by_search_type(symbol_results, search_type)
+                total_before_cut = len(filtered_by_type)
+                filtered = filtered_by_type[:top_k]
                 if filtered:
                     results[f"{kb}_symbols"] = filtered
+                    results[f"{kb}_symbols_total"] = total_before_cut
                 # 语义搜索（补充语义匹配结果）
                 if search_type in ("semantic", "all"):
                     try:
@@ -241,9 +244,12 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                         if pkb.project_kb:
                             # 名称搜索（search_by_name 返回与 Delphi KB 相同格式）
                             project_results = pkb.project_kb.search_by_name(query)
-                            filtered = _filter_by_search_type(project_results, search_type)[:top_k]
+                            filtered_by_type = _filter_by_search_type(project_results, search_type)
+                            total_before_cut = len(filtered_by_type)
+                            filtered = filtered_by_type[:top_k]
                             if filtered:
                                 results["project_symbols"] = filtered
+                                results["project_symbols_total"] = total_before_cut
                             # 语义搜索（直接使用 tuple 格式兼容已有输出逻辑）
                             if search_type in ("semantic", "all"):
                                 try:
@@ -270,9 +276,12 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 if _thirdparty_kb_service.kb_instance:
                     # 名称搜索：直接从底层 kb_instance 获取完整匹配结果
                     symbol_results = _thirdparty_kb_service.kb_instance.search_by_name(query)
-                    filtered = _filter_by_search_type(symbol_results, search_type)[:top_k]
+                    filtered_by_type = _filter_by_search_type(symbol_results, search_type)
+                    total_before_cut = len(filtered_by_type)
+                    filtered = filtered_by_type[:top_k]
                     if filtered:
                         results["thirdparty_symbols"] = filtered
+                        results["thirdparty_symbols_total"] = total_before_cut
                     # 语义搜索
                     if search_type in ("semantic", "all"):
                         try:
@@ -300,6 +309,15 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         'CC': '常量', 'CR': '资源字符串', 'MP': '属性', 'MF': '字段', 'MM': '方法', 'ME': '事件', 'UI': '单元'
     }
 
+    def _trunc_hint(items, total_key=None):
+        """如果结果被 top_k 截断，返回提示信息"""
+        total = len(items)
+        if total_key and total_key in results:
+            total = results[total_key]
+        if total > top_k:
+            return f"  (提示: 共 {total} 条结果，top_k={top_k}，{total - top_k} 条未显示，可增大 top_k 获取全部)\n"
+        return ''
+
     def _format_symbol(r):
         # 类型描述：兼容 SQLiteVector 格式（kind_code）和 SmartCache 格式（type_name）
         kind_code = r.get('kind_code', '')
@@ -319,6 +337,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
             output += _format_symbol(r)
             if r.get('definition'):
                 output += f"    定义: {r.get('definition')}\n"
+        output += _trunc_hint(results['delphi_symbols'], 'delphi_symbols_total')
         output += "\n"
         has_results = True
     
@@ -329,6 +348,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
             kind_code = r.get('kind_code', '')
             type_desc = _KIND_DESC.get(kind_code, r.get('kind', kind_code))
             output += f"  - {r.get('name', 'N/A')} ({type_desc})\n"
+        output += _trunc_hint(results['delphi_all'])
         output += "\n"
         has_results = True
     
@@ -336,6 +356,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         output += f"Delphi 类 ({len(results['delphi_classes'])}):\n"
         for r in results["delphi_classes"][:top_k]:
             output += f"  - {r.get('name', 'N/A')}\n"
+        output += _trunc_hint(results['delphi_classes'])
         output += "\n"
         has_results = True
     
@@ -343,6 +364,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         output += f"Delphi 函数/过程 ({len(results['delphi_functions'])}):\n"
         for r in results["delphi_functions"][:top_k]:
             output += f"  - {r.get('name', 'N/A')}\n"
+        output += _trunc_hint(results['delphi_functions'])
         output += "\n"
         has_results = True
     
@@ -350,6 +372,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         output += f"Delphi 类(语义搜索) ({len(results['delphi_semantic_classes'])}):\n"
         for name, sim in results["delphi_semantic_classes"][:top_k]:
             output += f"  - {name} (相似度: {sim:.2f})\n"
+        output += _trunc_hint(results['delphi_semantic_classes'])
         output += "\n"
         has_results = True
     
@@ -357,6 +380,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         output += f"Delphi 函数/过程(语义搜索) ({len(results['delphi_semantic_functions'])}):\n"
         for name, sim in results["delphi_semantic_functions"][:top_k]:
             output += f"  - {name} (相似度: {sim:.2f})\n"
+        output += _trunc_hint(results['delphi_semantic_functions'])
         output += "\n"
         has_results = True
     
@@ -368,18 +392,21 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 output += _format_symbol(r)
                 if r.get('definition'):
                     output += f"    定义: {r.get('definition')}\n"
+            output += _trunc_hint(results[f'{kb}_symbols'], f'{kb}_symbols_total')
             output += "\n"
             has_results = True
         if f"{kb}_semantic_classes" in results and results[f"{kb}_semantic_classes"]:
             output += f"{label} 类(语义搜索) ({len(results[f'{kb}_semantic_classes'])}):\n"
             for name, sim in results[f"{kb}_semantic_classes"][:top_k]:
                 output += f"  - {name} (相似度: {sim:.2f})\n"
+            output += _trunc_hint(results[f'{kb}_semantic_classes'])
             output += "\n"
             has_results = True
         if f"{kb}_semantic_functions" in results and results[f"{kb}_semantic_functions"]:
             output += f"{label} 函数/过程(语义搜索) ({len(results[f'{kb}_semantic_functions'])}):\n"
             for name, sim in results[f"{kb}_semantic_functions"][:top_k]:
                 output += f"  - {name} (相似度: {sim:.2f})\n"
+            output += _trunc_hint(results[f'{kb}_semantic_functions'])
             output += "\n"
             has_results = True
 
@@ -394,6 +421,7 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 output += f"  - {fi.get('full_path', '?')}\n"
                 if imported:
                     output += f"    引用单元: {', '.join(imported[:5])}\n"
+            output += _trunc_hint(refs)
             output += "\n"
             has_results = True
 

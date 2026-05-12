@@ -135,10 +135,20 @@ class SQLiteVectorKnowledgeBase:
         """计算原始索引的哈希值 - 从SQLite获取"""
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT hash FROM metadata LIMIT 1")
-        row = cursor.fetchone()
-        if row:
-            return row['hash']
+        try:
+            cursor.execute("SELECT hash FROM metadata LIMIT 1")
+            row = cursor.fetchone()
+            if row and row['hash']:
+                return row['hash']
+        except Exception:
+            pass
+        try:
+            cursor.execute("SELECT value FROM metadata WHERE key = 'hash'")
+            row = cursor.fetchone()
+            if row and row['value']:
+                return row['value']
+        except Exception:
+            pass
         return ""
 
     def load_files_and_entities(self) -> Dict:
@@ -457,12 +467,18 @@ class SQLiteVectorKnowledgeBase:
 
     def _create_tables(self, cursor):
         """创建所有数据库表（辅助方法）"""
-        # metadata表 - 使用 key-value 格式
+        # metadata表: 同时兼容 key-value 格式和 build_vector_index 的列格式
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata (
-                key TEXT PRIMARY KEY,
+                key TEXT,
                 value TEXT,
-                updated_at REAL DEFAULT (julianday('now'))
+                hash TEXT,
+                timestamp REAL,
+                total_files INTEGER,
+                total_lines INTEGER,
+                vector_size INTEGER,
+                source_directory TEXT,
+                updated_at REAL
             )
         """)
         cursor.execute("""
@@ -1189,7 +1205,13 @@ class SQLiteVectorKnowledgeBase:
         return results
 
     def search_by_name(self, name: str) -> List[Dict]:
-        """根据名称搜索符号 (精确匹配, 返回所有类型)"""
+        """根据名称搜索符号 (精确匹配+宽泛匹配, 返回所有类型)
+        
+        搜索策略:
+        1. 精确名称匹配: name_lower = ? OR GLOB 前缀通配
+        2. 若结果<5条且名称包含 '.'，则尝试按单元名搜索该文件的所有实体
+        3. 若结果<3条，则尝试按文件路径匹配（用于"DateUtils"等主题搜索）
+        """
         KIND_NAMES = {
             'TC': 'class', 'TR': 'record', 'TI': 'interface', 'TH': 'helper',
             'TE': 'enum', 'TS': 'set', 'TY': 'type', 'AT': 'array',
@@ -1200,12 +1222,87 @@ class SQLiteVectorKnowledgeBase:
         name_lower = name.lower()
         conn = self._get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT v.name, v.type, v.base_class, v.description, v.line, f.relative_path, f.full_path, f.extension, f.size, f.line_count, f.hash, f.last_modified, f.category FROM vocabularies v INNER JOIN files f ON v.file_id = f.id WHERE (v.name_lower = ? OR v.name_lower GLOB ?)", (name_lower, name_lower + '<*'))
+        
+        # 1. 精确名称 + GLOB 前缀匹配
+        cursor.execute("""
+            SELECT v.name, v.type, v.base_class, v.description, v.line, 
+                   f.relative_path, f.full_path, f.extension, f.size, 
+                   f.line_count, f.hash, f.last_modified, f.category 
+            FROM vocabularies v 
+            INNER JOIN files f ON v.file_id = f.id 
+            WHERE (v.name_lower = ? OR v.name_lower GLOB ?)
+        """, (name_lower, name_lower + '<*'))
+        
         results = []
         for row in cursor.fetchall():
             kind_code = row['type']
             kind_name = KIND_NAMES.get(kind_code, kind_code)
-            results.append({'name': row['name'], 'kind': kind_name, 'kind_code': kind_code, 'parent': row['base_class'] or '', 'line': row['line'], 'definition': row['description'] or '', 'file': {'path': row['relative_path'], 'full_path': row['full_path'], 'extension': row['extension'], 'size': row['size'], 'line_count': row['line_count'], 'hash': row['hash'], 'last_modified': row['last_modified'], 'category': row['category']}})
+            results.append({'name': row['name'], 'kind': kind_name, 'kind_code': kind_code, 
+                           'parent': row['base_class'] or '', 'line': row['line'], 
+                           'definition': row['description'] or '', 
+                           'file': {'path': row['relative_path'], 'full_path': row['full_path'], 
+                                    'extension': row['extension'], 'size': row['size'], 
+                                    'line_count': row['line_count'], 'hash': row['hash'], 
+                                    'last_modified': row['last_modified'], 'category': row['category']}})
+        
+        # 2. 如果结果少且名称含 '.'，可能是单元名搜索
+        if len(results) < 5 and '.' in name:
+            try:
+                cursor.execute("""
+                    SELECT v.name, v.type, v.base_class, v.description, v.line,
+                           f.relative_path, f.full_path, f.extension, f.size,
+                           f.line_count, f.hash, f.last_modified, f.category
+                    FROM vocabularies v
+                    INNER JOIN files f ON v.file_id = f.id
+                    WHERE f.relative_path LIKE ? OR f.full_path LIKE ?
+                """, ('%' + name_lower + '%', '%' + name_lower + '%'))
+                added = set()
+                for row in cursor.fetchall():
+                    key = (row['name'], row['line'], row['full_path'])
+                    if key in added:
+                        continue
+                    added.add(key)
+                    kind_code = row['type']
+                    kind_name = KIND_NAMES.get(kind_code, kind_code)
+                    results.append({'name': row['name'], 'kind': kind_name, 'kind_code': kind_code,
+                                   'parent': row['base_class'] or '', 'line': row['line'],
+                                   'definition': row['description'] or '',
+                                   'file': {'path': row['relative_path'], 'full_path': row['full_path'],
+                                            'extension': row['extension'], 'size': row['size'],
+                                            'line_count': row['line_count'], 'hash': row['hash'],
+                                            'last_modified': row['last_modified'], 'category': row['category']}})
+            except Exception:
+                pass
+        
+        # 3. 如果结果仍然很少，尝试宽泛的文件名匹配（用于"DateUtils"、"Date"等主题搜索）
+        if len(results) < 3:
+            try:
+                cursor.execute("""
+                    SELECT v.name, v.type, v.base_class, v.description, v.line,
+                           f.relative_path, f.full_path, f.extension, f.size,
+                           f.line_count, f.hash, f.last_modified, f.category
+                    FROM vocabularies v
+                    INNER JOIN files f ON v.file_id = f.id
+                    WHERE (f.relative_path LIKE ? OR f.relative_path LIKE ?)
+                """, ('%' + name_lower + '.pas%', '%' + name_lower + '%'))
+                added = set()
+                for row in cursor.fetchall():
+                    key = (row['name'], row['line'], row['full_path'])
+                    if key in added:
+                        continue
+                    added.add(key)
+                    kind_code = row['type']
+                    kind_name = KIND_NAMES.get(kind_code, kind_code)
+                    results.append({'name': row['name'], 'kind': kind_name, 'kind_code': kind_code,
+                                   'parent': row['base_class'] or '', 'line': row['line'],
+                                   'definition': row['description'] or '',
+                                   'file': {'path': row['relative_path'], 'full_path': row['full_path'],
+                                            'extension': row['extension'], 'size': row['size'],
+                                            'line_count': row['line_count'], 'hash': row['hash'],
+                                            'last_modified': row['last_modified'], 'category': row['category']}})
+            except Exception:
+                pass
+        
         return results
 
     def search_by_unit_name(self, unit_name: str) -> List[Dict]:

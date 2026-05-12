@@ -90,7 +90,7 @@ delphi_kb(
 
 | 工具名称 | 功能描述 | 主要参数 |
 |----------|----------|----------|
-| `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`, `top_k`, `project_path`(项目知识库可选，不传时自动从当前目录检测 .dproj), `directory`(扫描目录, 构建文档KB时可省略自动检测), `url`(网页URL), `content_type`(文档类型), `extensions`(文件扩展名) |
+| `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`(function=函数+过程, procedure=仅过程), `top_k`(默认200,最大500), `project_path`(项目知识库可选，不传时自动从当前目录检测 .dproj), `directory`(扫描目录, 构建文档KB时可省略自动检测), `url`(网页URL), `content_type`(文档类型), `extensions`(文件扩展名) |
 
 ### 源码读取工具
 
@@ -432,6 +432,23 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 详见 [LICENSE](LICENSE) 文件。
 
 ## 版本历史
+
+### v2026.05.12 (2026-05-12)
+
+- **正则表达式大修**：全面改进 Delphi 源码扫描器 regex，覆盖更多语法场景
+  - 函数/过程: 新增 `constructor`/`destructor`/`class function`/`class procedure`/`class operator` 支持
+  - 类定义: 排除 `class of` metaclass 误匹配，父类支持泛型 `TList<T>`
+  - 接口: 支持 `dispinterface`、GUID 语法
+  - Helper: 支持可选祖先类 `class helper (TBaseHelper) for`
+  - 指针/过程类型别名: 放开名称前缀限制，支持嵌套括号、calling convention
+  - 常量: 支持多行字符串值、小写开头常量名、复杂类型标注
+- **搜索增强**:
+  - `search_type="function"` 同时匹配函数(FF)和过程(FP)
+  - 搜索单元名自动回退到文件路径匹配（如 `System.DateUtils` 返回该文件全部实体）
+  - 默认 `top_k` 从 10 提升至 200（上限 500）
+  - 结果截断提示: `(提示: 共 N 条结果，top_k=X，M 条未显示)`
+- **性能修复**: 修复 `_FUNC_PATTERN_1` 嵌套括号正则灾难性回溯（单文件从 219s → 0.002s）
+- **Bug修复**: 修复 metadata 表 schema 不一致；修复多处 `match.lastindex` 无 None 检查
 
 ### v2026.05.01 (2026-05-01)
 

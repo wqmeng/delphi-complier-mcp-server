@@ -160,7 +160,7 @@ python src/server.py --config config/config.json
 | **TS** | Type/Set | set of |
 | **TY** | Type | type alias |
 | **FF** | Function | function |
-| **FP** | Function | procedure |
+| **FP** | Procedure | procedure |
 | **CC** | Constant | const |
 | **CR** | Constant | resourcestring |
 
@@ -318,6 +318,34 @@ delphi_kb(
 
 ### 知识库使用策略
 
+#### 项目路径上下文管理
+
+**关键原则**：AI Agent 应从对话上下文中记住项目路径，而非依赖代码自动检测。
+
+```
+场景：用户在对话中提到项目路径
+  "项目知识库路径：C:\User\diandaxia"
+  "编译 C:\User\diandaxia\diandaxia.dproj"
+  "搜索项目中的 TfrmMain"
+
+AI Agent 应记住：
+  PROJECT_PATH = "C:\User\diandaxia\diandaxia.dproj"
+
+后续所有 delphi_kb(kb_type="project") 调用：
+  ✅ delphi_kb(query="TfrmMain", kb_type="project", project_path="C:\User\diandaxia\diandaxia.dproj")
+  ❌ delphi_kb(query="TfrmMain", kb_type="project")  ← 缺少 project_path，会报错
+```
+
+**何时需要传 project_path**：
+- `kb_type="project"` 时**必须传入**
+- `kb_type="all"` 时**可选**（不传则只搜 delphi + thirdparty）
+- `kb_type="delphi"` 或 `"thirdparty"` 或 `"document"` 时**不需要传**
+
+**记住项目路径的时机**：
+1. 用户显式说明："项目在 D:\MyProject"、"编译 xxx.dproj"
+2. 从之前的构建/编译操作中获知
+3. 当前工作目录包含 .dproj 文件（可调用 glob 检测）
+
 #### 核心原则：先猜精确名，再模糊搜
 
 知识库的精确搜索（`search_by_name`）远强于语义搜索。AI Agent **应该利用自身对 Delphi 命名习惯的理解，将自然语言需求转换为可能的类名/函数名**，再进行精确搜索。
@@ -331,11 +359,14 @@ Agent 思考：这个功能在 Delphi 中可能的命名
   ├─ SaveToFile / DoSave / WriteFile
   └─ ...
     ↓
-delphi_kb(query="TFormMain", kb_type="project")    ← 精确搜索（最快最准）
-delphi_kb(query="TMainForm", kb_type="project")     ← 换名字再试
+delphi_kb(query="TFormMain", kb_type="project", project_path="...")    ← 精确搜索（最快最准）
+delphi_kb(query="TMainForm", kb_type="project", project_path="...")     ← 换名字再试
     ↓
 如果所有精确名都搜不到 → 才考虑语义搜索
 ```
+
+> **注意**: `search_type="function"` 同时匹配函数(FF)和过程(FP)。如需只看过程用 `search_type="procedure"`。
+> 搜索单元名（如 `System.DateUtils`）会自动回退到文件路径匹配，返回该文件的所有实体。
 
 #### 搜索优先级
 
@@ -363,7 +394,7 @@ delphi_kb(query="TMainForm", kb_type="project")     ← 换名字再试
 **场景 B：需要写代码引用项目中的类**
 ```
 ✅ 正确做法：
-   1. delphi_kb(query="TfrmMain", kb_type="project")
+   1. delphi_kb(query="TfrmMain", kb_type="project", project_path="...")
    2. 查看定义行号和文件
    3. 了解继承链（TForm → TfrmMain）和公开属性后再写代码
 ```
@@ -371,7 +402,7 @@ delphi_kb(query="TMainForm", kb_type="project")     ← 换名字再试
 **场景 C：修改代码前评估影响**
 ```
 ✅ 正确做法：
-   1. delphi_kb(query="form.main", kb_type="project", search_type="reference")
+   1. delphi_kb(query="form.main", kb_type="project", search_type="reference", project_path="...")
    2. 查看所有引用该单元的文件（88 个引用）
    3. 评估修改影响范围
 ```
@@ -385,7 +416,7 @@ graph TD
     A[需要写代码] --> B{引用已有类型/函数?}
     B -->|是| C[猜可能的类名/函数名]
     B -->|否| Z[直接生成代码]
-    C --> D[delphi_kb 精确搜索]
+    C --> D[delphi_kb 精确搜索 + project_path]
     D --> E{搜到定义?}
     E -->|是| F[查看定义/继承链/参数]
     E -->|否| G[换名再搜或部分匹配]

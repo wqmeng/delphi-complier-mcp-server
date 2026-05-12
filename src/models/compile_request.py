@@ -10,9 +10,17 @@ from enum import Enum
 
 
 class TargetPlatform(Enum):
-    """目标平台枚举"""
+    """目标平台枚举（Delphi 支持的交叉编译目标）"""
     WIN32 = "win32"
     WIN64 = "win64"
+    OSX64 = "osx64"
+    OSXARM64 = "osxarm64"
+    IOSDEVICE64 = "iosdevice64"
+    IOSDEVICE = "iosdevice"
+    IOSSIMULATOR = "iossimulator"
+    ANDROID = "android"
+    ANDROID64 = "android64"
+    LINUX64 = "linux64"
 
 
 class OutputType(Enum):

@@ -124,7 +124,7 @@ async def search_documents(arguments: Any) -> CallToolResult:
     """搜索文档"""
     query = arguments.get("query")
     content_type = arguments.get("content_type")
-    top_k = arguments.get("top_k", 10)
+    top_k = min(arguments.get("top_k", 200), 500)
     
     if not query:
         return CallToolResult(

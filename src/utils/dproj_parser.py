@@ -417,3 +417,38 @@ class DprojParser:
             return True
 
         return False
+
+    def get_target_platform(self) -> Optional[str]:
+        """
+        从 .dproj 文件读取目标平台。
+        
+        在 PropertyGroup 中查找 <Platform> 元素，返回第一个非空值。
+        典型的 .dproj 格式:
+          <PropertyGroup Condition="'$(Base)'!=''">
+            <Platform>Win64</Platform>
+          </PropertyGroup>
+        
+        Delphi 支持的全部平台:
+          Win32, Win64, OSX64, OSXARM64,
+          iOSDevice64, iOSDevice, iOSSimulator,
+          Android, Android64, Linux64
+        
+        Returns:
+            平台名称（如 "Win64", "Android"），未找到则返回 None
+        """
+        VALID_PLATFORMS = {
+            'Win32', 'Win64', 'OSX64', 'OSXARM64',
+            'iOSDevice64', 'iOSDevice', 'iOSSimulator',
+            'Android', 'Android64', 'Linux64',
+        }
+        if not self.root:
+            return None
+
+        for prop_group in self._find_all_elements(self.root, "PropertyGroup"):
+            platform_elem = self._find_element(prop_group, "Platform")
+            if platform_elem is not None and platform_elem.text:
+                platform = platform_elem.text.strip()
+                if platform in VALID_PLATFORMS:
+                    return platform
+
+        return None

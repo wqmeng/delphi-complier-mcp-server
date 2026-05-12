@@ -95,6 +95,50 @@ KIND_UNIT = 'UI'       # unit in uses
 KIND_HELPER = 'TH'     # class helper for / record helper for
 
 
+def _add_func_entity(entities: List[Dict], content: str, match: re.Match, name: str, ret_type: Optional[str]) -> None:
+    """
+    通用函数实体添加逻辑
+    根据匹配文本中的关键字确定 kind 和 definition
+    
+    Args:
+        entities: 实体列表（追加写入）
+        content: 源文件内容
+        match: 正则匹配结果
+        name: 函数/过程名
+        ret_type: 返回类型（可能为 None）
+    """
+    line = content[:match.start()].count('\n') + 1
+    mt = match.group(0).strip().lower()
+    
+    # 根据关键字确定 kind 代码
+    if 'destructor' in mt:
+        kind = KIND_PROC
+        defn = 'destructor'
+    elif 'constructor' in mt:
+        kind = KIND_FUNC
+        defn = 'constructor'
+    elif 'operator' in mt:
+        kind = KIND_FUNC
+        defn = f'operator: {ret_type}' if ret_type else 'operator'
+    elif 'function' in mt:
+        kind = KIND_FUNC
+        defn = f'function: {ret_type}' if ret_type else 'function'
+    else:  # procedure
+        kind = KIND_PROC
+        defn = 'procedure'
+    
+    start_offset = match.start()
+    entities.append({
+        'name': name,
+        'kind': kind,
+        'parent': None,
+        'line': line,
+        'start_line': line,
+        'start_offset': start_offset,
+        'definition': defn
+    })
+
+
 def _extract_all_entities(content: str) -> List[Dict]:
     """
     提取所有实体（统一格式）
@@ -136,9 +180,11 @@ def _extract_all_entities(content: str) -> List[Dict]:
         })
     
     # 提取 interface 类型 (TI)
+    # _INTERFACE_PATTERN 组: 1=name, 2=keyword, 3=parent(可选)
     for match in _INTERFACE_PATTERN.finditer(content):
         name = match.group(1)
-        base = match.group(2)
+        base = match.group(3) if match.lastindex and match.lastindex >= 3 else None
+        kw = match.group(2).lower()
         start_line = content[:match.start()].count('\n') + 1
         start_offset = match.start()
         entities.append({
@@ -148,13 +194,14 @@ def _extract_all_entities(content: str) -> List[Dict]:
             'line': start_line,
             'start_line': start_line,
             'start_offset': start_offset,
-            'definition': f'interface({base})' if base else 'interface'
+            'definition': f'interface({base})' if base else kw
         })
     
     # 提取 class helper 类型 (TH)
+    # _HELPER_PATTERN 组: 1=name, 2=ancestor(可选), 3=target
     for match in _HELPER_PATTERN.finditer(content):
         name = match.group(1)
-        target = match.group(2)
+        target = match.group(3) if match.lastindex and match.lastindex >= 3 else match.group(2)
         start_line = content[:match.start()].count('\n') + 1
         start_offset = match.start()
         entities.append({
@@ -168,9 +215,10 @@ def _extract_all_entities(content: str) -> List[Dict]:
         })
     
     # 提取 record helper 类型 (TH)
+    # _RECORD_HELPER_PATTERN 组: 1=name, 2=ancestor(可选), 3=target
     for match in _RECORD_HELPER_PATTERN.finditer(content):
         name = match.group(1)
-        target = match.group(2)
+        target = match.group(3) if match.lastindex and match.lastindex >= 3 else match.group(2)
         start_line = content[:match.start()].count('\n') + 1
         start_offset = match.start()
         entities.append({
@@ -209,53 +257,18 @@ def _extract_all_entities(content: str) -> List[Dict]:
             'definition': 'set'
         })
     
-    # 提取 function (FF) - parent 在查询时动态计算
+    # 提取函数/过程/构造/析构/运算符 (FF/FP)
+    # 统一处理 _FUNC_PATTERN_1 (带参数统一模式)
     for match in _FUNC_PATTERN_1.finditer(content):
-        name = match.group(1)
-        ret_type = match.group(2)
-        line = content[:match.start()].count('\n') + 1
-        entities.append({
-            'name': name,
-            'kind': KIND_FUNC,
-            'parent': None,
-            'line': line,
-            'definition': f'function: {ret_type}'
-        })
+        _add_func_entity(entities, content, match, match.group(1), match.group(3) if match.lastindex and match.lastindex >= 3 else None)
     
-    # 提取 procedure (FP)
-    for match in _FUNC_PATTERN_2.finditer(content):
-        name = match.group(1)
-        line = content[:match.start()].count('\n') + 1
-        entities.append({
-            'name': name,
-            'kind': KIND_PROC,
-            'parent': None,
-            'line': line,
-            'definition': 'procedure'
-        })
-    
+    # 统一处理 _FUNC_PATTERN_3 (函数无参带返回值)
     for match in _FUNC_PATTERN_3.finditer(content):
-        name = match.group(1)
-        ret_type = match.group(2)
-        line = content[:match.start()].count('\n') + 1
-        entities.append({
-            'name': name,
-            'kind': KIND_FUNC,
-            'parent': None,
-            'line': line,
-            'definition': f'function: {ret_type}'
-        })
+        _add_func_entity(entities, content, match, match.group(1), match.group(2))
     
+    # 统一处理 _FUNC_PATTERN_4 (过程/构造/析构无参)
     for match in _FUNC_PATTERN_4.finditer(content):
-        name = match.group(1)
-        line = content[:match.start()].count('\n') + 1
-        entities.append({
-            'name': name,
-            'kind': KIND_PROC,
-            'parent': None,
-            'line': line,
-            'definition': 'procedure'
-        })
+        _add_func_entity(entities, content, match, match.group(1), None)
     
     # 提取 const (CC)
     for match in _CONST_PATTERN.finditer(content):
@@ -276,10 +289,12 @@ def _extract_all_entities(content: str) -> List[Dict]:
             'definition': value[:100]
         })
     
-    # 提取类型标注常量: SMenuSeparator: string = '-';
+    # 提取类型标注常量: MyVar: TypeName = Value;
+    # _CONST_PATTERN_TYPED 组: 1=name, 2=type, 3=value
     for match in _CONST_PATTERN_TYPED.finditer(content):
         name = match.group(1)
-        value = match.group(2).strip()
+        const_type = match.group(2).strip() if match.lastindex and match.lastindex >= 2 else ''
+        value = match.group(3).strip() if match.lastindex and match.lastindex >= 3 else ''
         line = content[:match.start()].count('\n') + 1
         
         entities.append({
@@ -307,7 +322,7 @@ def _extract_all_entities(content: str) -> List[Dict]:
     # 提取类型定义 (作为独立 type)
     for match in _TYPE_PATTERN_1.finditer(content):
         name = match.group(1)
-        type_def = match.group(2) if match.lastindex >= 2 else ''
+        type_def = match.group(2) if match.lastindex is not None and match.lastindex >= 2 else ''
         line = content[:match.start()].count('\n') + 1
         
         # 跳过已提取的 class/record/interface
@@ -323,15 +338,17 @@ def _extract_all_entities(content: str) -> List[Dict]:
         })
     
     # 提取指针类型: PPointerList = ^TPointerList;
+    # _TYPE_PATTERN_PTR 组: 1=name, 2=指向类型(可选)
     for match in _TYPE_PATTERN_PTR.finditer(content):
         name = match.group(1)
+        pointed = match.group(2).strip() if match.lastindex and match.lastindex >= 2 and match.group(2) else ''
         line = content[:match.start()].count('\n') + 1
         entities.append({
             'name': name,
             'kind': 'TY',
             'parent': None,
             'line': line,
-            'definition': 'pointer'
+            'definition': f'pointer to {pointed}' if pointed else 'pointer'
         })
     
     # 提取 TProc 等类型别名: TProc = procedure; (不带 type 关键字)
@@ -433,37 +450,180 @@ def _extract_uses(content: str) -> List[str]:
     return units
 
 
+# ============================================================
 # 预编译正则表达式
+# ============================================================
+
+# -------- 类型定义 --------
 # 支持泛型: TList<T>、TDictionary<TKey, TValue>、TMyClass<T: class>
-_CLASS_PATTERN = re.compile(r'^\s*(T[a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+(?:<[^>]+>)*>)?)\s*=\s*class\s*(?:\(\s*([^)]+)\))?\s*(?:sealed|abstract)?', re.MULTILINE | re.IGNORECASE)
+# class 定义: 排除 class of (metaclass), 父类支持泛型
+_CLASS_PATTERN = re.compile(
+    r'^\s*'
+    r'(T[a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+(?:<[^>]+>)*>)?)'   # 1: name (支持泛型)
+    r'\s*=\s*'
+    r'class\b(?!\s+of\b)'                                     # class 但排除 class of (metaclass)
+    r'\s*'
+    r'(?:\(\s*([a-zA-Z_][a-zA-Z0-9_.<>,\s]*(?:<[^>]+>)?)\s*\))?'  # 2: 父类(支持泛型)
+    r'\s*(?:sealed|abstract)?',
+    re.MULTILINE | re.IGNORECASE
+)
 _RECORD_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*=\s*record\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*\))?', re.MULTILINE | re.IGNORECASE)
-_INTERFACE_PATTERN = re.compile(r'^\s*(I[a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*=\s*interface\s*(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:<[^>]+>)?)\s*\))?', re.MULTILINE | re.IGNORECASE)
+# interface / dispinterface: 支持 GUID ['{...}'], 泛型父接口, 嵌套泛型
+_INTERFACE_PATTERN = re.compile(
+    r'^\s*'
+    r'([a-zA-Z_][a-zA-Z0-9_]*(?:<[^<>]*(?:<[^<>]*>)*>)?)'   # 1: name (支持嵌套泛型)
+    r'\s*=\s*'
+    r'(interface|dispinterface)\s*'                           # 2: 关键字
+    r'(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*(?:<[^<>]*(?:<[^<>]*>)*>)?)\s*\))?'  # 3: 父接口(支持泛型)
+    r'(?:\s*\[\s*[a-fA-F0-9\-\{\}"]+\s*\])?',                 # 可选 GUID ['{...}']
+    re.MULTILINE | re.IGNORECASE
+)
 # 匹配 class helper for TSomeClass 和 record helper for TSomeRecord
-_HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*class\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
-_RECORD_HELPER_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*record\s+helper\s+for\s+([a-zA-Z_][a-zA-Z0-9_]*)', re.MULTILINE | re.IGNORECASE)
+# class helper for: 可选祖先类, 目标支持泛型
+# 语法: identifierName = class helper [(ancestor list)] for TypeIdentifierName
+_HELPER_PATTERN = re.compile(
+    r'^\s*'
+    r'([a-zA-Z_][a-zA-Z0-9_]*)'                              # 1: helper name
+    r'\s*=\s*class\s+helper\s*'
+    r'(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'               # 2: 可选祖先 helper
+    r'\s*for\s+'
+    r'([a-zA-Z_][a-zA-Z0-9_<>,\s]*(?:<[^<>]*(?:<[^<>]*>)*>)?)',  # 3: 目标类型(支持泛型)
+    re.MULTILINE | re.IGNORECASE
+)
+# record helper for: 目标支持泛型(如 TList<T>), 枚举类型目标
+_RECORD_HELPER_PATTERN = re.compile(
+    r'^\s*'
+    r'([a-zA-Z_][a-zA-Z0-9_]*)'                              # 1: helper name
+    r'\s*=\s*record\s+helper\s*'
+    r'(?:\(\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\))?'               # 2: 可选祖先 helper
+    r'\s*for\s+'
+    r'([a-zA-Z_][a-zA-Z0-9_<>,\s]*(?:<[^<>]*(?:<[^<>]*>)*>)?)',  # 3: 目标类型(支持泛型)
+    re.MULTILINE | re.IGNORECASE
+)
 _ENUM_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\(([^)]+)\)\s*;(?!.*\bset\b)', re.MULTILINE | re.IGNORECASE)  # 排除 set of
 _SET_PATTERN = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*set\s+of\s+', re.MULTILINE | re.IGNORECASE)
 
-_FUNC_PATTERN_1 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
-_FUNC_PATTERN_2 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)', re.MULTILINE | re.IGNORECASE)
-_FUNC_PATTERN_3 = re.compile(r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^\s;]+)', re.MULTILINE | re.IGNORECASE)
-_FUNC_PATTERN_4 = re.compile(r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*;', re.MULTILINE | re.IGNORECASE)
+# -------- 函数/过程/构造/析构/运算符 定义 --------
+# 一个模式支持多种关键字（通过 group(1)=name, group(2)=return_type 保持兼容）
+# 向后兼容: function→KIND_FUNC, procedure→KIND_PROC, constructor→KIND_FUNC, destructor→KIND_PROC
+# 所有模式均在提取循环中检查 matched text 确定具体 kind
 
-# 支持批量常量: const L1=1;L2=3; 或 resourcestring S1='a';S2='b';
-_CONST_PATTERN = re.compile(r'^\s*(const|resourcestring)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
-# 支持类型标注常量: SMenuSeparator: string = '-'; 或 X = value;
-_CONST_PATTERN_TYPED = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*[^\s=]+\s*=\s*([^\n;]+)', re.MULTILINE | re.IGNORECASE)
+# Pattern 1 (统一带参模式): 所有带括号参数声明的函数/过程/构造/析构/运算符
+# 支持: 可选 class 前缀, 泛型类型参数 <T>, 嵌套括号参数, 可选返回类型
+# 匹配如:
+#   function Foo(x: Integer): string;
+#   procedure Bar(x, y: Integer);
+#   class function Create: TObject;
+#   class procedure Register;
+#   constructor Create(AOwner: TComponent);
+#   destructor Destroy; override;
+#   class operator Add(a, b: TPoint): TPoint;
+#   function ToArray<T>(x: T): TArray<T>;
+#   function Foo(a: array of (Integer, String)): Integer;
+_FUNC_PATTERN_1 = re.compile(
+    r'^\s*(?:'
+    r'(?:class\s+)?(?:function|procedure|constructor|destructor)'
+    r'|class\s+operator'
+    r')\s+'
+    r'([a-zA-Z_][a-zA-Z0-9_]*)'                             # 1: name
+    r'(?:<[^<>]*(?:<[^<>]*>)*>)?'                           # 可选泛型类型参数 <T>
+    r'\s*\('
+    r'([^()]*(?:\([^()]*\)[^()]*)*)'                         # 2: params (安全: O(n), 支持单层嵌套)
+    r'\)'
+    r'(?:\s*:\s*([^;]+?))?'                                  # 3: 可选返回类型 (非贪婪到 ;)
+    r'\s*;',
+    re.MULTILINE | re.IGNORECASE
+)
+
+# Pattern 2 (函数无参带返回值): function name: ReturnType;
+# 支持: class 前缀, 泛型类型参数
+_FUNC_PATTERN_3 = re.compile(
+    r'^\s*(?:class\s+)?function\s+'
+    r'([a-zA-Z_][a-zA-Z0-9_]*)'                             # 1: name
+    r'(?:<[^<>]*(?:<[^<>]*>)*>)?'                           # 可选泛型类型参数
+    r'\s*:\s*'
+    r'([^;]+?)'                                              # 2: return type (非贪婪到 ;)
+    r'\s*;',
+    re.MULTILINE | re.IGNORECASE
+)
+
+# Pattern 3 (过程/构造/析构无参): procedure name; / constructor Create; / destructor Destroy;
+# 支持: class 前缀, 泛型类型参数
+#   TMyProc = procedure;   ← procedure 不在行首，不匹配 ✓
+#   constructor Create;    ← constructor 在行首，匹配 ✓
+_FUNC_PATTERN_4 = re.compile(
+    r'^\s*(?:'
+    r'(?:class\s+)?(?:procedure|constructor|destructor)'
+    r')\s+'
+    r'([a-zA-Z_][a-zA-Z0-9_]*)'                             # 1: name
+    r'(?:<[^<>]*(?:<[^<>]*>)*>)?'                           # 可选泛型类型参数
+    r'\s*;',
+    re.MULTILINE | re.IGNORECASE
+)
+
+# -------- 常量定义 --------
+# 支持: const X = 值; resourcestring S = '...';
+# 支持多行值: const MyStr = 'Hello ' + \n    'World';
+_CONST_PATTERN = re.compile(
+    r'^\s*(const|resourcestring)\s+'                        # 1: const/resourcestring 关键字
+    r'([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*'                      # 2: name
+    r'([^;]+)'                                               # 3: value (允许多行，遇到 ; 结束)
+    r';',
+    re.MULTILINE | re.IGNORECASE
+)
+
+# 支持类型标注常量: X: TypeName = Value;
+# 类型名使用 [^;=]+? 非贪婪匹配以支持复杂类型（如 array[0..9] of Integer）
+_CONST_PATTERN_TYPED = re.compile(
+    r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*'                  # 1: name
+    r'([^;=]+?)\s*=\s*'                                      # 2: type (非贪婪到 =)
+    r'([^;]+)'                                               # 3: value
+    r';',
+    re.MULTILINE | re.IGNORECASE
+)
+
 # 支持简单常量: SIntOverflow = '...'; 或 toInteger = Char(3);
-# 排除类型定义: 右值以 record/class/interface/set/array/^/reference to/procedure/function 开头
-_CONST_PATTERN_SIMPLE = re.compile(r'^\s*([A-Z][a-zA-Z0-9_]*)\s*=\s*(?!record\b|class\b|interface\b|set\b|array\b|\^|reference\s+to\b|procedure\b|function\b)([^\s;{][^;{]*);', re.MULTILINE | re.IGNORECASE)
+# 排除类型定义: 右值以 record/class/interface/set/array/^/type/reference to/procedure/function 开头
+_CONST_PATTERN_SIMPLE = re.compile(
+    r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*'                  # 1: name (支持小写开头)
+    r'(?!record\b|class\b|interface\b|set\b|array\b|type\b'
+    r'|\^|reference\s+to\b|procedure\b|function\b)'          # 排除类型定义
+    r'([^\s;{][^;{]*)'                                       # 2: value
+    r';',
+    re.MULTILINE | re.IGNORECASE
+)
 
+# -------- 类型定义 --------
 _TYPE_PATTERN_1 = re.compile(r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.*?)(?:;|$)', re.MULTILINE | re.IGNORECASE)
 _TYPE_PATTERN_2 = re.compile(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(array|record|set|file|class|interface)\b', re.MULTILINE | re.IGNORECASE)
 # 匹配指针类型: PPointerList = ^TPointerList;
-_TYPE_PATTERN_PTR = re.compile(r'^\s*([PBT][A-Z][a-zA-Z0-9_]*)\s*=\s*\^', re.MULTILINE | re.IGNORECASE)
+# 匹配指针类型: PPointerList = ^TPointerList; 不再限制 P 前缀
+_TYPE_PATTERN_PTR = re.compile(
+    r'^\s*'
+    r'([a-zA-Z_][a-zA-Z0-9_]*)'                              # 1: name (不再强制 PBT 前缀)
+    r'\s*=\s*\^'
+    r'\s*([a-zA-Z_][a-zA-Z0-9_.<>,\s]*(?:<[^<>]*(?:<[^<>]*>)*>)?)?'  # 2: 可选指向类型(支持泛型)
+    r'\s*;',
+    re.MULTILINE | re.IGNORECASE
+)
 # 匹配: TProc = procedure; TNotifyEvent = procedure(Sender) of object; TCallback = reference to procedure(...);
 # 匹配函数类型: TListSortCompare = function(Item1, Item2: Pointer): Integer;
-_TYPE_PATTERN_3 = re.compile(r'^\s*(T[A-Z][a-zA-Z0-9_]*)\s*=\s*(reference\s+to\s+)?(procedure|function)\s*(\([^)]*\))?\s*(:[^\n;]+)?\s*(of\s+object)?;', re.MULTILINE | re.IGNORECASE)
+# 匹配: TProc = procedure; TNotifyEvent = procedure(Sender) of object;
+# TCallback = reference to procedure(...); TCompare = function(...): Integer;
+# 支持嵌套括号参数, 可选返回类型, of object, calling conventions
+_TYPE_PATTERN_3 = re.compile(
+    r'^\s*'
+    r'([a-zA-Z_][a-zA-Z0-9_]*)'                              # 1: name (不再限制 T 前缀)
+    r'\s*=\s*'
+    r'(reference\s+to\s+)?'                                   # 2: reference to
+    r'(procedure|function)\s*'                                # 3: procedure/function
+    r'(\([^()]*(?:\([^()]*\)[^()]*)*\))?'                     # 4: params (嵌套括号支持)
+    r'(?:\s*:\s*([^;]+?))?'                                    # 5: 可选返回类型
+    r'(\s+of\s+object)?'                                      # 6: 可选 of object (method pointer)
+    r'(?:\s+register|stdcall|cdecl|safecall|fastcall|pascal)?' # 可选 calling convention
+    r'\s*;',
+    re.MULTILINE | re.IGNORECASE
+)
 
 
 def _extract_classes(content: str) -> List[Dict]:
@@ -523,27 +683,26 @@ def _extract_classes(content: str) -> List[Dict]:
 
 
 def _extract_functions(content: str) -> List[Dict]:
-    """提取函数和过程"""
+    """提取函数和过程（兼容新统一模式）"""
     functions = []
     
     for match in _FUNC_PATTERN_1.finditer(content):
         func_name = match.group(1)
-        return_type = match.group(2) if match.lastindex and match.lastindex >= 2 else ''
+        return_type = match.group(3) if match.lastindex and match.lastindex >= 3 else ''
         line_num = content[:match.start()].count('\n') + 1
+        mt = match.group(0).lower()
+        if 'constructor' in mt:
+            kind = 'constructor'
+        elif 'destructor' in mt:
+            kind = 'destructor'
+        elif 'function' in mt or 'operator' in mt:
+            kind = 'function'
+        else:
+            kind = 'procedure'
         functions.append({
             'name': func_name,
             'return_type': return_type,
-            'kind': 'function',
-            'line': line_num
-        })
-    
-    for match in _FUNC_PATTERN_2.finditer(content):
-        func_name = match.group(1)
-        line_num = content[:match.start()].count('\n') + 1
-        functions.append({
-            'name': func_name,
-            'return_type': '',
-            'kind': 'procedure',
+            'kind': kind,
             'line': line_num
         })
     
@@ -551,20 +710,36 @@ def _extract_functions(content: str) -> List[Dict]:
         func_name = match.group(1)
         return_type = match.group(2) if match.lastindex and match.lastindex >= 2 else ''
         line_num = content[:match.start()].count('\n') + 1
+        mt = match.group(0).lower()
+        if 'constructor' in mt:
+            kind = 'constructor'
+        elif 'function' in mt or 'operator' in mt:
+            kind = 'function'
+        else:
+            kind = 'procedure'
         functions.append({
             'name': func_name,
             'return_type': return_type,
-            'kind': 'function',
+            'kind': kind,
             'line': line_num
         })
     
     for match in _FUNC_PATTERN_4.finditer(content):
         func_name = match.group(1)
         line_num = content[:match.start()].count('\n') + 1
+        mt = match.group(0).lower()
+        if 'destructor' in mt:
+            kind = 'destructor'
+        elif 'constructor' in mt:
+            kind = 'constructor'
+        elif 'procedure' in mt:
+            kind = 'procedure'
+        else:
+            kind = 'procedure'
         functions.append({
             'name': func_name,
             'return_type': '',
-            'kind': 'procedure',
+            'kind': kind,
             'line': line_num
         })
     
@@ -595,7 +770,7 @@ def _extract_types(content: str) -> List[Dict]:
     
     for match in _TYPE_PATTERN_1.finditer(content):
         type_name = match.group(1)
-        type_def = match.group(2) if match.lastindex >= 2 else ''
+        type_def = match.group(2) if match.lastindex is not None and match.lastindex >= 2 else ''
         line_num = content[:match.start()].count('\n') + 1
         
         types.append({
@@ -606,7 +781,7 @@ def _extract_types(content: str) -> List[Dict]:
     
     for match in _TYPE_PATTERN_2.finditer(content):
         type_name = match.group(1)
-        type_def = match.group(2) if match.lastindex >= 2 else ''
+        type_def = match.group(2) if match.lastindex is not None and match.lastindex >= 2 else ''
         line_num = content[:match.start()].count('\n') + 1
         
         types.append({
@@ -918,28 +1093,55 @@ class DelphiSourceScanner:
         return classes
 
     def extract_functions(self, content: str) -> List[Dict]:
-        """提取函数/过程定义"""
+        """提取函数/过程/构造/析构/运算符定义"""
         functions = []
 
-        # 匹配 function/procedure 声明
-        patterns = [
-            r'^\s*function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
-            r'^\s*procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
-            r'^\s*class\s+function\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
-            r'^\s*class\s+procedure\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\('
-        ]
+        # 使用模块级统一模式（支持 class/constructor/destructor/operator/泛型/嵌套括号）
+        # Pattern 1: 带括号参数的声明
+        for match in _FUNC_PATTERN_1.finditer(content):
+            func_name = match.group(1)
+            line_num = content[:match.start()].count('\n') + 1
+            mt = match.group(0).lower()
+            if 'destructor' in mt:
+                ftype = 'destructor'
+            elif 'constructor' in mt:
+                ftype = 'constructor'
+            elif 'function' in mt or 'operator' in mt:
+                ftype = 'function'
+            else:
+                ftype = 'procedure'
+            functions.append({
+                'name': func_name,
+                'line': line_num,
+                'type': ftype
+            })
 
-        for pattern in patterns:
-            matches = re.finditer(pattern, content, re.MULTILINE | re.IGNORECASE)
-            for match in matches:
-                func_name = match.group(1)
-                line_num = content[:match.start()].count('\n') + 1
+        # Pattern 3: function (无参) name: ReturnType;
+        for match in _FUNC_PATTERN_3.finditer(content):
+            func_name = match.group(1)
+            line_num = content[:match.start()].count('\n') + 1
+            functions.append({
+                'name': func_name,
+                'line': line_num,
+                'type': 'function'
+            })
 
-                functions.append({
-                    'name': func_name,
-                    'line': line_num,
-                    'type': 'function' if 'function' in match.group(0).lower() else 'procedure'
-                })
+        # Pattern 4: procedure/constructor/destructor (无参) name;
+        for match in _FUNC_PATTERN_4.finditer(content):
+            func_name = match.group(1)
+            line_num = content[:match.start()].count('\n') + 1
+            mt = match.group(0).lower()
+            if 'destructor' in mt:
+                ftype = 'destructor'
+            elif 'constructor' in mt:
+                ftype = 'constructor'
+            else:
+                ftype = 'procedure'
+            functions.append({
+                'name': func_name,
+                'line': line_num,
+                'type': ftype
+            })
 
         return functions
 

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.05.12] - 2026-05-12
+
+### Added
+
+- **正则表达式增强**：全面改进 Delphi 源码扫描器 regex，覆盖更多语法场景
+  - 函数/过程: 支持 `constructor`/`destructor`/`class function`/`class procedure`/`class operator`
+  - 函数参数: 支持泛型类型参数 `ToArray<T>`、嵌套括号 `(array of (Integer, String))`
+  - 类定义: 排除 `class of` metaclass 误匹配，父类支持泛型 `TList<T>`
+  - 接口: 支持 `dispinterface`、GUID `['{...}']` 语法
+  - Helper: 支持可选祖先类 `class helper (TBaseHelper) for`
+  - 指针: 放开 `PBT` 前缀限制，指向类型可显示
+  - 过程类型别名: 支持嵌套括号参数、calling convention
+  - 常量: 支持多行字符串值、小写开头的常量名、复杂类型标注 `array[0..9] of Integer`
+- **搜索增强**:
+  - `search_type="function"` 现在同时匹配函数(FF)和过程(FP)，vs `procedure` 只匹配 FP
+  - `search_by_name` 新增文件路径回退: 搜 `System.DateUtils` 返回该文件所有实体
+  - 默认 `top_k` 从 10 提升至 200，上限设为 500
+  - 截断提示: 结果显示 `(提示: 共 N 条结果，top_k=X，M 条未显示)`
+- **性能修复**: 修复 `_FUNC_PATTERN_1` 嵌套括号正则灾难性回溯（单文件从 219s → 0.002s）
+
+### Fixed
+
+- `SQLiteVectorKnowledgeBase._create_tables` 的 `metadata` 表结构与 `build_vector_index` INSERT 不匹配的 schema 问题
+- `get_index_hash` 兼容两种 metadata 存储格式
+- `match.lastindex` 缺乏 None 检查（3 处，预存 issue）
+- `_extract_functions` 引用已删除的 `_FUNC_PATTERN_2`
+
 ## [2026.05.09] - 2026-05-09
 
 ### Added

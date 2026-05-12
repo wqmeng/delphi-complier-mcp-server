@@ -332,7 +332,7 @@ If you need to manually configure or add a custom compiler, you can directly edi
 
 | Tool Name | Description | Key Parameters |
 |-----------|-------------|----------------|
-| `search_knowledge` | Search code/API/docs, build/view knowledge base | `action`(search/stats/build), `query`, `kb_type`, `search_type`, `top_k` |
+| `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`(function=functions+procedures, procedure=procedures only), `top_k`(default 200, max 500) |
 
 ### Source Code Tools
 

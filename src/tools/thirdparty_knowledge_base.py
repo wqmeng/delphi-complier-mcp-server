@@ -202,7 +202,7 @@ async def semantic_search_thirdparty(arguments: Any) -> CallToolResult:
     Args:
         arguments: 包含以下参数:
             - query: 搜索查询 (必需)
-            - top_k: 返回结果数量 (可选,默认 10)
+            - top_k: 返回结果数量 (可选,默认 200, 最大500)
 
     Returns:
         搜索结果
@@ -222,7 +222,7 @@ async def semantic_search_thirdparty(arguments: Any) -> CallToolResult:
             isError=True
         )
 
-    top_k = arguments.get("top_k", 10)
+    top_k = min(arguments.get("top_k", 200), 500)
 
     try:
         # 搜索类和函数

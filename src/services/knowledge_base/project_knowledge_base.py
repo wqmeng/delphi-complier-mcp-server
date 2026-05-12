@@ -347,6 +347,10 @@ class ProjectKnowledgeBase:
             conn = sqlite3.connect(str(db_file))
             cursor = conn.cursor()
 
+            # 设置 WAL 模式和超时，支持并发访问
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=10000")
+
             current_time = datetime.now().timestamp()
 
             # 创建统一Schema表
@@ -631,6 +635,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         db_file = self.kb_dir / "knowledge.sqlite"
         conn = sqlite3.connect(str(db_file))
         cursor = conn.cursor()
+        
+        # 设置 WAL 模式和超时，支持并发访问
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=10000")
         
         current_time = datetime.now().timestamp()
         
@@ -996,6 +1004,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 if db_file.exists():
                     conn = sqlite3.connect(str(db_file))
                     cursor = conn.cursor()
+                    cursor.execute("PRAGMA busy_timeout=5000")
 
                     project_stats = {}
                     # 新 schema: vocabularies 表 + type 列
@@ -1040,6 +1049,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 if db_file.exists():
                     conn = sqlite3.connect(str(db_file))
                     cursor = conn.cursor()
+                    cursor.execute("PRAGMA busy_timeout=5000")
 
                     thirdparty_stats = {}
                     # 新 schema: vocabularies 表 + type 列

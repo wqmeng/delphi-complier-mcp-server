@@ -465,8 +465,10 @@ class CompilerService:
             if request.options.output_path:
                 output_base = request.options.output_path
             else:
-                platform_dir = "Win64" if request.options.target_platform == TargetPlatform.WIN64 else "Win32"
-                output_base = str(Path(project_dir) / platform_dir)
+                # 平台→输出目录映射，从 ArgsGenerator 复用
+                from ..services.args_generator import ArgsGenerator
+                lib_dir = ArgsGenerator._PLATFORM_LIB_DIR.get(request.options.target_platform, 'Win32')
+                output_base = str(Path(project_dir) / lib_dir)
 
             # 确保输出目录存在
             Path(output_base).mkdir(parents=True, exist_ok=True)
@@ -492,10 +494,22 @@ class CompilerService:
                 compiler_path = compiler_config.path
 
             # 4. 根据目标平台选择编译器
-            if request.options.target_platform == TargetPlatform.WIN64:
-                if 'dcc32.exe' in compiler_path.lower():
-                    compiler_path = compiler_path.replace('dcc32.exe', 'dcc64.exe')
-                    logger.info(f"切换到 64 位编译器: {compiler_path}")
+            target_platform = request.options.target_platform
+            if target_platform != TargetPlatform.WIN32:
+                compiler_name = self._get_platform_compiler_name(target_platform)
+                bin_dir = Path(compiler_path).parent
+                target_compiler = str(bin_dir / compiler_name)
+                if Path(target_compiler).exists():
+                    compiler_path = target_compiler
+                    logger.info(f"切换到 {target_platform.value} 编译器: {compiler_path}")
+                else:
+                    # 跨平台编译器不存在，回退查找
+                    found = self._find_compiler_from_registry(target_platform)
+                    if found:
+                        compiler_path = found
+                        logger.info(f"从注册表找到 {target_platform.value} 编译器: {compiler_path}")
+                    else:
+                        logger.warning(f"{target_platform.value} 编译器 ({compiler_name}) 未找到，尝试使用 dcc32")
 
             # 5. 验证编译器路径
             is_valid, error_msg = self.validator.validate_compiler_path(compiler_path)
@@ -635,7 +649,9 @@ class CompilerService:
         unit_paths = options.unit_search_paths if options.unit_search_paths else []
         if not unit_paths:
             # 自动获取 Delphi 库搜索路径
-            platform = "Win32" if options.target_platform.value == "win32" else "Win64"
+            # 使用目标平台名（首字母大写，用于注册表查询）
+            from ..services.args_generator import ArgsGenerator
+            platform = ArgsGenerator._PLATFORM_LIB_DIR.get(options.target_platform, 'Win32')
             delphi_lib_paths = get_delphi_library_paths(platform=platform)
             # 展开路径中的宏变量
             for p in delphi_lib_paths:
@@ -688,17 +704,39 @@ class CompilerService:
         logger.debug(f"生成的 .dpr 编译参数: {' '.join(args)}")
         return args
 
-    def _find_dcc32_from_registry(self) -> Optional[str]:
-        """从注册表查找 dcc32.exe 路径"""
+    @staticmethod
+    def _get_platform_compiler_name(platform: TargetPlatform) -> str:
+        """根据目标平台返回编译器可执行文件名"""
+        _PLATFORM_COMPILER_MAP = {
+            TargetPlatform.WIN32: 'dcc32.exe',
+            TargetPlatform.WIN64: 'dcc64.exe',
+            TargetPlatform.OSX64: 'dccosx64.exe',
+            TargetPlatform.OSXARM64: 'dccosxarm64.exe',
+            TargetPlatform.IOSDEVICE64: 'dcciosarm64.exe',
+            TargetPlatform.IOSDEVICE: 'dcciosarm64.exe',
+            TargetPlatform.IOSSIMULATOR: 'dcciosarm64.exe',
+            TargetPlatform.ANDROID: 'dccaarm.exe',
+            TargetPlatform.ANDROID64: 'dccaac64.exe',
+            TargetPlatform.LINUX64: 'dcclinux64.exe',
+        }
+        return _PLATFORM_COMPILER_MAP.get(platform, 'dcc32.exe')
+
+    def _find_compiler_from_registry(self, platform: TargetPlatform) -> Optional[str]:
+        """从注册表查找指定平台的编译器路径"""
         root_dir = self._get_delphi_root_from_registry()
         if not root_dir:
             return None
 
-        dcc32_path = Path(root_dir) / "bin" / "dcc32.exe"
-        if dcc32_path.exists():
-            return str(dcc32_path)
+        compiler_name = self._get_platform_compiler_name(platform)
+        compiler_path = Path(root_dir) / "bin" / compiler_name
+        if compiler_path.exists():
+            return str(compiler_path)
 
         return None
+
+    def _find_dcc32_from_registry(self) -> Optional[str]:
+        """从注册表查找 dcc32.exe 路径（向后兼容）"""
+        return self._find_compiler_from_registry(TargetPlatform.WIN32)
 
     async def compile_project_with_msbuild(self, request: ProjectCompileRequest) -> CompileResult:
         """

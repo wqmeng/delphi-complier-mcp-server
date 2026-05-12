@@ -267,7 +267,7 @@ async def semantic_search_project(arguments: Any) -> CallToolResult:
         arguments: 包含以下参数:
             - project_path: 项目文件路径 (必需)
             - query: 搜索查询 (必需)
-            - top_k: 返回结果数量 (可选,默认 10)
+            - top_k: 返回结果数量 (可选,默认 200, 最大500)
             - search_in: 搜索范围 "project", "thirdparty", "all" (可选,默认 "all")
 
     Returns:
@@ -288,7 +288,7 @@ async def semantic_search_project(arguments: Any) -> CallToolResult:
             isError=True
         )
 
-    top_k = arguments.get("top_k", 10)
+    top_k = min(arguments.get("top_k", 200), 500)
     search_in = arguments.get("search_in", "all")
 
     try:

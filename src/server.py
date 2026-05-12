@@ -172,7 +172,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk)或PAS文件路径 [必需]"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64", "osx64", "osxarm64", "iosdevice64", "iosdevice", "iossimulator", "android", "android64", "linux64"], "default": "win32", "description": "目标平台"},
                         "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置(Debug/Release)"},
                         "output_path": {"type": "string", "description": "输出目录"},
                         "timeout": {"type": "integer", "default": 600, "description": "超时秒数"},
@@ -208,7 +208,7 @@ async def run_server():
                     "properties": {
                         "action": {"type": "string", "enum": ["search", "read", "stats", "build", "scan", "web", "build_embedding"], "default": "search", "description": "操作: search=语义/精确搜索; read=读取内容; stats=查看统计; build=构建知识库; scan=扫描文档目录(kb_type=document); web=添加网页文档(kb_type=document); build_embedding=构建embedding向量"},
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码, project=项目源码, thirdparty=三方库源码, document=通用文档(txt/md/html/docx/doc/pdf/epub/hlp/网页)"},
-                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses", "reference"], "default": "all", "description": "实体类型过滤（仅action=search）。all=全部类型, class=类(TC), function=函数(FF), reference=查找引用位置"},
+                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses", "reference"], "default": "all", "description": "实体类型过滤（仅action=search）。all=全部类型, class=类(TC), function=函数+过程(FF+FP), procedure=过程(FP), reference=查找引用位置"},
                         "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例: 'TStringList'（精确类名）、'Create'（函数名）、'TfrmMain'（项目自有类）、'SysUtils'（单元名）"},
                         "doc_id": {"type": "integer", "description": "文档ID（action=read时，与url/file_path三选一）"},
                         "url": {"type": "string", "description": "文档URL（action=read/web时）；网页URL（action=web时需要）"},
@@ -221,7 +221,7 @@ async def run_server():
                         "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（仅action=build）。false=尽可能增量更新"},
                         "incremental": {"type": "boolean", "default": False, "description": "增量构建，跳过CHM提取"},
                         "hash_mode": {"type": "string", "default": "mtime_size", "description": "变更检测模式（仅action=build）: mtime_size=快速(默认), md5=准确"},
-                        "top_k": {"type": "integer", "default": 10, "description": "最大返回结果数 1-50（仅action=search）"},
+                        "top_k": {"type": "integer", "default": 200, "description": "最大返回结果数 1-500（仅action=search）"},
                         "directory": {"type": "string", "description": "要扫描的目录路径（action=scan且kb_type=document时需要；action=build且kb_type=document时可选，不传则自动检测Delphi帮助目录）"},
                         "extensions": {"type": "array", "items": {"type": "string"}, "description": "文件扩展名列表（可选，如['.md', '.txt', '.html']；kb_type=document且不传时默认['.chm']）"},
                         "urls": {"type": "array", "items": {"type": "string"}, "description": "网页URL列表（action=build且kb_type=document时使用）"},
@@ -309,7 +309,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "package_path": {"type": "string", "description": "包文件路径(.dproj/.dpk/.groupproj)"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64", "osx64", "osxarm64", "iosdevice64", "iosdevice", "iossimulator", "android", "android64", "linux64"], "default": "win32", "description": "目标平台"},
                         "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置(Debug/Release)"},
                         "timeout": {"type": "integer", "default": 300, "description": "超时秒数"},
                         "install": {"type": "boolean", "default": True, "description": "是否自动安装到IDE"}

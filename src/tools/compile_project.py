@@ -84,7 +84,7 @@ def _detect_compiler_from_project(project_path: str, target_platform: str) -> Op
 
 async def compile_project(
     project_path: str,
-    target_platform: str = "win32",
+    target_platform: Optional[str] = None,
     output_path: Optional[str] = None,
     compiler_version: Optional[str] = None,
     timeout: int = 600,
@@ -105,7 +105,7 @@ async def compile_project(
 
     Args:
         project_path: 项目文件路径(.dproj/.dpr/.dpk)
-        target_platform: 目标平台(win32/win64)
+        target_platform: 目标平台(win32/win64/osx64/osxarm64/iosdevice64/android/linux64等，不传时从 .dproj 读取)
         output_path: 输出路径
         compiler_version: 编译器版本名称
         timeout: 超时时间(秒)
@@ -134,6 +134,23 @@ async def compile_project(
         )
 
     try:
+        # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
+        if not target_platform or target_platform == "win32":
+            try:
+                from ..utils.dproj_parser import DprojParser
+                parser = DprojParser(project_path)
+                if parser.parse():
+                    dproj_platform = parser.get_target_platform()
+                    if dproj_platform:
+                        target_platform = dproj_platform.lower()
+                        logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
+                    else:
+                        target_platform = "win32"
+            except Exception:
+                target_platform = "win32"
+        else:
+            target_platform = target_platform.lower()
+        
         # 检查是否为 .dpk 文件
         project_ext = Path(project_path).suffix.lower()
         

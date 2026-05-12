@@ -18,6 +18,22 @@ logger = get_logger(__name__)
 class ArgsGenerator:
     """Delphi 编译器参数生成器"""
 
+    # 平台→库目录映射
+    _PLATFORM_LIB_DIR = {
+        TargetPlatform.WIN32: 'Win32', TargetPlatform.WIN64: 'Win64',
+        TargetPlatform.OSX64: 'OSX64', TargetPlatform.OSXARM64: 'OSXARM64',
+        TargetPlatform.IOSDEVICE64: 'iOSDevice64', TargetPlatform.IOSDEVICE: 'iOSDevice',
+        TargetPlatform.IOSSIMULATOR: 'iOSSimulator',
+        TargetPlatform.ANDROID: 'Android', TargetPlatform.ANDROID64: 'Android64',
+        TargetPlatform.LINUX64: 'Linux64',
+    }
+
+    @staticmethod
+    def _get_platform_lib_path(delphi_version: str, platform: TargetPlatform) -> str:
+        """获取目标平台的库路径"""
+        lib_dir = self._PLATFORM_LIB_DIR.get(platform, 'Win32')
+        return f"C:/Program Files (x86)/Embarcadero/Studio/{delphi_version}/lib/{lib_dir}/release"
+
     def generate(self, project_path: str, options: CompileOptions) -> List[str]:
         """生成编译器参数列表"""
         args = []
@@ -160,14 +176,19 @@ class ArgsGenerator:
             ]
             args.append('-NS' + ";".join(default_namespaces))
 
-        # 添加Delphi标准库路径
+        # 添加Delphi标准库路径（按目标平台）
         from pathlib import Path
-        delphi_lib_path = Path(f"C:/Program Files (x86)/Embarcadero/Studio/{delphi_version}/lib/Win32/release")
+        if unit_search_paths is None:
+            unit_search_paths = []
+        delphi_lib_path = Path(self._get_platform_lib_path(delphi_version, options.target_platform))
         if delphi_lib_path.exists():
-            if unit_search_paths is None:
-                unit_search_paths = []
             # 将标准库路径添加到搜索路径的开头
             unit_search_paths.insert(0, str(delphi_lib_path))
+        else:
+            # 回退到 Win32 库路径
+            fallback = Path(self._get_platform_lib_path(delphi_version, TargetPlatform.WIN32))
+            if fallback.exists():
+                unit_search_paths.insert(0, str(fallback))
 
         # 单元搜索路径
         if unit_search_paths:

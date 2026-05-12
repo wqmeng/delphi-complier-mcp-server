@@ -24,7 +24,7 @@ def set_compiler_service(service: CompilerService):
 
 async def get_compiler_args(
     project_path: str,
-    target_platform: str = "win32",
+    target_platform: Optional[str] = None,
     output_path: Optional[str] = None,
     compiler_version: Optional[str] = None,
     conditional_defines: Optional[List[str]] = None,
@@ -43,7 +43,7 @@ async def get_compiler_args(
 
     Args:
         project_path: 项目文件路径(.dproj 或 .dpr)
-        target_platform: 目标平台(win32/win64)
+        target_platform: 目标平台(win32/win64/osx64/osxarm64/iosdevice64/android/linux64等)
         output_path: 输出路径
         compiler_version: 编译器版本名称
         conditional_defines: 条件编译符号列表
@@ -70,6 +70,23 @@ async def get_compiler_args(
         )
 
     try:
+        # 如果未指定目标平台（或为默认值"win32"），尝试从 .dproj 读取
+        if not target_platform or target_platform == "win32":
+            try:
+                from ..utils.dproj_parser import DprojParser
+                parser = DprojParser(project_path)
+                if parser.parse():
+                    dproj_platform = parser.get_target_platform()
+                    if dproj_platform:
+                        target_platform = dproj_platform.lower()
+                        logger.info(f"从 .dproj 读取到目标平台: {target_platform}")
+                    else:
+                        target_platform = "win32"
+            except Exception:
+                target_platform = "win32"
+        else:
+            target_platform = target_platform.lower()
+        
         # 构建编译选项
         options = CompileOptions(
             target_platform=TargetPlatform(target_platform),
