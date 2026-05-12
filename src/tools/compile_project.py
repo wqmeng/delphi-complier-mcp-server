@@ -82,6 +82,22 @@ def _detect_compiler_from_project(project_path: str, target_platform: str) -> Op
     return None
 
 
+def _cleanup_project_dcu(project_dir: Path):
+    """递归清理项目目录下的所有 .dcu / .dcpp / .dpu 缓存文件"""
+    import glob
+    patterns = ['**/*.dcu', '**/*.dcpp', '**/*.dpu']
+    deleted = 0
+    for pattern in patterns:
+        for f in Path(project_dir).glob(pattern):
+            try:
+                f.unlink()
+                deleted += 1
+            except Exception:
+                pass
+    if deleted > 0:
+        logger.info(f"已清理 {deleted} 个编译器缓存文件")
+
+
 async def compile_project(
     project_path: str,
     target_platform: Optional[str] = None,
@@ -190,6 +206,19 @@ async def compile_project(
 
         # 执行编译
         result = await _compiler_service.compile_project(request)
+
+        # F2084 Internal Error: 编译器内部错误，通常由损坏的 .dcu 缓存引起
+        # 自动清理 .dcu 后重新编译一次
+        if (result.status.value == "failed" and result.log and
+            ("F2084" in result.log or "Internal Error" in result.log)):
+            logger.warning("检测到编译器内部错误(F2084)，清理 .dcu 缓存后重新编译...")
+            from ..services.compiler_service import CompilerService
+            _cleanup_project_dcu(Path(project_path).parent)
+            result = await _compiler_service.compile_project(request)
+            if result.status.value == "success":
+                logger.info("清理 .dcu 后编译成功")
+            else:
+                logger.warning("清理 .dcu 后编译仍然失败")
 
         # 返回结果
         return CallToolResult(
