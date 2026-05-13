@@ -8,9 +8,12 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 提供知识库查询和管理的 MCP 工具
 """
 
+import logging
 from pathlib import Path
 from typing import Any, Optional
 from mcp.types import CallToolResult
+
+logger = logging.getLogger(__name__)
 
 # 统一的知识库服务实例
 _delphi_kb_service = None
@@ -219,6 +222,13 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
 
                             pkb = _get_or_create_pkb(project_path)
                             pkb.load_knowledge_bases()
+                            # 搜索前检查源码是否有变更（不阻塞重建，仅报告状态）
+                            if not pkb.check_and_update_project_kb():
+                                results["project_warning"] = (
+                                    "项目源码已变更，知识库数据可能不是最新。\n"
+                                    "请执行 delphi_kb(action='build', kb_type='project', "
+                                    f"project_path='{project_path}') 重建。"
+                                )
                             if pkb.project_kb is None:
                                 results["project_error"] = (
                                     f"项目知识库未构建。请先执行：\n"
@@ -275,6 +285,42 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                     try:
                         pkb = _get_or_create_pkb(project_path)
                         pkb.load_knowledge_bases()
+                        # 搜索前检查源码是否有变更，有则自动启动异步重建（防重入）
+                        if not pkb.check_and_update_project_kb():
+                            try:
+                                from ..services.knowledge_base.async_task_manager import get_task_manager
+                                from ..services.knowledge_base.project_knowledge_base import (
+                                    ProjectKnowledgeBase as _PKB,
+                                )
+
+                                _tm = get_task_manager()
+                                _rebuild_path = project_path
+                                _dedup_key = f"project_rebuild:{_rebuild_path}"
+
+                                def _rebuild_project_task(**kwargs):
+                                    _pp = kwargs.get("project_path")
+                                    _pc = kwargs.get("_progress_callback")
+                                    _p = _PKB(_pp, progress_callback=_pc)
+                                    # force_rebuild=False：增量构建，只扫描 hash 变化的文件
+                                    _p.build_project_knowledge_base(force_rebuild=False)
+                                    _p.close()
+                                    return True
+
+                                _task_id = _tm.submit_task(
+                                    f"重建项目知识库 ({Path(_rebuild_path).stem})",
+                                    _rebuild_project_task,
+                                    dedup_key=_dedup_key,
+                                    project_path=_rebuild_path,
+                                )
+                                results["project_async_task_id"] = _task_id
+                                logger.info(f"检测到项目源码变更，启动异步重建 task_id={_task_id}")
+                            except Exception as e:
+                                logger.warning(f"启动异步重建失败: {e}")
+                                results["project_warning"] = (
+                                    "项目源码已变更，知识库数据可能不是最新。\n"
+                                    "请执行 delphi_kb(action='build', kb_type='project', "
+                                    f"project_path='{project_path}') 手动重建。"
+                                )
                         # 如果知识库未构建，返回提示而非自动构建
                         if pkb.project_kb is None:
                             results["project_error"] = (
@@ -463,6 +509,21 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                     output += f"    引用单元: {', '.join(imported[:5])}\n"
             output += _trunc_hint(refs)
             output += "\n"
+            has_results = True
+
+    # 显示异步重建任务信息
+    if "project_async_task_id" in results:
+        output += (
+            f"【后台重建】检测到项目源码变更，已自动启动异步重建。\n"
+            f"  可通过 async_task(action='status', task_id='{results['project_async_task_id']}') 查询进度。\n"
+            f"  重建完成后重新搜索可获取最新数据。\n\n"
+        )
+        has_results = True
+
+    # 显示提示信息（如果有）
+    for warn_key in ["project_warning"]:
+        if warn_key in results and results[warn_key]:
+            output += f"【提示】{results[warn_key]}\n\n"
             has_results = True
 
     # 显示错误信息（如果有）

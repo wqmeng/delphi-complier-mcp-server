@@ -434,6 +434,14 @@ class ThirdPartyKnowledgeBase:
         
         return paths
 
+    def _report_progress(self, percent: float, message: str) -> None:
+        """报告进度（安全调用 progress_callback）"""
+        if self.progress_callback:
+            try:
+                self.progress_callback(percent, message)
+            except Exception:
+                pass
+
     def _save_paths(self, paths: List[str], version_info: Dict):
         """保存路径列表"""
         data = {
@@ -487,26 +495,34 @@ class ThirdPartyKnowledgeBase:
         total_files = 0
         total_lines = 0
 
-        for path in thirdparty_paths:
+        # 扫描所有支持的 Delphi 源文件扩展名
+        delphi_extensions = {'.pas', '.dpr', '.dpk', '.dfm', '.fmx', '.inc'}
+        total_paths = len(thirdparty_paths)
+
+        for pi, path in enumerate(thirdparty_paths):
+            self._report_progress(5 + (pi / total_paths) * 35,
+                                  f"扫描路径 [{pi+1}/{total_paths}]: {Path(path).name}")
             logger.info(f"扫描路径: {path}")
 
             try:
-                # 直接单线程扫描 (避免多进程问题)
                 source_dir = Path(path)
                 if not source_dir.exists():
                     continue
-                    
-                for file_path in source_dir.rglob('*.pas'):
-                    try:
-                        scanner = DelphiSourceScanner(str(file_path.parent), self.kb_dir)
-                        file_info = scanner.analyze_file(file_path)
-                        if file_info:
-                            all_source_files.append(file_info)
-                            total_files += 1
-                            total_lines += file_info.get('line_count', 0)
-                    except Exception as e:
-                        logger.debug(f"分析文件失败: {file_path}, {e}")
-                        
+
+                # 单线程扫描全部扩展名（避免多进程在异步线程中的兼容问题）
+                scanner = DelphiSourceScanner(str(source_dir), str(self.kb_dir))
+
+                for ext in delphi_extensions:
+                    for file_path in source_dir.rglob(f'*{ext}'):
+                        try:
+                            file_info = scanner.analyze_file(file_path)
+                            if file_info:
+                                all_source_files.append(file_info)
+                                total_files += 1
+                                total_lines += file_info.get('line_count', 0)
+                        except Exception as e:
+                            logger.debug(f"分析文件失败: {file_path}, {e}")
+
                 logger.info(f"  找到 {total_files} 个源文件")
 
                 # 扫描帮助文档
@@ -519,6 +535,7 @@ class ThirdPartyKnowledgeBase:
                 logger.warning(f"扫描路径失败 {path}: {e}")
                 continue
 
+        self._report_progress(40, f"扫描完成: {total_files} 个文件")
         logger.info(f"总共找到 {total_files} 个源文件, {total_lines} 行代码")
         logger.info(f"总共找到 {len(all_help_docs)} 个帮助文档")
 
@@ -565,19 +582,26 @@ class ThirdPartyKnowledgeBase:
                 existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
             logger.info(f"现有文件数: {len(existing_files)}")
         
-        # 增量构建：加载现有文件的hash
-        existing_files = {}
-        if not force_rebuild:
-            cursor.execute("SELECT id, full_path, hash FROM files")
-            for row in cursor.fetchall():
-                existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
-            logger.info(f"现有文件数: {len(existing_files)}")
-        
         # 使用统一 schema 创建表
         from src.services.knowledge_base.schema import create_source_tables
         create_source_tables(cursor)
         
+        # Schema 升级检测：v1→v2 清理重复词汇并创建唯一索引
+        from src.services.knowledge_base.schema import get_schema_version_from_db as _get_ver
+        if _get_ver(cursor) < 2:
+            cursor.execute("""
+                DELETE FROM vocabularies WHERE id NOT IN (
+                    SELECT MIN(id) FROM vocabularies GROUP BY type, name, file_id
+                )
+            """)
+            if cursor.rowcount > 0:
+                logger.info(f"升级 schema v1→v2：清理了 {cursor.rowcount} 条重复词汇记录")
+            else:
+                logger.info("升级 schema v1→v2：无重复词汇需清理")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vocabularies_dedup ON vocabularies(type, name, file_id)")
+        
         # 插入源文件
+        self._report_progress(45, f"保存 {len(unique_files)} 个源文件到数据库...")
         logger.info("保存源文件到数据库...")
         batch_size = 1000
         skipped_files = 0
@@ -652,7 +676,7 @@ class ThirdPartyKnowledgeBase:
             # 插入 vocabularies (类)
             for cls in file_info.get('classes', []):
                 cursor.execute("""
-INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -665,7 +689,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             # 插入 vocabularies (函数)
             for func in file_info.get('functions', []):
                 cursor.execute("""
-INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -678,7 +702,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             # 插入 vocabularies (常量)
             for const in file_info.get('constants', []):
                 cursor.execute("""
-INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
@@ -695,7 +719,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             for unit_name in unit_names:
                 if unit_name:
                     cursor.execute("""
-INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class,
+INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class,
     description, vector, vector_status, attributes, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
@@ -706,6 +730,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
             if (i + 1) % batch_size == 0:
                 conn.commit()
+                pct = 45 + ((i + 1) / len(unique_files)) * 40
+                self._report_progress(pct, f"保存源文件 [{i+1}/{len(unique_files)}]")
                 logger.info(f"  已处理 {i+1}/{len(unique_files)} 源文件")
         
         if not force_rebuild:
@@ -749,7 +775,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 # 插入 vocabularies (类)
                 for cls in help_doc.get('classes', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
@@ -762,7 +788,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 # 插入 vocabularies (函数)
                 for func in help_doc.get('functions', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
@@ -775,7 +801,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 # 插入 vocabularies (属性)
                 for prop in help_doc.get('properties', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
@@ -788,7 +814,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 # 插入 vocabularies (事件)
                 for event in help_doc.get('events', []):
                     cursor.execute("""
-                        INSERT INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
+                        INSERT OR IGNORE INTO vocabularies (type, name, name_lower, name_lower_rev, file_id, line, base_class, 
                             description, vector, vector_status, attributes, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
@@ -801,6 +827,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             conn.commit()
         
         # 统计
+        self._report_progress(90, "统计知识库数据...")
         cursor.execute("SELECT COUNT(*) FROM files WHERE category='source'")
         source_count = cursor.fetchone()[0]
         cursor.execute("SELECT COUNT(*) FROM files WHERE category='help'")
@@ -840,6 +867,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         logger.info(f"  帮助文档: {help_count}")
         logger.info(f"  类: {class_count}")
         logger.info(f"  函数: {func_count}")
+        self._report_progress(100, f"构建完成: {source_count} 源文件, {help_count} 帮助文档, {class_count} 类, {func_count} 函数")
 
         # 更新元数据
         self.metadata["total_paths"] = len(thirdparty_paths)

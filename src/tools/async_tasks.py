@@ -196,6 +196,20 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             if show_progress:
                 logger.info(f"任务进度: {progress:.1f}% - {message}")
 
+        # 计算去重键，防止同类型构建重复提交
+        dedup_key = params.pop("dedup_key", None)
+        if dedup_key is None:
+            if task_type == "init_project_knowledge_base":
+                dedup_key = f"project_rebuild:{params.get('project_path', '')}"
+            elif task_type == "build_thirdparty_knowledge_base":
+                dedup_key = "thirdparty_rebuild"
+            elif task_type == "build_knowledge_base":
+                dedup_key = "delphi_rebuild"
+            elif task_type == "build_document_knowledge_base":
+                dedup_key = f"document_rebuild:{params.get('directory', '')}"
+            elif task_type == "build_embedding":
+                dedup_key = f"embedding:{params.get('project_path', '')}"
+
         # 提交异步任务
         task_func = (
             build_kb_task if task_type == "build_knowledge_base" else
@@ -209,6 +223,7 @@ async def start_async_task(arguments: Any) -> CallToolResult:
             name=task_name,
             func=task_func,
             progress_callback=progress_callback if show_progress else None,
+            dedup_key=dedup_key,
             **params
         )
 

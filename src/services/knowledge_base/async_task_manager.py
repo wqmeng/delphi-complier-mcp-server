@@ -70,7 +70,28 @@ class AsyncTaskManager:
             self._task_counter += 1
             return f"task_{int(time.time())}_{self._task_counter}"
 
-    def submit_task(self, name: str, func: Callable, *args, progress_callback: Optional[Callable] = None, **kwargs) -> str:
+    def find_running_task_by_key(self, dedup_key: str) -> Optional[str]:
+        """
+        查找是否有正在运行或待处理的 dedup 任务
+
+        Args:
+            dedup_key: 去重键
+
+        Returns:
+            已有任务的 task_id，或 None
+        """
+        with self._lock:
+            for tid, info in self._tasks.items():
+                if info.status in (TaskStatus.RUNNING, TaskStatus.PENDING):
+                    stored_key = getattr(info, '_dedup_key', None)
+                    if stored_key == dedup_key:
+                        return tid
+        return None
+
+    def submit_task(self, name: str, func: Callable, *args,
+                    progress_callback: Optional[Callable] = None,
+                    dedup_key: Optional[str] = None,
+                    **kwargs) -> str:
         """
         提交后台任务
 
@@ -79,11 +100,19 @@ class AsyncTaskManager:
             func: 任务函数
             *args: 任务函数位置参数
             progress_callback: 进度回调函数
+            dedup_key: 去重键。同一 key 的任务已在运行/待处理时，返回已有 task_id
             **kwargs: 任务函数关键字参数
 
         Returns:
             任务ID
         """
+        # 防重入检查：同一 dedup_key 的任务已在运行则复用 task_id
+        if dedup_key is not None:
+            existing = self.find_running_task_by_key(dedup_key)
+            if existing is not None:
+                logger.info(f"复用已有任务 task_id={existing} (dedup_key={dedup_key})")
+                return existing
+
         task_id = self._generate_task_id()
 
         task_info = TaskInfo(
@@ -92,6 +121,7 @@ class AsyncTaskManager:
             status=TaskStatus.PENDING,
             created_at=datetime.now()
         )
+        task_info._dedup_key = dedup_key  # type: ignore
 
         with self._lock:
             self._tasks[task_id] = task_info

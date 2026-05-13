@@ -7,7 +7,6 @@ Delphi 源码知识库扫描器
 
 import os
 import json
-import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Set, Optional, Callable
@@ -44,7 +43,6 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
         with open(file_path, 'rb') as f:
             data = f.read()
         
-        md5_hash = hashlib.md5(data).hexdigest()
         content = data.decode('utf-8', errors='ignore')
         lines = content.split('\n')
         line_count = len(lines)
@@ -56,13 +54,15 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
         entities = _extract_all_entities(content)
         
         # 提取文件信息
+        # hash 使用 mtime+size，避免计算 MD5（除非 config.json 配置 hash_mode=md5）
+        file_hash = f"{stat_info.st_mtime}:{stat_info.st_size}"
         file_info = {
             'path': str(rel_path).replace('\\', '/'),
             'full_path': str(file_path),
             'extension': file_path.suffix.lower(),
             'size': stat_info.st_size,
             'line_count': line_count,
-            'hash': md5_hash,
+            'hash': file_hash,
             'last_modified': datetime.fromtimestamp(stat_info.st_mtime).isoformat(),
             'units': _extract_units(content),
             'uses': _extract_uses(content),
@@ -959,8 +959,9 @@ class DelphiSourceScanner:
     def analyze_file(self, file_path: Path) -> Dict:
         """分析单个文件"""
         try:
-            # 计算文件哈希
-            file_hash = self.calculate_file_hash(file_path)
+            # 一次 stat 获取所有元数据
+            stat = file_path.stat()
+            file_hash = f"{stat.st_mtime}:{stat.st_size}"
 
             # 读取文件内容
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -976,10 +977,10 @@ class DelphiSourceScanner:
                 'path': str(rel_path).replace('\\', '/'),
                 'full_path': str(file_path),
                 'extension': file_path.suffix.lower(),
-                'size': file_path.stat().st_size,
+                'size': stat.st_size,
                 'line_count': line_count,
                 'hash': file_hash,
-                'last_modified': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
+                'last_modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 'units': self.extract_units(content),
                 'uses': self.extract_uses(content),
                 'classes': self.extract_classes(content),
@@ -993,14 +994,6 @@ class DelphiSourceScanner:
         except Exception as e:
             print(f"分析文件失败 {file_path}: {e}")
             return None
-
-    def calculate_file_hash(self, file_path: Path) -> str:
-        """计算文件内容的 MD5 哈希"""
-        md5_hash = hashlib.md5()
-        with open(file_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(4096), b''):
-                md5_hash.update(chunk)
-        return md5_hash.hexdigest()
 
     def extract_units(self, content: str) -> List[str]:
         """提取 unit 名称"""

@@ -15,13 +15,14 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # Schema 版本管理
 # ============================================================
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 """
 当前知识库 schema 版本号。
-每次修改表结构时递增，用于在加载时检测旧库并提示重建。
+每次修改表结构时递增，用于在加载时检测旧库并执行升级迁移。
 
 版本历史:
-  - 1: 当前版本。vocabularies 统一 schema + relative_path 列 + name_lower_rev 反转索引 + metadata 版本管理
+  - 2: vocabularies 新增 (type, name, file_id) 唯一索引，去重处理。
+  - 1: 初始版本。vocabularies 统一 schema + relative_path + name_lower_rev 反转索引 + metadata 版本管理
 """
 
 SCHEMA_VERSION_KEY = 'schema_version'

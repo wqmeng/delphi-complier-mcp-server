@@ -1948,6 +1948,8 @@ class GenericDocumentScanner:
                     ('last_build_duration', str(duration)))
                 cursor.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
                     ('rebuilding', '0'))
+                from .schema import set_schema_version_in_db
+                set_schema_version_in_db(cursor)
                 conn.commit()
             except Exception:
                 pass
