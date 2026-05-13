@@ -950,7 +950,9 @@ class CompilerService:
             # 其他参数
             args.append("/v:minimal")  # 最小输出级别
             
-            logger.info(f"MSBuild 参数: {' '.join(args)}")
+            # 记录完整编译参数到日志
+            msbuild_cmd = f'msbuild {" ".join(args)}'
+            logger.info(f"MSBuild 参数: {msbuild_cmd}")
             
             # 5. 获取 rsvars.bat 路径
             rsvars_path = self._get_rsvars_path()
@@ -975,6 +977,9 @@ class CompilerService:
                 batch_file = f.name
             
             logger.info(f"创建批处理文件: {batch_file}")
+            logger.debug("=== 完整编译命令 ===\n"
+                         f"rsp: {rsvars_path}\n"
+                         f"{msbuild_cmd}")
             
             # 6. 执行批处理文件
             try:
@@ -989,6 +994,12 @@ class CompilerService:
                     os.unlink(batch_file)
                 except OSError:
                     pass
+                
+                # 记录 MSBuild 输出中的编译器版本/行数信息
+                for line in (stdout or '').split('\n'):
+                    line = line.strip()
+                    if line and ('Embarcadero Delphi' in line or 'dcc' in line.lower() or 'lines' in line.lower()):
+                        logger.debug(f"编译器输出: {line}")
                 
                 # 6. 解析输出
                 errors = self.output_parser.parse_errors(stdout + stderr)

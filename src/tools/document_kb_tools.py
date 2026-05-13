@@ -237,53 +237,51 @@ async def read_document(arguments: Any) -> CallToolResult:
     db_path = scanner.db_path
     
     try:
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("PRAGMA busy_timeout=10000")
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        
-        if doc_id:
-            cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
-        else:
-            cursor.execute("SELECT * FROM documents WHERE url = ?", (url,))
-        
-        row = cursor.fetchone()
-        conn.close()
-        
-        if not row:
-            return CallToolResult(
-                content=[{"type": "text", "text": f"未找到文档: {url or doc_id}"}],
-                isError=True
-            )
-        
-        doc = dict(row)
-        content = doc.get('content', '')
-        content_len = len(content)
-        
-        if offset < 0:
-            offset = 0
-        if limit > 20000:
-            limit = 20000
-        
-        content_slice = content[offset:offset + limit]
-        
-        output = f"文档: {doc.get('title', 'N/A')}\n"
-        output += f"类型: {doc.get('content_type', 'N/A')}\n"
-        if doc.get('url'):
-            output += f"URL: {doc.get('url')}\n"
-        output += f"大小: {doc.get('size', 0)} 字节\n"
-        output += f"内容长度: {content_len} 字符\n"
-        output += f"显示范围: {offset} - {offset + len(content_slice)}\n"
-        output += "=" * 60 + "\n\n"
-        output += content_slice
-        
-        if offset + limit < content_len:
-            remaining = content_len - (offset + limit)
-            output += f"\n... (还有 {remaining} 字符未显示) ...\n"
-            output += f"提示: 使用 offset={offset + limit} 继续读取\n"
-        
-        return CallToolResult(content=[{"type": "text", "text": output}])
-        
+        from src.services.knowledge_base.schema import use_connection
+        with use_connection(str(db_path), use_wal=False) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            if doc_id:
+                cursor.execute("SELECT * FROM documents WHERE id = ?", (doc_id,))
+            else:
+                cursor.execute("SELECT * FROM documents WHERE url = ?", (url,))
+            
+            row = cursor.fetchone()
+            
+            if not row:
+                return CallToolResult(
+                    content=[{"type": "text", "text": f"未找到文档: {url or doc_id}"}],
+                    isError=True
+                )
+            
+            doc = dict(row)
+            content = doc.get('content', '')
+            content_len = len(content)
+            
+            if offset < 0:
+                offset = 0
+            if limit > 20000:
+                limit = 20000
+            
+            content_slice = content[offset:offset + limit]
+            
+            output = f"文档: {doc.get('title', 'N/A')}\n"
+            output += f"类型: {doc.get('content_type', 'N/A')}\n"
+            if doc.get('url'):
+                output += f"URL: {doc.get('url')}\n"
+            output += f"大小: {doc.get('size', 0)} 字节\n"
+            output += f"内容长度: {content_len} 字符\n"
+            output += f"显示范围: {offset} - {offset + len(content_slice)}\n"
+            output += "=" * 60 + "\n\n"
+            output += content_slice
+            
+            if offset + limit < content_len:
+                remaining = content_len - (offset + limit)
+                output += f"\n... (还有 {remaining} 字符未显示) ...\n"
+                output += f"提示: 使用 offset={offset + limit} 继续读取\n"
+            
+            return CallToolResult(content=[{"type": "text", "text": output}])
     except Exception as e:
         return CallToolResult(
             content=[{"type": "text", "text": f"读取文档失败: {str(e)}"}],

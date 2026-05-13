@@ -145,23 +145,9 @@ class SmartCacheKnowledgeBase:
         Args:
             use_wal: 是否使用WAL模式（构建时用WAL获得更好写入性能，查询时用DELETE避免.wal文件残留）
         """
-        conn = sqlite3.connect(str(self.db_path))
+        from .schema import get_connection
+        conn = get_connection(str(self.db_path), use_wal=use_wal)
         conn.row_factory = sqlite3.Row
-        
-        # 性能优化
-        if use_wal:
-            conn.execute("PRAGMA journal_mode=WAL")      # 构建时用WAL，提升写入性能
-        else:
-            # 不切 journal_mode（不尝试 DELETE），避免与已有 WAL 连接冲突
-            # 其他组件（SQLiteVectorKnowledgeBase）已用 WAL 模式打开 DB
-            pass
-        conn.execute("PRAGMA synchronous=NORMAL")
-        
-        conn.execute("PRAGMA cache_size=-200000")       # ~200MB 缓存
-        conn.execute("PRAGMA temp_store=MEMORY")
-        conn.execute("PRAGMA busy_timeout=10000")        # 等待锁最长10秒
-        conn.execute("PRAGMA locking_mode=NORMAL")
-        
         return conn
     
     def _init_database(self):

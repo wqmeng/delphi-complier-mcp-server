@@ -98,6 +98,105 @@ def _cleanup_project_dcu(project_dir: Path):
         logger.info(f"已清理 {deleted} 个编译器缓存文件")
 
 
+def _check_and_clean_stale_resources(project_path: str, build_configuration: Optional[str] = None, target_platform: str = "win32") -> bool:
+    """
+    检测 .dproj 中引用的资源文件是否比已生成的 exe 更新。
+    如果资源文件更新，则删除对应的 .res 文件，强制 brcc32 重新编译。
+
+    .dproj 中每个 <RcItem Include="..."> 对应一个资源源文件，
+    编译器通过 brcc32 将其编译为 .res 后链接到 exe。
+    但 MSBuild 增量编译对 <RcItem> 的变更检测不可靠，
+    修改源文件后可能不会触发重新编译。
+
+    Returns:
+        True 表示有资源文件变更（已处理），False 表示无需处理
+    """
+    try:
+        proj_path = Path(project_path)
+        if not proj_path.exists():
+            return False
+
+        # 解析 .dproj 获取资源引用
+        parser = DprojParser(str(proj_path))
+        if not parser.parse():
+            return False
+
+        resources = parser.get_resource_items()
+        if not resources:
+            return False
+
+        # 获取输出 exe 路径
+        config = build_configuration or "Debug"
+        platform = target_platform or "win32"
+        # 统一平台名首字母大写: win32 → Win32, win64 → Win64
+        platform_cap = platform.capitalize() if platform in ("win32", "win64") else platform
+
+        exe_dir_str = parser.get_output_path(config=config, platform=platform_cap)
+        if not exe_dir_str:
+            # 尝试从 dproj 目录默认输出路径查找
+            project_dir = proj_path.parent
+            exe_dir = project_dir / platform_cap / config
+        else:
+            exe_dir = Path(exe_dir_str)
+
+        # 查找 exe
+        project_name = proj_path.stem
+        exe_path = exe_dir / f"{project_name}.exe"
+        if not exe_path.exists():
+            return False
+
+        exe_mtime = exe_path.stat().st_mtime
+
+        stale_resources = []
+        for res in resources:
+            src_path = res["source_path"]
+            src_file = Path(src_path)
+            if not src_file.exists():
+                continue
+            # 资源源文件比 exe 新 → 需要重新编译
+            if src_file.stat().st_mtime > exe_mtime:
+                stale_resources.append(res)
+
+        if not stale_resources:
+            return False
+
+        # 有资源变更: 删除可能生成的 .res 文件（brcc32 产物）和 .dcu 缓存
+        res_files_cleaned = 0
+        for res in stale_resources:
+            # brcc32 输出: 项目目录下同名的 .res 文件
+            src_file = Path(res["source_path"])
+            possible_res = src_file.with_suffix(".res")
+            if possible_res.exists():
+                possible_res.unlink()
+                res_files_cleaned += 1
+                logger.info(f"资源变更 → 已删除旧 .res: {possible_res.name}")
+
+        # 同时清理项目目录下可能存在的 .res 缓存
+        # Delphi 有时会在 $(BDS)\lib\$(Platform)\release 下生成 .res
+        for res in stale_resources:
+            res_name = f"{res['resource_id']}.res"
+            for cached in proj_path.parent.rglob(res_name):
+                try:
+                    cached.unlink()
+                    logger.info(f"资源变更 → 已删除缓存: {cached}")
+                except Exception:
+                    pass
+
+        # 也清理 .dcu 缓存（资源变动可能影响代码路径）
+        _cleanup_project_dcu(proj_path.parent)
+
+        logger.info(
+            f"检测到 {len(stale_resources)} 个资源文件已变更: "
+            + ", ".join(r["resource_id"] or r["include"] for r in stale_resources)
+            + "，已清理缓存，将执行完整重新编译"
+        )
+        return True
+
+    except Exception as e:
+        logger.warning(f"资源变更检测异常(不影响编译): {e}")
+        return False
+
+
 async def compile_project(
     project_path: str,
     target_platform: Optional[str] = None,
@@ -179,6 +278,9 @@ async def compile_project(
                 logger.info(f"自动检测到编译器: {compiler_version}")
             else:
                 logger.info("未自动检测到编译器,将使用默认编译器")
+
+        # 检查资源文件是否变更（自动清理缓存，强制重新编译）
+        _check_and_clean_stale_resources(project_path, build_configuration, target_platform)
 
         # 构建编译选项
         options = CompileOptions(

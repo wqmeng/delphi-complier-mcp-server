@@ -1,14 +1,20 @@
 """
-知识库 Schema 定义 —— 统一建表脚本
+知识库 Schema 定义 —— 统一建表脚本 + 数据库连接管理
 
 所有知识库构建器（SmartCache、ProjectKB、ThirdPartyKB、GenericDocumentKB）
-都应从此模块获取 CREATE TABLE SQL，确保表结构一致。
+都应从此模块获取 CREATE TABLE SQL 和 get_connection()，确保表结构和 PRAGMA 一致。
+
+注意: 不要在此模块导入任何会触发 ProcessPoolExecutor 子进程缓慢的重型库。
+当前导入均为 stdlib，安全。
 """
 
+import contextlib
 import json
 import logging
+import sqlite3
 from datetime import datetime
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -225,20 +231,65 @@ def drop_document_tables(cursor):
 # 通用 PRAGMA 设置
 # ============================================================
 
+def get_connection(db_path: str, use_wal: bool = True) -> sqlite3.Connection:
+    """
+    创建 SQLite 连接并应用统一的性能 PRAGMA 设置。
+
+    所有知识库代码应通过此函数获取连接，确保:
+    - PRAGMA 设置一致（避免 WAL/DELETE 混用导致 locked）
+    - busy_timeout 统一（避免 database is locked）
+    - 后续可集中调整连接参数
+
+    Args:
+        db_path: 数据库文件路径
+        use_wal: 是否使用 WAL 模式（构建=WAL 提升写性能，查询=DELETE 避免 .wal 残留）
+
+    Returns:
+        配置好的 sqlite3.Connection
+    """
+    conn = sqlite3.connect(str(db_path))
+    apply_performance_pragmas(conn, use_wal=use_wal)
+    return conn
+
+
+@contextlib.contextmanager
+def use_connection(db_path: str, use_wal: bool = True) -> Iterator[sqlite3.Connection]:
+    """
+    安全上下文: 创建连接 → yield → 自动关闭。
+    即使中间抛异常也能保证 conn.close() 被调用，避免资源泄漏。
+
+    Args:
+        db_path: 数据库文件路径
+        use_wal: 是否使用 WAL 模式
+
+    Yields:
+        sqlite3.Connection
+    """
+    conn = None
+    try:
+        conn = get_connection(db_path, use_wal=use_wal)
+        yield conn
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def apply_performance_pragmas(conn, use_wal: bool = False):
     """
     应用 SQLite 性能优化 PRAGMA
 
     Args:
         conn: SQLite 连接
-        use_wal: 是否使用 WAL 模式（构建时用 WAL 提升写入性能，查询时用 DELETE 避免 .wal 残留）
+        use_wal: 是否使用 WAL 模式。统一使用 WAL 避免模式切换冲突
+                 （DELETE 模式需要独占锁，同一 DB 已有 WAL 连接时会 locked）
     """
     if use_wal:
         conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
     else:
-        conn.execute("PRAGMA journal_mode=DELETE")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        # 查询也使用 WAL 模式，避免与已有 WAL 连接冲突
+        # PRAGMA journal_mode=DELETE 需要独占锁，会报 database is locked
+        conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-200000")
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA busy_timeout=10000")
@@ -262,5 +313,7 @@ __all__ = [
     'DOCUMENTS_INDEXES_SQL',
     'create_document_tables',
     'drop_document_tables',
+    'get_connection',
+    'use_connection',
     'apply_performance_pragmas',
 ]

@@ -295,7 +295,7 @@ class DelphiKnowledgeBaseService:
     def get_statistics(self) -> Dict:
         """获取知识库统计信息"""
         # 读取 config.json 获取数据库文件名
-        import sqlite3
+        from src.services.knowledge_base.schema import use_connection
         config_path = self.kb_dir / "config.json"
         db_file_name = "knowledge_base.sqlite"
         if config_path.exists():
@@ -314,10 +314,9 @@ class DelphiKnowledgeBaseService:
         if not db_file.exists():
             return {}
 
-        conn = sqlite3.connect(str(db_file))
-        cursor = conn.cursor()
-        stats = {}
-        try:
+        with use_connection(str(db_file), use_wal=False) as conn:
+            cursor = conn.cursor()
+            stats = {}
             # 检查表结构
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='files'")
             has_files = cursor.fetchone() is not None
@@ -339,7 +338,6 @@ class DelphiKnowledgeBaseService:
                 cursor.execute("SELECT COUNT(*) FROM vocabularies")
                 stats["vocabulary_size"] = cursor.fetchone()[0]
 
-                # 使用统一双字母类型代码
                 cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type IN ('TC', 'TR', 'TI', 'TE', 'TS', 'TY', 'TH')")
                 stats["classes"] = cursor.fetchone()[0]
 
@@ -366,9 +364,6 @@ class DelphiKnowledgeBaseService:
             except Exception:
                 stats["last_build_time"] = None
                 stats["last_build_duration"] = None
-
-        finally:
-            conn.close()
 
         return stats
 

@@ -418,6 +418,57 @@ class DprojParser:
 
         return False
 
+    def get_resource_items(self) -> List[Dict[str, str]]:
+        """
+        获取项目中所有的资源引用（RcItem 条目）。
+        
+        .dproj 格式:
+          <RcItem Include="templates/markdown.html">
+            <ContainerId>ResourceItem</ContainerId>
+            <ResourceType>RCDATA</ResourceType>
+            <ResourceId>Markdown</ResourceId>
+          </RcItem>
+        
+        Returns:
+            资源项列表，每项包含:
+              - include: 源文件路径(相对于 .dproj 目录)
+              - source_path: 源文件绝对路径
+              - resource_id: 资源 ID
+              - resource_type: 资源类型
+        """
+        if not self.root:
+            return []
+        
+        project_dir = Path(self.dproj_path).parent
+        resources: List[Dict[str, str]] = []
+        
+        for item_group in self._find_all_elements(self.root, "ItemGroup"):
+            for rc_item in self._find_all_elements(item_group, "RcItem"):
+                include = rc_item.get("Include", "")
+                if not include:
+                    continue
+                
+                resource_id = ""
+                resource_type = ""
+                
+                for child in rc_item:
+                    tag = child.tag
+                    if '}ResourceId' in tag and child.text:
+                        resource_id = child.text.strip()
+                    elif '}ResourceType' in tag and child.text:
+                        resource_type = child.text.strip()
+                
+                source_path = str((project_dir / include).resolve())
+                
+                resources.append({
+                    "include": include,
+                    "source_path": source_path,
+                    "resource_id": resource_id,
+                    "resource_type": resource_type,
+                })
+        
+        return resources
+
     def get_target_platform(self) -> Optional[str]:
         """
         从 .dproj 文件读取目标平台。

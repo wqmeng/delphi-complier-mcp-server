@@ -457,36 +457,34 @@ async def search_by_filename(arguments: Any) -> CallToolResult:
     search_in = arguments.get("search_in", "all")
 
     try:
-        import sqlite3
+        from src.services.knowledge_base.schema import use_connection
         from pathlib import Path
 
         results = []
 
         # 在第三方库中搜索
         if search_in in ["all", "thirdparty"]:
-            conn = sqlite3.connect(str(thirdparty_kb_service.kb_dir / 'knowledge.sqlite'))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
+            with use_connection(str(thirdparty_kb_service.kb_dir / 'knowledge.sqlite'), use_wal=False) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
 
-            # 使用 LIKE 进行通配符匹配
-            pattern = filename.replace('*', '%').replace('?', '_')
-            cursor.execute("""
-                SELECT path, full_path, extension, size, line_count FROM files
-                WHERE path LIKE ? OR full_path LIKE ?
-                ORDER BY path
-            """, (f'%{pattern}%', f'%{pattern}%'))
+                # 使用 LIKE 进行通配符匹配
+                pattern = filename.replace('*', '%').replace('?', '_')
+                cursor.execute("""
+                    SELECT path, full_path, extension, size, line_count FROM files
+                    WHERE path LIKE ? OR full_path LIKE ?
+                    ORDER BY path
+                """, (f'%{pattern}%', f'%{pattern}%'))
 
-            for row in cursor.fetchall():
-                results.append({
-                    'source': '第三方库',
-                    'path': row['path'],
-                    'full_path': row['full_path'],
-                    'extension': row['extension'],
-                    'size': row['size'],
-                    'line_count': row['line_count']
-                })
-
-            conn.close()
+                for row in cursor.fetchall():
+                    results.append({
+                        'source': '第三方库',
+                        'path': row['path'],
+                        'full_path': row['full_path'],
+                        'extension': row['extension'],
+                        'size': row['size'],
+                        'line_count': row['line_count']
+                    })
 
         if not results:
             return CallToolResult(

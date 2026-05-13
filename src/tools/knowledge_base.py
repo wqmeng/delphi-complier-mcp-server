@@ -647,11 +647,11 @@ async def get_unified_knowledge_stats(arguments: Any) -> CallToolResult:
     # 若 kb_type=all 或包含 document，补充文档知识库统计
     if kb_type in ("all", "document"):
         try:
-            import sqlite3
+            from src.services.knowledge_base.schema import use_connection
             server_root = Path(__file__).parent.parent.parent
             db_path = server_root / "data" / "document-knowledge-base" / "documents.sqlite"
             if db_path.exists():
-                with sqlite3.connect(str(db_path)) as conn:
+                with use_connection(str(db_path), use_wal=False) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT COUNT(*) FROM documents")
                     total = cursor.fetchone()[0]

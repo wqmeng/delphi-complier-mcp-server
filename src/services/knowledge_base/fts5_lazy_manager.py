@@ -5,6 +5,7 @@ FTS5 懒加载管理器
 支持按需增量构建全文索引，避免构建时生成索引数据
 """
 
+import contextlib
 import sqlite3
 import threading
 import time
@@ -68,6 +69,25 @@ class FTS5LazyManager:
         self._building = False
         self._build_lock = threading.Lock()
         self._last_build_time = 0
+
+    @contextlib.contextmanager
+    def _conn(self):
+        """获取自动关闭的数据库连接（context manager，防泄漏）"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    @contextlib.contextmanager
+    def _conn_row(self):
+        """获取 row_factory=sqlite3.Row 的自动关闭连接"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
         
     def create_fts_table(self, conn: sqlite3.Connection):
         """
@@ -106,20 +126,16 @@ class FTS5LazyManager:
             覆盖率（0.0 - 1.0）
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 获取 FTS5 文档数
-            cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
-            fts_count = cursor.fetchone()[0]
-            
-            # 获取主表文档数
-            cursor.execute(f"SELECT COUNT(*) FROM {self.main_table}")
-            total_count = cursor.fetchone()[0]
-            
-            conn.close()
-            
-            return fts_count / total_count if total_count > 0 else 0.0
+            with self._conn() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
+                fts_count = cursor.fetchone()[0]
+                
+                cursor.execute(f"SELECT COUNT(*) FROM {self.main_table}")
+                total_count = cursor.fetchone()[0]
+                
+                return fts_count / total_count if total_count > 0 else 0.0
         except Exception as e:
             logger.error(f"获取覆盖率失败: {e}")
             return 0.0
@@ -178,35 +194,31 @@ class FTS5LazyManager:
             搜索结果列表
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            safe_query = self._escape_fts_query(query)
-            
-            if use_bM25:
-                sql = f"""
-                    SELECT m.*, bm25({self.fts_table}) as score
-                    FROM {self.fts_table} f
-                    JOIN {self.main_table} m ON f.rowid = m.id
-                    WHERE {self.fts_table} MATCH ?
-                    ORDER BY bm25({self.fts_table})
-                    LIMIT ?
-                """
-            else:
-                sql = f"""
-                    SELECT m.*
-                    FROM {self.fts_table} f
-                    JOIN {self.main_table} m ON f.rowid = m.id
-                    WHERE {self.fts_table} MATCH ?
-                    LIMIT ?
-                """
-            
-            cursor.execute(sql, (safe_query, top_k))
-            results = [dict(row) for row in cursor.fetchall()]
-            
-            conn.close()
-            return results
+            with self._conn_row() as conn:
+                cursor = conn.cursor()
+                
+                safe_query = self._escape_fts_query(query)
+                
+                if use_bM25:
+                    sql = f"""
+                        SELECT m.*, bm25({self.fts_table}) as score
+                        FROM {self.fts_table} f
+                        JOIN {self.main_table} m ON f.rowid = m.id
+                        WHERE {self.fts_table} MATCH ?
+                        ORDER BY bm25({self.fts_table})
+                        LIMIT ?
+                    """
+                else:
+                    sql = f"""
+                        SELECT m.*
+                        FROM {self.fts_table} f
+                        JOIN {self.main_table} m ON f.rowid = m.id
+                        WHERE {self.fts_table} MATCH ?
+                        LIMIT ?
+                    """
+                
+                cursor.execute(sql, (safe_query, top_k))
+                return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"FTS5 搜索失败: {e}")
             return []
@@ -223,28 +235,23 @@ class FTS5LazyManager:
             搜索结果列表
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            # 构建 LIKE 条件
-            conditions = [f"{col} LIKE ?" for col in self.columns]
-            where_clause = " OR ".join(conditions)
-            params = [f'%{query}%' for _ in self.columns]
-            
-            sql = f"""
-                SELECT *
-                FROM {self.main_table}
-                WHERE {where_clause}
-                LIMIT ?
-            """
-            params.append(top_k)
-            
-            cursor.execute(sql, params)
-            results = [dict(row) for row in cursor.fetchall()]
-            
-            conn.close()
-            return results
+            with self._conn_row() as conn:
+                cursor = conn.cursor()
+                
+                conditions = [f"{col} LIKE ?" for col in self.columns]
+                where_clause = " OR ".join(conditions)
+                params = [f'%{query}%' for _ in self.columns]
+                
+                sql = f"""
+                    SELECT *
+                    FROM {self.main_table}
+                    WHERE {where_clause}
+                    LIMIT ?
+                """
+                params.append(top_k)
+                
+                cursor.execute(sql, params)
+                return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.error(f"降级搜索失败: {e}")
             return []
@@ -294,45 +301,38 @@ class FTS5LazyManager:
         后台构建工作线程
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            # 检查未索引的文档数
-            cursor.execute(f"""
-                SELECT COUNT(*) FROM {self.main_table}
-                WHERE id NOT IN (SELECT rowid FROM {self.fts_table})
-            """)
-            unindexed_count = cursor.fetchone()[0]
-            
-            if unindexed_count == 0:
-                logger.debug("所有文档已索引，跳过构建")
-                conn.close()
-                return
-            
-            logger.info(f"后台构建: 索引 {unindexed_count} 个文档...")
-            
-            # 批量索引未索引的文档
-            columns_list = ', '.join(self.columns)
-            cursor.execute(f"""
-                INSERT INTO {self.fts_table}(rowid, {columns_list})
-                SELECT id, {columns_list}
-                FROM {self.main_table}
-                WHERE id NOT IN (SELECT rowid FROM {self.fts_table})
-            """)
-            conn.commit()
-            
-            # 获取最终覆盖率
-            cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
-            fts_count = cursor.fetchone()[0]
-            
-            cursor.execute(f"SELECT COUNT(*) FROM {self.main_table}")
-            total_count = cursor.fetchone()[0]
-            
-            coverage = fts_count / total_count if total_count > 0 else 0.0
-            
-            logger.info(f"后台构建完成: {fts_count}/{total_count} 个文档已索引 (覆盖率: {coverage:.1%})")
-            
-            conn.close()
+            with self._conn() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {self.main_table}
+                    WHERE id NOT IN (SELECT rowid FROM {self.fts_table})
+                """)
+                unindexed_count = cursor.fetchone()[0]
+                
+                if unindexed_count == 0:
+                    logger.debug("所有文档已索引，跳过构建")
+                    return
+                
+                logger.info(f"后台构建: 索引 {unindexed_count} 个文档...")
+                
+                columns_list = ', '.join(self.columns)
+                cursor.execute(f"""
+                    INSERT INTO {self.fts_table}(rowid, {columns_list})
+                    SELECT id, {columns_list}
+                    FROM {self.main_table}
+                    WHERE id NOT IN (SELECT rowid FROM {self.fts_table})
+                """)
+                conn.commit()
+                
+                cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
+                fts_count = cursor.fetchone()[0]
+                
+                cursor.execute(f"SELECT COUNT(*) FROM {self.main_table}")
+                total_count = cursor.fetchone()[0]
+                
+                coverage = fts_count / total_count if total_count > 0 else 0.0
+                logger.info(f"后台构建完成: {fts_count}/{total_count} 个文档已索引 (覆盖率: {coverage:.1%})")
         except Exception as e:
             logger.error(f"后台构建失败: {e}")
         finally:
@@ -345,26 +345,22 @@ class FTS5LazyManager:
         """
         logger.info(f"全量重建 FTS5 索引: {self.fts_table}")
         
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with self._conn() as conn:
+            cursor = conn.cursor()
+            
+            cursor.execute(f"DELETE FROM {self.fts_table}")
+            
+            columns_list = ', '.join(self.columns)
+            cursor.execute(f"""
+                INSERT INTO {self.fts_table}(rowid, {columns_list})
+                SELECT id, {columns_list}
+                FROM {self.main_table}
+            """)
+            conn.commit()
+            
+            cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
+            count = cursor.fetchone()[0]
         
-        # 清空 FTS5 表
-        cursor.execute(f"DELETE FROM {self.fts_table}")
-        
-        # 重新索引所有文档
-        columns_list = ', '.join(self.columns)
-        cursor.execute(f"""
-            INSERT INTO {self.fts_table}(rowid, {columns_list})
-            SELECT id, {columns_list}
-            FROM {self.main_table}
-        """)
-        conn.commit()
-        
-        # 获取统计
-        cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
-        count = cursor.fetchone()[0]
-        
-        conn.close()
         logger.info(f"全量重建完成: {count} 个文档已索引")
     
     def get_statistics(self) -> Dict:
@@ -375,25 +371,23 @@ class FTS5LazyManager:
             统计信息字典
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            
-            cursor.execute(f"SELECT COUNT(*) FROM {self.main_table}")
-            total_count = cursor.fetchone()[0]
-            
-            cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
-            fts_count = cursor.fetchone()[0]
-            
-            conn.close()
-            
-            return {
-                'main_table': self.main_table,
-                'fts_table': self.fts_table,
-                'total_documents': total_count,
-                'indexed_documents': fts_count,
-                'coverage': fts_count / total_count if total_count > 0 else 0.0,
-                'is_building': self._building
-            }
+            with self._conn() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute(f"SELECT COUNT(*) FROM {self.main_table}")
+                total_count = cursor.fetchone()[0]
+                
+                cursor.execute(f"SELECT COUNT(*) FROM {self.fts_table}")
+                fts_count = cursor.fetchone()[0]
+                
+                return {
+                    'main_table': self.main_table,
+                    'fts_table': self.fts_table,
+                    'total_documents': total_count,
+                    'indexed_documents': fts_count,
+                    'coverage': fts_count / total_count if total_count > 0 else 0.0,
+                    'is_building': self._building
+                }
         except Exception as e:
             logger.error(f"获取统计失败: {e}")
             return {}

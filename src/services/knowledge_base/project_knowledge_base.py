@@ -14,16 +14,12 @@ import os
 import json
 import time
 import hashlib
+import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Callable
 from datetime import datetime
-
-from .scan_delphi_sources import DelphiSourceScanner
-from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
-from ...utils.dproj_parser import DprojParser
-from ...utils.logger import get_logger
-
-logger = get_logger(__name__)
+from src.services.knowledge_base.schema import get_connection, create_source_tables, get_schema_version_from_db
+from src.services.knowledge_base import set_schema_version_in_db
 
 
 class ProjectKnowledgeBase:
@@ -365,7 +361,6 @@ class ProjectKnowledgeBase:
                     all_files.append(file_info)
 
         # 直接写入 SQLite (统一Schema,与 build_project_knowledge_base 一致)
-        import sqlite3
         self._report_progress(40, f"保存 {len(all_files)} 个三方库文件到数据库...")
         logger.info("保存三方库源码到数据库...")
         db_file = thirdparty_kb_dir / "knowledge.sqlite"
@@ -373,17 +368,10 @@ class ProjectKnowledgeBase:
             db_file.unlink()
         conn = None
         try:
-            conn = sqlite3.connect(str(db_file))
+            conn = get_connection(str(db_file), use_wal=True)
             cursor = conn.cursor()
 
-            # 设置 WAL 模式和超时，支持并发访问
-            cursor.execute("PRAGMA journal_mode=WAL")
-            cursor.execute("PRAGMA busy_timeout=10000")
-
             current_time = datetime.now().timestamp()
-
-            # 使用统一 schema 创建表
-            from src.services.knowledge_base.schema import create_source_tables
             create_source_tables(cursor)
 
             # 插入文件数据
@@ -575,8 +563,6 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         Returns:
             是否构建成功
         """
-        import sqlite3
-        
         # 计算源码哈希
         current_hash = self._calculate_source_hash(self.project_dir)
         cached_hash = self.metadata.get("source_hash")
@@ -590,7 +576,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
         logger.info("开始构建项目源码知识库")
         self._report_progress(5, "扫描项目源码文件...")
-        import time; _build_start = time.time()
+        _build_start = time.time()
 
         # 项目源码知识库目录
         project_kb_dir = self.kb_dir
@@ -601,18 +587,14 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
         # 先连接 DB，加载现有文件 hash（用于增量跳过未变更文件）
         db_file = self.kb_dir / "knowledge.sqlite"
-        conn = sqlite3.connect(str(db_file))
+        conn = get_connection(str(db_file), use_wal=True)
         cursor = conn.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=10000")
 
         current_time = datetime.now().timestamp()
-        from src.services.knowledge_base.schema import create_source_tables
         create_source_tables(cursor)
 
         # Schema 升级检测：v1→v2 清理重复词汇并创建唯一索引
-        from src.services.knowledge_base.schema import get_schema_version_from_db as _get_ver
-        if _get_ver(cursor) < 2:
+        if get_schema_version_from_db(cursor) < 2:
             cursor.execute("""
                 DELETE FROM vocabularies WHERE id NOT IN (
                     SELECT MIN(id) FROM vocabularies GROUP BY type, name, file_id
@@ -836,9 +818,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
             ('last_build_duration', str(int(time.time() - _build_start)), current_time))
         # 记录 schema 版本号
-        from src.services.knowledge_base import set_schema_version_in_db
         set_schema_version_in_db(cursor)
-        
         conn.commit()
         conn.close()
         
@@ -1051,15 +1031,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
         if self.project_kb:
             try:
-                import sqlite3
                 db_file = Path(self.project_kb.db_file)
                 if db_file.exists():
-                    conn = sqlite3.connect(str(db_file))
+                    conn = get_connection(str(db_file), use_wal=False)
                     cursor = conn.cursor()
-                    cursor.execute("PRAGMA busy_timeout=5000")
 
                     project_stats = {}
-                    # 新 schema: vocabularies 表 + type 列
                     try:
                         cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE type='TC'")
                         project_stats["classes"] = cursor.fetchone()[0]
@@ -1096,12 +1073,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
         if self.thirdparty_kb:
             try:
-                import sqlite3
                 db_file = Path(self.thirdparty_kb.db_file)
                 if db_file.exists():
-                    conn = sqlite3.connect(str(db_file))
+                    conn = get_connection(str(db_file), use_wal=False)
                     cursor = conn.cursor()
-                    cursor.execute("PRAGMA busy_timeout=5000")
 
                     thirdparty_stats = {}
                     # 新 schema: vocabularies 表 + type 列

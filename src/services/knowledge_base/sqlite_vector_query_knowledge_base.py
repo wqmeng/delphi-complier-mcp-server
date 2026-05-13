@@ -56,14 +56,11 @@ class SQLiteVectorKnowledgeBase:
 
     def _create_connection(self) -> sqlite3.Connection:
         """创建新的数据库连接"""
-        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        from .schema import get_connection
+        conn = get_connection(self._db_path, use_wal=True)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA cache_size=-64000")
-        conn.execute("PRAGMA temp_store=MEMORY")
+        # 额外设置（线程安全 + 大 mmap 用于只读查询）
         conn.execute("PRAGMA mmap_size=268435456")
-        conn.execute("PRAGMA busy_timeout=10000")
         return conn
 
     def _close_connection(self):

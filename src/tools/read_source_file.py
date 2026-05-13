@@ -50,31 +50,31 @@ def _search_project_kb_db(project_path: str, file_path: str) -> Optional[Path]:
         db_file = kb_dir / "knowledge.sqlite"
         if not db_file.exists():
             return None
-        conn = sqlite3.connect(str(db_file))
-        conn.row_factory = sqlite3.Row
-        c = conn.cursor()
-        normalized = file_path.replace('\\', '/')
-        backslashed = file_path.replace('/', '\\')
-        name_part = Path(file_path).name
-        c.execute("""
-            SELECT full_path FROM files
-            WHERE full_path = ? OR full_path = ? OR full_path = ?
-               OR full_path LIKE ? OR full_path LIKE ?
-               OR relative_path = ? OR relative_path = ? OR relative_path = ?
-               OR relative_path LIKE ? OR relative_path LIKE ?
-               OR relative_path LIKE ?
-            LIMIT 1
-        """, (
-            file_path, normalized, backslashed,
-            f'%/{normalized}', f'%\\{backslashed}',
-            file_path, normalized, backslashed,
-            f'%/{normalized}', f'%\\{backslashed}',
-            f'%/{name_part}'
-        ))
-        row = c.fetchone()
-        conn.close()
-        if row and row['full_path'] and Path(row['full_path']).exists():
-            return Path(row['full_path'])
+        from src.services.knowledge_base.schema import use_connection
+        with use_connection(str(db_file), use_wal=False) as conn:
+            conn.row_factory = sqlite3.Row
+            c = conn.cursor()
+            normalized = file_path.replace('\\', '/')
+            backslashed = file_path.replace('/', '\\')
+            name_part = Path(file_path).name
+            c.execute("""
+                SELECT full_path FROM files
+                WHERE full_path = ? OR full_path = ? OR full_path = ?
+                   OR full_path LIKE ? OR full_path LIKE ?
+                   OR relative_path = ? OR relative_path = ? OR relative_path = ?
+                   OR relative_path LIKE ? OR relative_path LIKE ?
+                   OR relative_path LIKE ?
+                LIMIT 1
+            """, (
+                file_path, normalized, backslashed,
+                f'%/{normalized}', f'%\\{backslashed}',
+                file_path, normalized, backslashed,
+                f'%/{normalized}', f'%\\{backslashed}',
+                f'%/{name_part}'
+            ))
+            row = c.fetchone()
+            if row and row['full_path'] and Path(row['full_path']).exists():
+                return Path(row['full_path'])
     except Exception:
         pass
     return None
@@ -117,37 +117,37 @@ def _find_file_in_knowledge_base(file_path: str, project_path: Optional[str] = N
             if not db_path.exists():
                 continue
             
-            conn = sqlite3.connect(str(db_path))
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()
-            
-            # 检测 files 表的路径列名
-            cursor.execute(f"PRAGMA table_info(files)")
-            col_names = {r['name'] for r in cursor.fetchall()}
-            path_col = 'relative_path' if 'relative_path' in col_names else 'path'
-            
-            # 多策略匹配：
-            #   1) 精确匹配（原始路径、正斜杠、反斜杠三种格式）
-            #   2) LIKE 模糊匹配（路径后缀匹配，处理两种分隔符）
-            #   3) 按文件名后缀匹配
-            cursor.execute(f"""
-                SELECT full_path FROM files 
-                WHERE {path_col} = ? OR {path_col} = ? OR {path_col} = ?
-                   OR {path_col} LIKE ? OR {path_col} LIKE ?
-                   OR {path_col} LIKE ? OR {path_col} LIKE ?
-                   OR full_path LIKE ? OR full_path LIKE ?
-                   OR {path_col} LIKE ?
-                LIMIT 1
-            """, (
-                file_path, normalized, backslashed,
-                f'%/{normalized}', f'%\\{normalized}',
-                f'%/{backslashed}', f'%\\{backslashed}',
-                f'%/{normalized}', f'%\\{backslashed}',
-                f'%/{name_part}'
-            ))
-            
-            row = cursor.fetchone()
-            conn.close()
+            from src.services.knowledge_base.schema import use_connection
+            with use_connection(str(db_path), use_wal=False) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                # 检测 files 表的路径列名
+                cursor.execute(f"PRAGMA table_info(files)")
+                col_names = {r['name'] for r in cursor.fetchall()}
+                path_col = 'relative_path' if 'relative_path' in col_names else 'path'
+                
+                # 多策略匹配：
+                #   1) 精确匹配（原始路径、正斜杠、反斜杠三种格式）
+                #   2) LIKE 模糊匹配（路径后缀匹配，处理两种分隔符）
+                #   3) 按文件名后缀匹配
+                cursor.execute(f"""
+                    SELECT full_path FROM files 
+                    WHERE {path_col} = ? OR {path_col} = ? OR {path_col} = ?
+                       OR {path_col} LIKE ? OR {path_col} LIKE ?
+                       OR {path_col} LIKE ? OR {path_col} LIKE ?
+                       OR full_path LIKE ? OR full_path LIKE ?
+                       OR {path_col} LIKE ?
+                    LIMIT 1
+                """, (
+                    file_path, normalized, backslashed,
+                    f'%/{normalized}', f'%\\{normalized}',
+                    f'%/{backslashed}', f'%\\{backslashed}',
+                    f'%/{normalized}', f'%\\{backslashed}',
+                    f'%/{name_part}'
+                ))
+                
+                row = cursor.fetchone()
             
             if row and row['full_path'] and Path(row['full_path']).exists():
                 return Path(row['full_path'])
@@ -379,14 +379,14 @@ async def search_and_read_file(arguments: Any) -> CallToolResult:
                 try:
                     db_path = _get_kb_db_path(kb)
                     if db_path.exists():
-                        conn = sqlite3.connect(str(db_path))
-                        conn.row_factory = sqlite3.Row
-                        cur = conn.cursor()
-                        cur.execute("SELECT full_path, relative_path, path FROM files WHERE id = ?", (file_id,))
-                        row = cur.fetchone()
-                        if row:
-                            file_path = row['full_path'] or row['relative_path'] or row['path']
-                        conn.close()
+                        from src.services.knowledge_base.schema import use_connection
+                        with use_connection(str(db_path), use_wal=False) as conn:
+                            conn.row_factory = sqlite3.Row
+                            cur = conn.cursor()
+                            cur.execute("SELECT full_path, relative_path, path FROM files WHERE id = ?", (file_id,))
+                            row = cur.fetchone()
+                            if row:
+                                file_path = row['full_path'] or row['relative_path'] or row['path']
                 except Exception:
                     pass
         

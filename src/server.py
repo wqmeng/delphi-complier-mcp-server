@@ -68,7 +68,7 @@ else:
     from src.tools import pasfmt
     from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
     from src.tools import document_kb_tools as doc_tools
-    from src.utils.logger import init_default_logger, get_logger
+    from src.utils.logger import init_default_logger, get_logger, log_api_call
     from src.__version__ import __version__, __copyright__
 
     # 初始化日志
@@ -754,6 +754,11 @@ async def run_server():
                     if isinstance(msg, str):
                         result['message'] = msg + "\n\n" + hint
 
+            # ============================================================
+            # P3: API 调用日志 (受 log_api_calls 开关控制)
+            # ============================================================
+            log_api_call(logger, name, arguments, result)
+
             # 统一返回格式：确保返回 CallToolResult
             if isinstance(result, dict):
                 text = str(result.get('message', str(result)))
@@ -767,6 +772,8 @@ async def run_server():
                 return result
 
         except Exception as e:
+            # 异常也记录到 API 日志
+            log_api_call(logger, name, arguments, {"error": str(e)})
             logger.error(f"工具调用失败: {str(e)}", exc_info=True)
             return CallToolResult(
                 content=[TextContent(type="text", text=f"错误: {str(e)}")],

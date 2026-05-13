@@ -18,6 +18,7 @@ import re
 import json
 import time
 import hashlib
+import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Callable
 from datetime import datetime
@@ -42,7 +43,6 @@ except ImportError:
 
     # 测试模式下 fallback 实现
     def expand_delphi_path_macros(path: str, version: Optional[str] = None) -> str:
-        import os
         return os.path.expandvars(path)
 
     def get_delphi_version() -> Optional[str]:
@@ -247,7 +247,6 @@ class ThirdPartyKnowledgeBase:
         Returns:
             是否是系统路径
         """
-        import os
         path_lower = path.lower()
 
         # 检查是否包含 Delphi 系统路径变量
