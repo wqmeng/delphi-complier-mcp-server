@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "delphi-mcp-server"
-version = "2026.4.30"
-description = "MCP Server for Delphi project compilation"
+version = "2026.05.13"
+description = "MCP Server for Delphi project compilation and knowledge base query"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "吉林省左右软件开发有限公司", email = "admin@zuoyousoft.com"},
+    {name = "Equilibrium Software Development Co., Ltd, Jilin"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

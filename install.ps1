@@ -1505,7 +1505,7 @@ function Main {
         Write-Info "使用方法:"
         Write-Host "  在 AI Agent 中直接使用 MCP 工具，例如:" -ForegroundColor White
         Write-Host "  - compile_project: 编译 Delphi 项目" -ForegroundColor Gray
-        Write-Host "  - search_knowledge: 搜索 Delphi 知识库" -ForegroundColor Gray
+        Write-Host "  - delphi_kb: 搜索 Delphi 知识库" -ForegroundColor Gray
         Write-Host "  - check_environment: 检查编译环境" -ForegroundColor Gray
     }
 

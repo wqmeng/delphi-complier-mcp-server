@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.05.13] - 2026-05-13
+
+### Changed
+
+- 文档同步：精简 README/CHANGELOG，移除冗余版本历史
+- pyproject.toml 版本更新为 2026.05.13
+- 修复 README_EN.md 中过时引用 (search_knowledge → delphi_kb)
+- 合并 CHANGELOG 重复章节
+
 ## [2026.05.12] - 2026-05-12
 
 ### Added
@@ -95,24 +104,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- 移除 `embedding_service.py` 中未使用的 `vector_to_blob()` 函数和 `Tuple` import
-
-### Removed
-
 - **帮助知识库全线删除**：`services/knowledge_base/help_knowledge_base.py`（2086 行）+ `tools/help_knowledge_base.py`（815 行）
 - `kb_type` 枚举移除 `help`，清理 `server.py`、`knowledge_base.py`、`__init__.py` 中所有引用
 - 移除 `_IN_PROCESS_POOL_WORKER` 环境变量（`smart_cache_knowledge_base.py`、`sqlite_vector_query_knowledge_base.py`）
+- 移除 `embedding_service.py` 中未使用的 `vector_to_blob()` 函数和 `Tuple` import
+
+## [2026.05.01] - 2026-05-01
+
+### Removed
+
+- **帮助知识库全线删除**：全线删除 `help_knowledge_base.py`（服务层 + 工具层，共 2901 行）
+- `kb_type` 枚举移除 `help`，清理所有引用
+- 功能完全由文档知识库（CHM 全文搜索）+ 源码知识库（类/函数定义）覆盖
 
 ### Added
 
-- **文档知识库 CHM 格式支持**：新增 `ChmProcessor`，使用 7z 解压 CHM 后导入 HTML 文档
-  - 7z 排除图片/CSS/JS 等辅助文件，仅提取 HTML
-  - 搜索路径：`tools/7z/` > Program Files > Program Files (x86)
-  - 未安装时返回下载地址提示（官网 / SourceForge）
-- **文档知识库扫描引擎优化**
-  - `executor.map()` → `as_completed()`：边处理边提交，每 500 文档自动 commit
-  - `max_workers` 公式：`min(max(2, cpu_cores-1), total_files)`
-  - `chunksize` 动态计算：`min(avg_per_worker, batch_size)`
+- **文档知识库新增 CHM 格式支持**
+  - `ChmProcessor`：使用 7z 解压 CHM，自动跳过图片/CSS/JS 等辅助文件
+  - 搜索 7z 路径：`tools/7z/` → `Program Files` → `Program Files (x86)`
+  - 未安装 7z 时返回有效下载地址（官网 / SourceForge）
+- **扫描引擎优化**
+  - `executor.map()` 改为 `as_completed()`，边处理边入库
+  - 每 500 文档自动 commit，避免长时间锁库
+  - `max_workers` 公式修复：`min(max(2, cpu_cores-1), total_files)`
+  - `chunksize` 动态适配文件数，防止大量文件堆积到单个 worker
 - **子进程检测简化**：`server.py` 改用 `__name__ == '__mp_main__'` 单条件检测
 - 文档知识库新增 `.chm` 扩展名支持
 
