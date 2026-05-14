@@ -24,19 +24,29 @@ except ImportError:
 def _analyze_file_worker(args: tuple) -> Optional[Dict]:
     """
     分析单个文件的工作函数（用于多进程）
-    
+
     Args:
         args: (file_path_str, source_dir_str)
-        
+
     Returns:
         文件信息字典或None
     """
     import time as _time
+    import sys
+    import io
+
+    # 隔离 stdio：重定向 stdout/stderr 到 devnull，避免与 MCP stdio 冲突
+    # 这是关键修复：孙进程的 print 不应写入 MCP 通信管道
+    _old_stdout = sys.stdout
+    _old_stderr = sys.stderr
+    sys.stdout = io.StringIO()
+    sys.stderr = io.StringIO()
+
     _ts = _time.time()
     file_path_str, source_dir_str = args
     file_path = Path(file_path_str)
     source_dir = Path(source_dir_str)
-    
+
     try:
         # 获取文件元数据（一次stat调用）
         stat_info = file_path.stat()
@@ -71,11 +81,17 @@ def _analyze_file_worker(args: tuple) -> Optional[Dict]:
             'entities': entities,  # 统一实体表
             '_worker_ts': _ts,    # worker 开始处理的时间戳(用于诊断)
         }
-        
+
+        # 恢复 stdio
+        sys.stdout = _old_stdout
+        sys.stderr = _old_stderr
         return file_info
-        
+
     except Exception as e:
-        print(f"分析文件失败 {file_path}: {e}")
+        # 恢复 stdio 后静默失败（不 print，避免阻塞 MCP 通信）
+        sys.stdout = _old_stdout
+        sys.stderr = _old_stderr
+        # 不能用 logger（避免 worker 中 import logger 的副作用），通过返回值携带错误
         return None
 
 
@@ -1080,9 +1096,11 @@ class DelphiSourceScanner:
                 try:
                     with open(self.index_file, 'r', encoding='utf-8') as f:
                         self._existing_index = json.load(f)
-                    print(f"已加载现有索引: {len(self._existing_index.get('files', []))} 个文件")
+                    import logging
+                    logging.getLogger(__name__).info(f"已加载现有索引: {len(self._existing_index.get('files', []))} 个文件")
                 except Exception as e:
-                    print(f"加载索引失败: {e}")
+                    import logging
+                    logging.getLogger(__name__).warning(f"加载索引失败: {e}")
                     self._existing_index = None
         return self._existing_index
 
@@ -1119,7 +1137,9 @@ class DelphiSourceScanner:
 
     def scan_directory(self) -> Dict:
         """扫描源码目录,收集文件信息（多进程版本 + 增量构建）"""
-        print(f"开始扫描目录: {self.source_dir}")
+        import logging
+        _log = logging.getLogger(__name__)
+        _log.info(f"开始扫描目录: {self.source_dir}")
         
         # 首先收集所有要扫描的文件路径
         file_paths = []
@@ -1130,14 +1150,14 @@ class DelphiSourceScanner:
                     file_paths.append((str(file_path), str(self.source_dir)))
         
         total_files = len(file_paths)
-        print(f"预计扫描 {total_files} 个文件...")
-        
+        _log.info(f"预计扫描 {total_files} 个文件...")
+
         # 增量构建: 检查哪些文件需要重新处理
         changed_files = []
         unchanged_files = {}
         
         if not self.force_rebuild and self._load_existing_index():
-            print("检查文件变更...")
+            _log.info("检查文件变更...")
             existing_files = {f['full_path']: f for f in self._existing_index.get('files', [])}
             
             for file_path_str, source_dir in file_paths:
@@ -1157,7 +1177,7 @@ class DelphiSourceScanner:
                 # 文件已变化或新增
                 changed_files.append((file_path_str, source_dir))
             
-            print(f"文件状态: {len(unchanged_files)} 个未变化, {len(changed_files)} 个需要重新处理")
+            _log.info(f"文件状态: {len(unchanged_files)} 个未变化, {len(changed_files)} 个需要重新处理")
         else:
             changed_files = file_paths
         
@@ -1173,7 +1193,7 @@ class DelphiSourceScanner:
         max_needed = max(2, cpu_cores - 1)
         max_workers = max(1, min(max_needed, total_files // 50))
         
-        print(f"Processing: files={len(changed_files)}, workers={max_workers} (cpu_cores={cpu_cores})")
+        _log.info(f"Processing: files={len(changed_files)}, workers={max_workers} (cpu_cores={cpu_cores})")
         
         import time
         from concurrent.futures import ProcessPoolExecutor
@@ -1209,7 +1229,7 @@ class DelphiSourceScanner:
         if tracker:
             tracker.update(len(changed_files), f"Scanning completed: {file_count} files")
         
-        print(f"Scanning completed! Found {file_count} source files, {total_lines} lines of code")
+        _log.info(f"扫描完成! 共 {file_count} 个源文件, {total_lines} 行代码")
 
         return {
             'files': source_files,
@@ -1222,6 +1242,8 @@ class DelphiSourceScanner:
 
     def analyze_file(self, file_path: Path) -> Dict:
         """分析单个文件"""
+        import logging
+        _log = logging.getLogger(__name__)
         try:
             # 一次 stat 获取所有元数据
             stat = file_path.stat()
@@ -1256,7 +1278,7 @@ class DelphiSourceScanner:
             return file_info
 
         except Exception as e:
-            print(f"分析文件失败 {file_path}: {e}")
+            _log.warning("分析文件失败 %s: %s", file_path, e)
             return None
 
     def extract_units(self, content: str) -> List[str]:

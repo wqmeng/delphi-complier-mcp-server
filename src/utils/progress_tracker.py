@@ -144,39 +144,3 @@ class ProgressTracker:
         else:
             hours = seconds / 3600
             return f"{hours:.1f}小时"
-
-
-class ProgressCallback:
-    """进度回调处理器"""
-
-    def __init__(self, prefix: str = ""):
-        """
-        初始化进度回调
-
-        Args:
-            prefix: 消息前缀
-        """
-        self.prefix = prefix
-        self.tracker = ProgressTracker(0, self._on_progress)
-
-    def _on_progress(self, progress: ProgressInfo):
-        """内部进度回调"""
-        text = self.tracker.get_progress_text(progress)
-        if self.prefix:
-            text = f"[{self.prefix}] {text}"
-        print(text)
-
-    def create_tracker(self, total: int) -> ProgressTracker:
-        """
-        创建进度跟踪器
-
-        Args:
-            total: 总项目数
-
-        Returns:
-            进度跟踪器
-        """
-        self.tracker.total = total
-        self.tracker.current = 0
-        self.tracker.start_time = time.time()
-        return self.tracker

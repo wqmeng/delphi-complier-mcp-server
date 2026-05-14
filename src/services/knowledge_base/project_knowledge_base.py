@@ -310,8 +310,9 @@ class ProjectKnowledgeBase:
         create_source_tables(cursor)
         current_hash = self._calculate_source_hash(self.project_dir)
 
-        # Schema 升级检测：v1→v2
-        if get_schema_version_from_db(cursor) < 2:
+        # Schema 升级检测：当前版本到最新
+        from src.services.knowledge_base import SCHEMA_VERSION as _SV
+        if get_schema_version_from_db(cursor) < _SV:
             cursor.execute("""
                 DELETE FROM vocabularies WHERE id NOT IN (
                     SELECT MIN(id) FROM vocabularies GROUP BY type, name, file_id
@@ -446,16 +447,23 @@ class ProjectKnowledgeBase:
                         logger.info(f"日志: 解析进度 {i+1}/{len(files_to_parse)}")
             else:
                 from concurrent.futures import ProcessPoolExecutor, as_completed
-                cpu = os.cpu_count() or 4
-                n_workers = max(2, min(cpu - 1, len(files_to_parse) // 50))
-                chunk_size = max(1, min(500, len(files_to_parse) // n_workers))
+                n_workers = min(15, max(2, os.cpu_count() or 4))
+                chunk_size = max(5, len(files_to_parse) // (n_workers * 4))
                 logger.info(f"多进程解析: {len(files_to_parse)} 个文件, {n_workers} 进程 (chunksize={chunk_size})")
                 self._report_progress(50, f"多进程解析 {len(files_to_parse)} 个文件...")
 
+                # 诊断：记录当前进程树信息
+                # 注意：os 已在模块顶部导入，不要在函数体内 import os（会导致 UnboundLocalError）
+                import sys
+                logger.info(f"诊断: 父进程PID={os.getppid()}, 当前PID={os.getpid()}, Python={sys.executable}")
+                logger.info(f"诊断: MCP Server 启动方式 - __name__={__name__}, argv={sys.argv}")
+
                 parsed_results = []
+                _pool_create_ts = time.time()
+                logger.info(f"日志: 创建 ProcessPoolExecutor 耗时={_pool_create_ts-_p_start:.3f}s")
                 with ProcessPoolExecutor(max_workers=n_workers) as executor:
                     _p_submitted = time.time()
-                    logger.info(f"日志: 提交 {len(files_to_parse)} 个任务耗时={_p_submitted-_p_start:.3f}s")
+                    logger.info(f"日志: 提交 {len(files_to_parse)} 个任务到 executor.map 耗时={_p_submitted-_pool_create_ts:.3f}s")
                     for i, result in enumerate(executor.map(_analyze_file_worker, files_to_parse, chunksize=chunk_size)):
                         if i == 0:
                             logger.info(f"日志: 首个结果到达耗时={time.time()-_p_submitted:.1f}s")
@@ -470,7 +478,7 @@ class ProjectKnowledgeBase:
             self._report_progress(55, "入库中...")
             _insert_start = time.time()
             items_data = []
-            file_records = []  # (full_path, path, ext, size, line_count, hash, last_modified, category, units_str, uses_str, current_time)
+            file_records = []  # (full_path, path, ext, size, line_count, hash, last_modified, category, units_str, uses_str, current_time, description)
 
             for file_info in parsed_results:
                 if not file_info:
@@ -490,6 +498,7 @@ class ProjectKnowledgeBase:
                     ','.join(units) if isinstance(units, list) else str(units),
                     ','.join(uses) if isinstance(uses, list) else str(uses),
                     current_time,
+                    file_info.get('description', '')[:500] or '',
                 ))
 
                 # entities 转 items_data
@@ -518,8 +527,9 @@ class ProjectKnowledgeBase:
             if file_records:
                 cursor.executemany("""
                     INSERT OR REPLACE INTO files (full_path, relative_path, extension, size, line_count, hash,
-                        last_modified, category, units_defined, units_imported, scan_timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        last_modified, category, units_defined, units_imported, scan_timestamp,
+                        description, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, julianday('now'), julianday('now'))
                 """, file_records)
                 conn.commit()
 
@@ -621,8 +631,8 @@ class ProjectKnowledgeBase:
 
         try:
             self.build_vectors()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("构建 embedding 向量失败（非关键错误）: %s", e)
         return True
 
     def check_and_update_project_kb(self) -> bool:
@@ -818,8 +828,12 @@ class ProjectKnowledgeBase:
 
         try:
             conn = get_connection(str(db_file), use_wal=False)
-            cursor = conn.cursor()
+        except Exception as e:
+            logger.warning("连接知识库失败（统计跳过）: %s", e)
+            return stats
 
+        try:
+            cursor = conn.cursor()
             for cat_key, cat_val in [("project", "source"), ("thirdparty", "thirdparty")]:
                 try:
                     cursor.execute("SELECT COUNT(*) FROM files WHERE category=?", (cat_val,))
@@ -839,12 +853,15 @@ class ProjectKnowledgeBase:
                     """, (cat_val,))
                     funcs = cursor.fetchone()[0]
                     stats[cat_key] = {"files": file_count, "classes": classes, "functions": funcs}
-                except Exception:
-                    pass
-
-            conn.close()
-        except Exception:
-            pass
+                except Exception as e:
+                    logger.debug("统计分类 %s 失败: %s", cat_val, e)
+        except Exception as e:
+            logger.warning("统计查询异常: %s", e)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
         return stats
 
     def _report_progress(self, percent: float, message: str) -> None:
@@ -852,8 +869,8 @@ class ProjectKnowledgeBase:
         if self.progress_callback:
             try:
                 self.progress_callback(percent, message)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("progress_callback 执行失败: %s", e)
 
     def build_vectors(self, progress_callback=None) -> dict:
         """

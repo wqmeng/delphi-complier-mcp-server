@@ -48,6 +48,8 @@ class TaskInfo:
     message: str = ""
     result: Any = None
     error: Optional[str] = None
+    # 新增：去重键（可选）
+    _dedup_key: Optional[str] = None
     # 新增：步骤信息
     current_step: str = ""  # 当前步骤名称
     total_steps: int = 0    # 总步骤数
@@ -121,7 +123,7 @@ class AsyncTaskManager:
             status=TaskStatus.PENDING,
             created_at=datetime.now()
         )
-        task_info._dedup_key = dedup_key  # type: ignore
+        task_info._dedup_key = dedup_key
 
         with self._lock:
             self._tasks[task_id] = task_info

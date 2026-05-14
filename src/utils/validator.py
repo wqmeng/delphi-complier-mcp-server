@@ -29,8 +29,8 @@ class Validator:
         if not path:
             return False, "项目路径不能为空"
 
-        # 检查路径是否包含 ".."
-        if ".." in path:
+        # 使用 Path.parts 检测路径遍历（比简单的 ".." in path 更准确）
+        if ".." in Path(path).parts:
             return False, "项目路径不能包含 '..'"
 
         # 检查文件是否存在
@@ -62,8 +62,8 @@ class Validator:
         if not path:
             return False, "文件路径不能为空"
 
-        # 检查路径是否包含 ".."
-        if ".." in path:
+        # 使用 Path.parts 检测路径遍历
+        if ".." in Path(path).parts:
             return False, "文件路径不能包含 '..'"
 
         # 检查文件是否存在
@@ -95,8 +95,8 @@ class Validator:
         if not path:
             return False, "编译器路径不能为空"
 
-        # 检查路径是否包含 ".."
-        if ".." in path:
+        # 使用 Path.parts 检测路径遍历
+        if ".." in Path(path).parts:
             return False, "编译器路径不能包含 '..'"
 
         # 检查文件是否存在
@@ -128,8 +128,8 @@ class Validator:
         if not path:
             return True, ""  # 输出路径可选,为空时使用默认路径
 
-        # 检查路径是否包含 ".."
-        if ".." in path:
+        # 使用 Path.parts 检测路径遍历
+        if ".." in Path(path).parts:
             return False, "输出路径不能包含 '..'"
 
         # 检查目录是否存在
@@ -162,8 +162,8 @@ class Validator:
             return True, ""  # 搜索路径可选
 
         for path in paths:
-            # 检查路径是否包含 ".."
-            if ".." in path:
+            # 使用 Path.parts 检测路径遍历
+            if ".." in Path(path).parts:
                 return False, f"搜索路径不能包含 '..': {path}"
 
             # 检查目录是否存在

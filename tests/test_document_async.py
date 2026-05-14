@@ -58,7 +58,7 @@ def test_async_scan():
         print(f"  ✓ 回调正确调用")
         print(f"  ✓ 处理文件数: {result['processed']}")
         
-    return True
+    pass
 
 
 def test_async_scan_progress():
@@ -103,7 +103,7 @@ def test_async_scan_progress():
         print(f"\n  ✓ 异步扫描完成")
         print(f"  ✓ 文档数: {stats['total_documents']}")
         
-    return True
+    pass
 
 
 def test_concurrent_scan_prevention():
@@ -138,7 +138,7 @@ def test_concurrent_scan_prevention():
         print(f"\n  ✓ 并发防护正常")
         print(f"  ✓ 文档数: {stats['total_documents']}")
         
-    return True
+    pass
 
 
 def test_sync_vs_async():
@@ -186,7 +186,7 @@ def test_sync_vs_async():
         print(f"\n  ✓ 同步和异步结果一致")
         print(f"  ✓ 异步立即返回特性正常")
         
-    return True
+    pass
 
 
 def main():

@@ -457,11 +457,14 @@ class ConfigManager:
             version_name = get_version_name(effective_registry_version)
         else:
             version_name = self._get_delphi_version_name(delphi_path)
+        # 注意: 此映射应与 compiler_service._get_platform_compiler_name 保持一致
+        # 新平台添加时两处必须同步更新
         filename_to_platform = {
             "dcc32": "Win32",
             "dcc64": "Win64",
             "dccaarm": "Android32",
             "dccaarm64": "Android64",
+            "dccaac64": "Android64",     # Delphi 12+ 新增
             "dcclinux64": "Linux64",
             "dccosx64": "OSX64",
             "dccosxarm64": "OSXARM64",

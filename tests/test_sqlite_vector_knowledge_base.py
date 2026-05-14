@@ -25,7 +25,9 @@ from src.services.knowledge_base.sqlite_vector_query_knowledge_base import (
 
 
 def _init_schema(db_path: Path):
-    """初始化 SQLiteVectorKnowledgeBase 所需的数据库 schema"""
+    """初始化 SQLiteVectorKnowledgeBase 所需的数据库 schema（使用统一 schema 定义）"""
+    from src.services.knowledge_base.schema import create_source_tables
+
     conn = sqlite3.connect(str(db_path))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -33,21 +35,13 @@ def _init_schema(db_path: Path):
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA busy_timeout=10000")
 
-    conn.execute("""CREATE TABLE IF NOT EXISTS metadata (
-        key TEXT PRIMARY KEY, value TEXT, updated_at REAL
-    )""")
+    # 使用统一 schema 建表，确保与生产环境一致
+    create_source_tables(conn.cursor())
+
     conn.execute("INSERT OR REPLACE INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
                  ('hash', 'test-hash', 0.0))
     conn.execute("INSERT OR REPLACE INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
                  ('total_files', '0', 0.0))
-
-    conn.execute("""CREATE TABLE IF NOT EXISTS vocabularies (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT, name_lower TEXT, name_lower_rev TEXT,
-        type TEXT, kind_code TEXT,
-        file_id INTEGER, line_no INTEGER,
-        signature TEXT, description TEXT
-    )""")
     conn.execute("INSERT OR REPLACE INTO metadata (key, value, updated_at) VALUES (?, ?, ?)",
                  ('schema_version', '1', 0.0))
     conn.commit()
@@ -102,3 +96,8 @@ def test_close_releases_connection():
         kb.close()
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

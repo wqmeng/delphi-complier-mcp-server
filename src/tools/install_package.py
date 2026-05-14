@@ -505,14 +505,14 @@ def _register_packages_to_ide(bpl_files: List[str], version: str) -> bool:
         for bpl_path in bpl_files:
             try:
                 winreg.SetValueEx(key, bpl_path, 0, winreg.REG_SZ, bpl_path)
-                print(f"Registered: {bpl_path}")
+                logger.info(f"已注册组件包: {bpl_path}")
             except Exception as e:
-                print(f"Failed to register {bpl_path}: {e}")
+                logger.error(f"注册组件包失败 {bpl_path}: {e}")
         
         winreg.CloseKey(key)
         return True
     except Exception as e:
-        print(f"Failed to register packages: {e}")
+        logger.error(f"注册组件包失败: {e}")
         return False
 
 

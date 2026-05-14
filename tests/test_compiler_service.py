@@ -19,8 +19,8 @@ import tempfile
 import shutil
 
 
-def test_detect_delphi_from_registry():
-    """从注册表检测 Delphi 安装"""
+def _get_delphi_versions():
+    """从注册表获取 Delphi 版本列表（测试辅助函数）"""
     versions = []
     
     try:
@@ -59,9 +59,15 @@ def test_detect_delphi_from_registry():
     return versions
 
 
+def test_detect_delphi_from_registry():
+    """从注册表检测 Delphi 安装"""
+    versions = _get_delphi_versions()
+    assert len(versions) > 0, "应检测到至少一个 Delphi 版本"
+
+
 def test_compiler_executable_exists():
     """验证编译器可执行文件存在"""
-    versions = test_detect_delphi_from_registry()
+    versions = _get_delphi_versions()
     
     for version_key, root_dir in versions:
         bin_path = Path(root_dir) / "bin"

@@ -204,13 +204,15 @@ def expand_delphi_path_macros(
     # 添加平台宏
     macros['$(Platform)'] = platform
     
-    # 合并用户定义的环境变量
+    # 合并用户定义的环境变量（键名需要加 $() 前缀才能被 str.replace 正确匹配）
     if env_vars:
-        macros.update(env_vars)
+        for k, v in env_vars.items():
+            macros[f'$({k})'] = v
     
-    # 添加注册表中的环境变量
+    # 添加注册表中的环境变量（同上，注册表键名如 SKIADIR 需转为 $(SKIADIR)）
     reg_env_vars = get_delphi_env_vars(version)
-    macros.update(reg_env_vars)
+    for k, v in reg_env_vars.items():
+        macros[f'$({k})'] = v
     
     # 展开路径
     result = path
@@ -227,7 +229,15 @@ def expand_delphi_path_macros(
             break
         result = new_result
     
-    # 清理未解析的宏
+    # 检测并警告未解析的宏
+    unresolved = re.findall(r'\$\([^)]+\)', result)
+    if unresolved:
+        import logging
+        logging.getLogger(__name__).warning(
+            "路径中存在未解析的宏变量 %s: %s", list(set(unresolved)), path
+        )
+    
+    # 清理未解析的宏（避免返回含 $(...) 的无效路径）
     result = re.sub(r'\$\([^)]+\)', '', result)
     
     return result

@@ -1,10 +1,10 @@
 # Delphi 编码规范
-> 最后更新: 2026-05-12 | 版本: 1.5.0
+> 最后更新: 2026-05-14 | 版本: 1.7.0
 
 ## 工作流总览
 ```
-环境检查 → 查KB确认API → 写代码 → 格式化 → 编译验证 → 清理
- ①         ②              ③        ④          ⑤         ⑥
+环境检查 → 查KB确认API → 写代码 → 格式化 → 编译验证 → 代码审核 → 清理
+  ①         ②              ③        ④          ⑤         ⑥        ⑦
 ```
 
 ---
@@ -12,7 +12,10 @@
 ## ① 环境检查
 ```python
 check_environment(action="check")       # 确认编译器状态
-get_coding_rules()                       # 获取本规则（首次必调）
+get_coding_rules()                       # 获取工作流总览 + 章节索引（默认）
+get_coding_rules(section="writing")      # 编码前：拉取编码规范
+get_coding_rules(section="review")       # 编译后：拉取审核表
+get_coding_rules(section="list")         # 列出所有可用章节名
 ```
 
 ---
@@ -74,8 +77,8 @@ delphi_kb(action="read", file_path="...", offset=100, limit=200)        # 按路
 - **方法**：大驼峰 `procedure CalculateTotal;`
 - **事件**：`OnCreate`→`Form1Create`；`Before`/`After` 保留
 - **参数**：未以 A 开头加 A `procedure SetName(AName: string);`
-- **枚举**：推荐加类型前缀 `taLeft, taRight`
-- **常量**：全大写 `MAX_BUFFER_SIZE`
+- **枚举**：值前缀取自枚举类型名去掉 T 的缩写，例如 `TAlignment → taLeft, taRight, taCenter`
+- **常量**：全大写 `MAX_BUFFER_SIZE`；作用域常量同规则
 
 ### 格式
 - 缩进 2 空格，行宽 ≤120
@@ -88,12 +91,40 @@ uses System.SysUtils, System.Classes,  // 系统
      MyUnit1, MyUnit2;                 // 项目
 ```
 
+### 泛型
+- 泛型参数使用描述性名称 `TKey, TValue`，而非单字母 `T`
+- 多约束泛型的 `where` 子句每条约束独占一行以提高可读性
+- 避免深层嵌套泛型，超过 2 层时用 type alias 简化：`type TStringArrayList = TArray<TList<string>>`
+- 泛型方法重载时确保签名歧义能被编译器正确分辨
+
+### 运算符重载
+- 仅对值类型（record）定义运算符重载，类类型（class）避免
+- 运算符语义须符合直觉，不得改变常规含义（如 `+` 不能表示减法）
+- 定义类型转换运算符（`Implicit`/`Explicit`）时，同时提供命名转换方法供显式调用
+
+### 异步与多线程
+- 后台线程操作 UI 控件必须通过主线程同步机制完成
+- 共享资源访问须加锁保护，锁粒度尽量小，避免死锁
+- 异步任务的生命周期须明确管理，任务取消或失败时确保已分配资源得到清理
+- 避免在异步回调中直接引用对象，使用接口引用或弱引用模式防止悬空
+
+### 代码组织
+- 每个单元职责单一，避免"万能单元"；一个单元的代码量建议不超过 500 行
+- `interface` 区按 `uses` → 类型声明 → 常量 → 变量 → 过程/函数声明 顺序排列
+- `implementation` 区按 `uses` → 辅助过程/函数 → 接口方法实现 顺序排列
+- `uses` 子句分组排列，组间空行分隔，组内字母序，每组末尾标注分组名（如上示例）
+
+### 版本兼容
+- 跨版本差异使用条件编译包裹，并注释所针对的版本号：`{$IFDEF VER370} // Delphi 13`
+- 目标版本范围应在项目文件或配置文件中统一声明，而非散落在代码中
+- 使用新版 API 时提供旧版本回退实现，避免强制升级编译器
+
 ---
 
 ## ④ 格式化
 ```python
 format_delphi(action="file", file_path="src/Unit1.pas")
-# 格式化后检查泛型是否被错误合并（TArray<TList<string>>）
+# 格式化后检查泛型嵌套 `>` 间的空格是否被误删，如 `TArray<TList<string> >` 中两个 `>` 间空格被删除会导致编译错误
 ```
 
 ## ⑤ 编译
@@ -116,24 +147,45 @@ compile_project(project_path="Project.dproj", build_configuration="Release", tar
 ### 编译事件
 .dproj 中的 PreBuildEvent/PostBuildEvent/PreLinkEvent 自动执行，无需手动处理。
 
-## ⑥ 清理
+## ⑥ 代码审核
+
+**编译通过后，按下方审核表逐项审查代码。** 重点覆盖：
+
+| 维度 | 要点 |
+|------|------|
+| 一致性 | 命名/异常模式/排版的统一性 |
+| 完整性 | 分支覆盖、边界条件、输入验证、资源释放 |
+| 资源泄露 | Create/Free 配对、句柄/接口释放 |
+| Delphi 特有陷阱 | 接口引用计数、字符串类型、TComponent 所有权等 |
+| 代码质量 | 圈复杂度、魔法数字、重复代码 |
+| 安全 | SQL 注入、硬编码凭据、缓冲区溢出 |
+
+> 审核表的具体检查项见下方「审核」章节。
+
+## ⑦ 清理
 - **备份**：修改前备份到 `__history`，版本号递增 `src/Unit.pas.~1~`
 - **整理**：删未用变量/导入/函数/类（直接删，无需人工确认）
-- **已存在的死代码**：不删（需人工确认）
+- **已存在的死代码**：标记为废弃（添加注释标注），等待人工确认后清理
 - **编码**：文件保持 UTF-8 BOM；修改后执行 `format_delphi`
 
 ---
 
 ## 审核
+
 ### 一致性
+
 | 检查项 | 说明 |
 |--------|------|
 | 命名规范 | 类型/字段/方法/参数命名符合规则，新旧代码风格统一 |
-| 异常模式 | 同一模块内异常处理方式一致（全部检查返回值或全部抛异常） |
+| 异常模式 | 同一模块内异常处理方式一致（全部检查返回值或全部抛异常）；`try...finally` 用于资源释放（无论是否异常均执行），`try...except` 用于异常处理（仅在异常时执行）；混合使用时需注释各自职责 |
 | 排版 | 缩进、空格、begin/end 风格与项目现有代码一致 |
 | 错误处理 | 类似场景使用相同的错误处理模式 |
+| OleVariant 与 Variant | 明确区分使用场景，COM 交互用 `OleVariant`，普通逻辑用 `Variant` |
+| 平台兼容细节 | `SizeOf` vs `Length` 在不同平台下的行为差异、字节序问题、`NativeInt`/`NativeUInt` 替代 Integer |
+| 事件释放（多线程） | 置 nil 时检查多线程竞争，必要时加锁或使用原子操作 |
 
 ### 完整性
+
 | 检查项 | 说明 |
 |--------|------|
 | 所有路径 | if/else、case/else、try/except 覆盖全部分支 |
@@ -141,8 +193,14 @@ compile_project(project_path="Project.dproj", build_configuration="Release", tar
 | 输入验证 | 外部传入的参数/文件/流做合法性检查 |
 | 资源释放路径 | finally 块确保异常路径下资源也释放 |
 | 并发安全 | 共享变量的锁保护，死锁风险，线程退出时资源清理 |
+| 函数返回值 | 函数必须有显式返回值，禁止隐式返回未初始化的 Result；`Result` 命名统一 |
+| const/out/in 参数 | 输出参数用 `out`/`var` 标注，`const` 参数禁止修改，审计参数传递方式一致性 |
+| Assert 使用 | 调试断言用于前置/后置条件检查；注意 `Assert` 在 Release 下被 `{$DEFINES}` 剔除 |
+| 初始化/终结段 | `initialization`/`finalization` 段中是否存在资源泄漏或顺序依赖问题 |
+| 日志输出 | 日志应区分级别（调试/信息/警告/错误），生产环境只输出必要级别；每条日志包含时间戳、严重级别、可定位问题的上下文信息；异常日志需包含异常类型和调用栈 |
 
 ### 资源泄露
+
 | 检查项 | 说明 |
 |--------|------|
 | Create/Free 配对 | 每个 Create 有对应的 Free/FreeAndNil，record 的 Create 不是类 |
@@ -151,20 +209,79 @@ compile_project(project_path="Project.dproj", build_configuration="Release", tar
 | 数据库连接 | TSQLConnection、TADOConnection 等用完释放 |
 | GDI/系统资源 | TFont、TBitmap、TPen、TBrush、TCanvas、HPEN、HBRUSH |
 | 接口引用 | 接口变量超出作用域前确保引用释放，避免循环引用 |
-| 字符串/数组 | 大字符串/动态数组不再使用时及时清空释放内存 |
+| 字符串/数组 | 大字符串/动态数组不再使用时及时清空释放内存（`SetLength(s, 0)`） |
 | TObjectList/TList | `OwnsObjects` 设置正确，确保对象随容器释放 |
 
 ### Delphi 特有
+
 | 检查项 | 说明 |
 |--------|------|
 | 接口引用计数 | 接口赋值自动 `_AddRef`，出作用域自动 `_Release`，避免手动干预 |
 | 循环引用 | 两个对象通过接口互相引用会导致内存泄漏，用弱引用或 `[weak]` 破除 |
 | TComponent 所有权 | Owner 接收 `Free` 通知，子组件随 Owner 释放，不要重复 Free |
 | 字符串类型 | string=UnicodeString 自动管理；AnsiString/WideString 注意编码转换 |
+| 字符串拼接 | 循环内大量字符串拼接用 `TStringBuilder`，不用 `+` |
 | Variant | 尽量用具体类型替代，Variant 涉及 COM 时注意引用计数 |
-|  published 区 | 流式加载的属性/事件保持 public 或 published |
+| published 区 | 流式加载的属性/事件保持 public 或 published |
 | RTTI | `TRttiContext` 用完 Release，避免泄漏 |
 | 平台兼容 | Win32/Win64 下指针/句柄大小差异，`NativeInt`/`NativeUInt` 替代 Integer |
+| Record 方法与引用 | Record 是值类型，方法内修改字段仅对副本生效；传递给 var/out 参数时注意引用语义 |
+| 枚举与子范围 | case 语句覆盖所有枚举值（建议加 `else raise`）；子范围类型注意边界溢出 |
+| Set 类型 | Set 元素上限 256 个，元素类型必须为序数类型；空 Set 用 `[]` 而非 `nil` |
+| Class Helper 冲突 | 多个 Helper 对同一类的扩展方法命名冲突会导致编译错误，审计命名唯一性 |
+| 委托方法生命周期 | 匿名方法/委托捕获变量时注意生命周期，局部变量被引用后释放会导致悬空指针 |
+
+### 常见错误模式
+
+| 检查项 | 说明 |
+|--------|------|
+| 空异常处理 | `except` 块内必须至少记录日志，**禁止空 `except...end`** 吞噬异常 |
+| 类型转换安全 | `as` 转换会抛异常，确认类型应先 `is` 再 `as`；避免硬转 `Type(x)` |
+| 事件释放 | 对象释放前将事件字段置 nil（`OnClick := nil`），避免悬空事件回调 |
+| 匿名方法捕获 | 循环内创建匿名方法时用局部变量拷贝捕获值，而非引用循环变量 |
+| 线程访问 VCL | 后台线程操作 VCL/FMX 控件必须用 `TThread.Queue`/`Synchronize` |
+| `with` 语句 | **避免使用 `with`**，导致命名冲突和可读性下降 |
+| 动态数组混用 | 明确 `array of T` / `TArray<T>` / open array 参数的区别，不自作聪明转换 |
+| record 管理字段 | record 含 `string`/`TArray`/`IInterface` 时注意赋值语义（非引用，会复制） |
+
+### 代码质量
+
+| 检查项 | 说明 |
+|--------|------|
+| 函数/方法规模 | 单个方法建议不超过 80 行，职责单一，过长需拆分 |
+| 圈复杂度 | 嵌套层级不超过 3 层（if/for/while/case 嵌套），过深需用卫语句或抽取方法简化 |
+| 魔法数字 | 禁止硬编码魔法数字，需提取为具名常量（`MAX_RETRY = 3`） |
+| 注释规范 | 关键逻辑、算法、TODO/FIXME 需有注释；过时/误导注释及时清理；禁止无意义的逐行注释 |
+| 代码重复 | 相同或相似逻辑块抽取为公共方法，禁止复制粘贴（DRY 原则） |
+| 测试方法命名 | 测试方法命名应清晰描述被测行为及预期结果，格式如 `Test_[方法名]_[条件]_[预期]`；测试代码与生产代码保持相同质量水准 |
+
+### 数据转换
+
+| 检查项 | 说明 |
+|--------|------|
+| 转换隔离 | 数据与外部格式（JSON/XML/二进制）之间的转换使用专用层或辅助函数，不直接在业务逻辑中操作格式细节 |
+| 字段映射 | 避免手写逐字段映射，优先使用声明式映射或自动化机制以减少遗漏 |
+| 输入校验 | 反序列化/导入时对数据做结构和范围验证，不信任外部来源 |
+| 编码一致 | 文本数据转换时明确指定字符编码，不依赖系统默认编码 |
+
+### 安全
+
+| 检查项 | 说明 |
+|--------|------|
+| SQL 注入 | 动态拼接 SQL 必须使用参数化查询（`Params.ParamByName`），**禁止字符串直接拼接** |
+| 硬编码凭据 | **禁止**在代码中硬编码密码、密钥、API Key 等敏感信息，应使用配置/环境变量 |
+| 国际化 (i18n) | 用户可见字符串禁止硬编码，应使用资源字符串（`resourcestring`） |
+| 缓冲区溢出 | 数组/缓冲区边界检查，特别是与外部输入相关的拷贝操作（`Move`/`CopyMemory`） |
+| 输入消毒 | 来自外部（文件/网络/用户输入）的数据需做格式和范围校验 |
+
+### 性能
+
+| 检查项 | 说明 |
+|--------|------|
+| 循环内内存分配 | 循环内禁止创建对象/分配大内存，应提到循环外预分配 |
+| 字符串操作 | 长字符串拼接用 `TStringBuilder`；`StringReplace` 大数据量时评估性能 |
+| 不必要的类型转换 | 避免循环内重复的 `as`/`Type()` 转换，应缓存转换结果 |
+| 避免不必要的 RTTI | `TRttiContext` 创建开销大，高频调用途径应缓存类型信息 |
 
 ---
 
@@ -185,12 +302,37 @@ async_task(action="status", task_id="task_xxx")
 
 ---
 
-## Agent 操作规范
-1. **脚本**：❌ `python -c "..."` → ✅ 写 `.py` 文件再执行
-2. **字符串**：❌ f-string 混合双引号 → ✅ `.format()` 替代
-3. **测试**：❌ 内联验证 → ✅ 独立脚本 `test_*.py`
+## Agent 操作硬规则
 
----
+### 脚本执行
+- ❌ 绝不用 `python -c "..."`（PowerShell 引号转义必炸）
+- ✅ 始终用 `write` 创建 `.py` 文件 → `bash` 执行 `python script.py` → `Remove-Item script.py` 清理
+
+### 字符串格式化
+- ❌ f-string 内嵌字典 `f'{d["key"]}'`（引号冲突）
+- ✅ 用 `.format()` 或 `%`
+
+### Python 陷阱
+- **不要在函数内局部 `import`**：函数内任何地方出现 `from X import Y` 会使 `Y` 在整个函数作用域成为局部变量。放在头部的引用也会 `UnboundLocalError`。始终写在模块顶部。
+- **`if x:` vs `if x is not None:`**：0、`""`、`[]` 都是 False。数字可选参数用 `Optional[int]` 并用 `is not None` 判断。
+- **`$()` 宏展开**：注册表变量键名（`SKIADIR`）不含 `$()` 前缀，加入 `macros` 字典时必须 `macros[f'$({k})'] = v`。用 `update(dict)` 会导致 `str.replace('SKIADIR', ...)` 错误匹配 `$(SKIADIR)` → 路径残缺。
 
 ## 规则维护
 修复 bug 后总结为规则加到项目规则文件。添加前检查是否已有相同规则。修改后更新顶部日期版本号。
+
+### 新增规则模板
+```markdown
+#### [类别] [标题]
+- **问题**：此规则要防范什么问题
+- **规则**：具体的约束或做法
+- **正例**：```delphi {符合规则的代码} ```
+- **反例**：```delphi {违反规则的代码} ```
+```
+示例：
+```markdown
+#### 常见错误模式 空 except 块
+- **问题**：空的 `except...end` 会吞噬所有异常，导致错误被静默忽略
+- **规则**：`except` 块内必须至少记录日志并重新抛出，或做有意义的处理
+- **正例**：`except on E: Exception do Logger.Error(E); raise; end;`
+- **反例**：`except end;`
+```

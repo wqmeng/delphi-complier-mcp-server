@@ -344,6 +344,8 @@ class CompilerService:
         event_cmd = event_cmd.replace('$(PROJECTDIR)', project_dir)
         
         try:
+            logger.info("执行编译事件（shell=True）: %s", event_cmd[:200])
+            logger.warning("编译事件来自 .dproj 文件配置，请确保项目文件可信")
             result = subprocess.run(
                 event_cmd,
                 shell=True,
@@ -856,8 +858,7 @@ class CompilerService:
                     log=f"进程信息: PID={running_process['pid']}, 路径={running_process.get('path', '未知')}"
                 )
             
-            # 构建上下文变量
-            import os
+            # 构建上下文变量（os 已在模块顶部导入）
             context = {
                 # 项目相关
                 'project_dir': project_dir,

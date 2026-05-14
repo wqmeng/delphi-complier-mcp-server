@@ -29,8 +29,20 @@ class ArgsGenerator:
     }
 
     def _get_platform_lib_path(self, delphi_version: str, platform: TargetPlatform) -> str:
-        """获取目标平台的库路径"""
+        """获取目标平台的库路径（优先从注册表获取，回退到默认路径）"""
         lib_dir = self._PLATFORM_LIB_DIR.get(platform, 'Win32')
+        # 优先通过 delphi_env 从注册表获取库路径（支持非标准安装位置）
+        try:
+            from ..utils.delphi_env import get_delphi_library_paths, expand_delphi_path_macros
+            paths = get_delphi_library_paths(version=delphi_version, platform=lib_dir)
+            # 寻找 Delphi 标准库路径：含 \lib\ 目录组件 + release
+            for p in paths:
+                expanded = expand_delphi_path_macros(p, version=delphi_version, platform=lib_dir)
+                if ('\\lib\\' in expanded or '/lib/' in expanded) and 'release' in expanded.lower():
+                    return expanded
+        except Exception:
+            pass
+        # 回退到硬编码路径
         return f"C:/Program Files (x86)/Embarcadero/Studio/{delphi_version}/lib/{lib_dir}/release"
 
     def generate(self, project_path: str, options: CompileOptions) -> List[str]:

@@ -39,7 +39,7 @@ def test_delphi_kb_config():
     
     print("\n配置项生效检查:")
     print(f"  ✓ database.file: {kb.db_path.name}")
-    print(f"  ✓ database.cache_size: {kb._vector_cache.maxsize}")
+    print(f"  ✓ database.cache_size: {config['database'].get('cache_size', 'N/A')}")
     print(f"  ✓ source.type: {config['source']['type']}")
     print(f"  ✓ source.path: {config['source']['path']}")
     

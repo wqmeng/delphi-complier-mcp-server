@@ -214,3 +214,8 @@ def test_project_version_unknown_prefix_falls_back():
     finally:
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

@@ -84,71 +84,23 @@ async def start_async_task(arguments: Any) -> CallToolResult:
         task_name = "构建第三方库知识库"
 
     elif task_type == "init_project_knowledge_base":
-        import subprocess
-        import json
-        import tempfile
-        from pathlib import Path
+        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
 
         def init_project_task(**kwargs):
             project_path = kwargs.get("project_path")
             force_rebuild = kwargs.get("force_rebuild", False)
             progress_callback = kwargs.get("_progress_callback")
 
-            # 在独立子进程中构建，避免 asyncio 事件循环干扰 multiprocessing
-            worker_script = str(Path(__file__).resolve().parent / "project_kb_worker.py")
-            
-            # 先清空 KB 目录，让子进程从头构建
-            # （或者子进程自己处理 force_rebuild）
-            
-            # 进度文件：子进程写入，父进程读取
-            progress_file = None
-            if progress_callback:
-                import tempfile
-                progress_file = tempfile.mktemp(suffix='.json', prefix='kb_progress_')
-            
-            cmd = [
-                sys.executable, worker_script,
-                f'--project-path={project_path}',
-            ]
-            if force_rebuild:
-                cmd.append('--force-rebuild')
-            if progress_file:
-                cmd.append(f'--progress-file={progress_file}')
-            
-            try:
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True, text=True, timeout=600,
-                    env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'},
-                )
-                
-                # 解析 stdout 中的 JSON 结果
-                for line in result.stdout.strip().split('\n'):
-                    line = line.strip()
-                    if line.startswith('{'):
-                        try:
-                            output = json.loads(line)
-                            break
-                        except json.JSONDecodeError:
-                            continue
-                else:
-                    raise RuntimeError(f"子进程未返回有效结果\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}")
-                
-                if not output.get('success'):
-                    error = output.get('error', result.stderr or '未知错误')
-                    raise RuntimeError(f"构建失败: {error}")
-                
-                results = {
-                    "project": output.get('project', True),
-                    "statistics": output.get('statistics', {}),
-                }
-                return results
-                
-            except subprocess.TimeoutExpired:
-                raise RuntimeError("构建超时（超过600秒）")
-            except Exception as e:
-                logger.error(f"子进程构建失败: {e}")
-                raise
+            project_kb = ProjectKnowledgeBase(project_path, progress_callback)
+
+            results = {}
+            results["project"] = project_kb.build_project_knowledge_base(
+                force_rebuild=force_rebuild)
+
+            stats = project_kb.get_statistics()
+            results["statistics"] = stats
+
+            return results
 
         task_name = f"初始化项目知识库 ({params.get('project_path', '未知项目')})"
 

@@ -84,7 +84,7 @@ delphi_kb(
 | `check_environment` | 诊断编译环境、检测编译器、安装pasfmt | `action`(check/detect/install/format_install), `search_path`, `install_dir`, `delphi_version` |
 | `install_package` | 编译并安装 Delphi 组件包到 IDE | `package_path`, `target_platform`, `build_configuration`, `timeout`, `install` |
 | `list_installed_packages` | 列出已安装到 IDE 的 Delphi 组件包 | - |
-| `get_coding_rules` | 获取 Delphi 编码规范(命名/格式化/审核规则) | `project_path`(可选) |
+| `get_coding_rules` | 获取 Delphi 编码规范，默认返回工作流+章节索引，支持按章节分段获取 | `project_path`(可选), `section`(可选，如 workflow/writing/review/safety) |
 
 ### 知识库工具
 
@@ -114,7 +114,7 @@ delphi_kb(
 
 | 工具名称 | 功能描述 | 主要参数 |
 |----------|----------|----------|
-| `get_coding_rules` | 获取 Delphi 编码规范(命名/格式化/审核规则) | `project_path`(可选) |
+| `get_coding_rules` | 获取 Delphi 编码规范，默认返回工作流+章节索引，支持按章节分段获取 | `project_path`(可选), `section`(可选) |
 
 ## 系统要求
 

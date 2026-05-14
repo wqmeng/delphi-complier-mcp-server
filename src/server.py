@@ -106,9 +106,10 @@ def _auto_detect_delphi_help_dir() -> Optional[str]:
                     logger.info(f"自动检测到 Delphi 帮助目录 (版本 {ver}): {help_dir}")
                     return str(help_dir)
             except Exception:
+                logger.debug("读取注册表版本键失败", exc_info=True)
                 continue
     except Exception:
-        pass
+        logger.debug("打开注册表 BDS 键失败", exc_info=True)
 
     # 注册表失败，尝试默认路径（版本号与注册表一致：37.0=Delphi13, 23.0=Delphi12, 22.0=Delphi11...）
     for ver in ["37.0", "23.0", "22.0", "21.0", "20.0", "19.0", "18.0", "17.0", "16.0", "15.0", "14.0", "12.0", "11.0", "10.0", "9.0", "8.0", "7.0", "6.0", "5.0", "4.0", "3.0"]:
@@ -139,7 +140,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
         elif isinstance(result, dict):
             is_error = (
                 result.get('status') == 'failed'
-                or result.get('success') == False
+                or result.get('success') is False
                 or 'error' in result
             )
         else:
@@ -171,9 +172,13 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                     "可用 delphi_kb(action='build', kb_type='project') 重建")
 
     elif name == "get_coding_rules":
-        if isinstance(result, dict) and result.get('message'):
-            return ("✨ 提示：获取规则后，可开始编写代码，"
-                    "完成后用 compile_project 编译验证、format_delphi 格式化")
+        # 仅在 section=None（默认模式）时提示
+        section = arguments.get("section")
+        if section is None or section == "":
+            return ("✨ 提示：使用 section 参数按需获取对应章节：\n"
+                    '   get_coding_rules(section="writing")  — 写代码前看编码规则\n'
+                    '   get_coding_rules(section="review")   — 编译后看审核表\n'
+                    '   get_coding_rules(section="safety")   — 安全敏感操作')
 
     elif name == "check_environment":
         action = arguments.get("action", "check")
@@ -194,7 +199,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
         elif isinstance(result, dict):
             is_error = (
                 result.get('status') == 'failed'
-                or result.get('success') == False
+                or result.get('success') is False
                 or 'error' in result
             )
         else:
@@ -481,15 +486,20 @@ async def run_server():
                             "【触发词】编码规范、命名规则、代码风格、代码规范、编码规则、写代码前\n"
                             "❌ 不得凭通用知识猜测项目编码风格（每个项目有自定义规则）\n"
                             "✅ 编写/修改 Delphi 代码前必须调用（默认规则+项目 CODING_RULES.mdc）\n"
+                            "✅ 支持 section 参数按需获取单章节，节省 token，提升遵守率\n"
                             "【协作链】rules→写代码→compile→format\n"
                             "【首次】每次新编码任务前重新获取\n"
                             "【示例】\n"
-                            '   get_coding_rules()  # 默认\n'
+                            '   get_coding_rules()                                      # 全部规则\n'
+                            '   get_coding_rules(section="writing")                     # 只取编码规则\n'
+                            '   get_coding_rules(section="review")                      # 只取审核表\n'
+                            '   get_coding_rules(section="list")                        # 列出所有可用章节\n'
                             '   get_coding_rules(project_path="path/to/project.dproj")  # 含项目自定义',
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "项目路径(可选)，用于查找用户自定义的CODING_RULES.mdc覆盖默认规则"}
+                        "project_path": {"type": "string", "description": "项目路径(可选)，用于查找用户自定义的CODING_RULES.mdc覆盖默认规则"},
+                        "section": {"type": "string", "description": "章节名(可选)，按需获取指定章节。取值：workflow, env, kb_search, writing, format, compile, review_guide, cleanup, review, review_detail, consistency, completeness, resource_leak, delphi_specific, common_errors, code_quality, data_conversion, safety, performance, kb_build, agent_rules, maintenance, coding。传 'list' 列出所有章节。不传返回全部。"}
                     },
                     "required": []
                 }
@@ -744,7 +754,10 @@ async def run_server():
             
             elif name == "get_coding_rules":
                 from src.tools.coding_rules import get_coding_rules
-                result = await get_coding_rules(arguments)
+                result = await get_coding_rules(
+                    project_path=arguments.get("project_path"),
+                    section=arguments.get("section")
+                )
             
             else:
                 raise ValueError(f"未知工具: {name}")
@@ -773,7 +786,7 @@ async def run_server():
                 text = str(result.get('message', str(result)))
                 is_error = (
                     result.get('status') == 'failed'
-                    or result.get('success') == False
+                    or result.get('success') is False
                     or 'error' in result
                 )
                 return CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
@@ -844,6 +857,17 @@ async def run_server():
         )
 
 
+def _cleanup_resources():
+    """清理资源：关闭后台任务、DB连接等"""
+    logger.info("清理资源中...")
+    try:
+        from src.tools.knowledge_base import _cleanup_pkb_cache
+        _cleanup_pkb_cache()
+    except Exception:
+        logger.warning("清理资源时发生异常", exc_info=True)
+    logger.info("资源清理完成")
+
+
 def main():
     """主函数"""
     try:
@@ -853,6 +877,8 @@ def main():
     except Exception as e:
         logger.error(f"服务器运行失败: {str(e)}", exc_info=True)
         sys.exit(1)
+    finally:
+        _cleanup_resources()
 
 
 if __name__ == "__main__":

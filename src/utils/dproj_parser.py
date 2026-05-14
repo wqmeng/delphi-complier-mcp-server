@@ -88,7 +88,7 @@ class DprojParser:
         Returns:
             单元搜索路径列表
         """
-        if not self.root:
+        if self.root is None:
             logger.error("未解析 .dproj 文件")
             return []
 
@@ -154,7 +154,7 @@ class DprojParser:
         Returns:
             命名空间列表
         """
-        if not self.root:
+        if self.root is None:
             return []
 
         namespaces = set()
@@ -189,7 +189,7 @@ class DprojParser:
         Returns:
             编译事件字典,包含 PreBuildEvent, PreLinkEvent 和 PostBuildEvent
         """
-        if not self.root:
+        if self.root is None:
             return {}
 
         events = {
@@ -259,7 +259,7 @@ class DprojParser:
         Returns:
             输出路径
         """
-        if not self.root:
+        if self.root is None:
             return None
 
         for prop_group in self._find_all_elements(self.root, "PropertyGroup"):
@@ -300,7 +300,7 @@ class DprojParser:
         Returns:
             条件编译符号列表
         """
-        if not self.root:
+        if self.root is None:
             return []
 
         defines = set()
@@ -331,7 +331,7 @@ class DprojParser:
         Returns:
             主源文件名(.dpr 文件名)
         """
-        if not self.root:
+        if self.root is None:
             return None
 
         for prop_group in self._find_all_elements(self.root, "PropertyGroup"):
@@ -348,7 +348,7 @@ class DprojParser:
         Returns:
             项目信息字典
         """
-        if not self.root:
+        if self.root is None:
             return {}
 
         info = {
@@ -398,7 +398,7 @@ class DprojParser:
         Returns:
             文件是否属于项目
         """
-        if not self.root:
+        if self.root is None:
             return False
 
         # 检查 ItemGroup 中的 DCCReference
@@ -430,7 +430,7 @@ class DprojParser:
         Returns:
             参数字符串，未找到则返回 None
         """
-        if not self.root:
+        if self.root is None:
             return None
 
         for prop_group in self._find_all_elements(self.root, "PropertyGroup"):
@@ -471,7 +471,7 @@ class DprojParser:
               - resource_id: 资源 ID
               - resource_type: 资源类型
         """
-        if not self.root:
+        if self.root is None:
             return []
         
         project_dir = Path(self.dproj_path).parent
@@ -527,7 +527,7 @@ class DprojParser:
             'iOSDevice64', 'iOSDevice', 'iOSSimulator',
             'Android', 'Android64', 'Linux64',
         }
-        if not self.root:
+        if self.root is None:
             return None
 
         for prop_group in self._find_all_elements(self.root, "PropertyGroup"):

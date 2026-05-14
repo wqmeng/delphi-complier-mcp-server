@@ -35,14 +35,9 @@ def test_build_knowledge_base():
     print()
     
     success = kb.build_thirdparty_knowledge_base(force_rebuild=True)
-    
-    if success:
-        print("✓ 知识库构建成功!")
-        print()
-        return kb
-    else:
-        print("✗ 知识库构建失败")
-        return None
+
+    assert success, "第三方库知识库构建失败"
+    print("✓ 知识库构建成功!")
 
 def test_get_stats(kb):
     """测试获取统计信息"""

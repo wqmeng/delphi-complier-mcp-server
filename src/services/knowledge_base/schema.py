@@ -38,7 +38,7 @@ SCHEMA_VERSION_KEY = 'schema_version'
 def get_schema_version_from_db(cursor) -> int:
     """从 metadata 表读取 schema 版本号，返回 0 表示无版本信息（旧库）"""
     try:
-        cursor.execute(f"SELECT value FROM metadata WHERE key = '{SCHEMA_VERSION_KEY}'")
+        cursor.execute("SELECT value FROM metadata WHERE key = ?", (SCHEMA_VERSION_KEY,))
         row = cursor.fetchone()
         if row:
             return int(row[0])

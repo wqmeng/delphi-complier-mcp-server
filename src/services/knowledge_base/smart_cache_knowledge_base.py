@@ -197,8 +197,7 @@ class SmartCacheKnowledgeBase:
         Returns:
             (file_path_str, items, line_count, uses_list)
         """
-        import re
-        from pathlib import Path
+        # 注: re 和 Path 已在模块顶部导入，不在函数内重复 import
         from src.services.knowledge_base.scan_delphi_sources import _extract_all_entities, _extract_uses
         
         file_path = Path(file_path_str)
@@ -452,7 +451,7 @@ class SmartCacheKnowledgeBase:
                             })
             
         except Exception as e:
-            pass
+            logger.warning("解析文件失败 %s: %s", file_path_str, e)
         
         return (file_path_str, items, line_count, uses_list)
     
@@ -470,6 +469,18 @@ class SmartCacheKnowledgeBase:
         cursor = conn.cursor()
         
         try:
+            # Schema 升级检测：v1→v2 清理重复词汇并创建唯一索引（与 thirdparty_kb 保持一致）
+            from src.services.knowledge_base import get_schema_version_from_db as _smart_get_ver
+            if _smart_get_ver(cursor) < 2:
+                cursor.execute("""
+                    DELETE FROM vocabularies WHERE id NOT IN (
+                        SELECT MIN(id) FROM vocabularies GROUP BY type, name, file_id
+                    )
+                """)
+                if cursor.rowcount > 0:
+                    logger.info(f"升级 schema v1→v2：清理了 {cursor.rowcount} 条重复词汇记录")
+                cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vocabularies_dedup ON vocabularies(type, name, file_id)")
+
             if incremental:
                 cursor.execute("DELETE FROM metadata")
                 conn.commit()
@@ -551,7 +562,7 @@ class SmartCacheKnowledgeBase:
                                 ''
                             ))
                         except Exception as e:
-                            pass
+                            logger.warning("文件处理失败 %s: %s", fp, e)
             
             if incremental:
                 logger.info(f"  增量模式: 跳过 {skipped} 个未变化文件, 更新 {updated} 个已修改文件, 新增 {len(files_data)} 个文件")

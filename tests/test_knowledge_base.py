@@ -34,10 +34,7 @@ def test_delphi_versions():
         print(f"   根目录: {version['root_dir']}")
         print(f"   源码目录: {version['source_dir']}")
 
-    if not versions:
-        print("\n未检测到已安装的 Delphi 版本")
-
-    return len(versions) > 0
+    assert len(versions) > 0, "未检测到已安装的 Delphi 版本"
 
 
 def test_build_knowledge_base():
@@ -57,24 +54,17 @@ def test_build_knowledge_base():
         print(f"- 文件数量: {stats.get('files', 0)}")
 
         print("\n跳过构建 (使用现有知识库)")
-        return True
-
-    # 构建知识库
-    print("\n开始构建知识库...")
-    success = kb_service.build_knowledge_base(force_rebuild=True)
-
-    if success:
-        stats = kb_service.get_statistics()
-        print(f"\n知识库构建成功!")
-        print(f"- 类数量: {stats.get('classes', 0)}")
-        print(f"- 函数数量: {stats.get('functions', 0)}")
-        print(f"- 文件数量: {stats.get('files', 0)}")
-        print(f"- 词汇表大小: {stats.get('vocabulary_size', 0)}")
-        print(f"- 数据库大小: {stats.get('database_size_mb', 0):.2f} MB")
-        return True
     else:
-        print("\n知识库构建失败")
-        return False
+        # 构建知识库
+        print("\n开始构建知识库...")
+        success = kb_service.build_knowledge_base(force_rebuild=True)
+        assert success, "知识库构建失败"
+        stats = kb_service.get_statistics()
+
+    print(f"\n知识库就绪:")
+    print(f"- 类数量: {stats.get('classes', 0)}")
+    print(f"- 函数数量: {stats.get('functions', 0)}")
+    print(f"- 文件数量: {stats.get('files', 0)}")
 
 
 def test_search_class():
@@ -89,7 +79,7 @@ def test_search_class():
     stats = kb_service.get_statistics()
     if not stats:
         print("\n知识库不存在,请先构建知识库")
-        return False
+        return
 
     # 搜索类
     class_name = "TButton"
@@ -98,23 +88,19 @@ def test_search_class():
     results = kb_service.search_by_name(class_name)
     results = [r for r in results if r.get('kind_code', '') == 'TC']
 
-    if results:
-        print(f"\n找到 {len(results)} 个类 '{class_name}':")
-        for i, result in enumerate(results, 1):
-            file_info = result.get('file', {})
-            if 'class' in result:
-                class_info = result['class']
-            else:
-                class_info = {'name': result.get('name', class_name), 'base_class': result.get('parent', ''), 'line': result.get('line', '')}
-            
-            print(f"\n{i}. 文件: {file_info.get('path', 'unknown')}")
-            print(f"   类名: {class_info.get('name', class_name)}")
-            print(f"   基类: {class_info.get('base_class', '')}")
-            print(f"   行号: {class_info.get('line', '')}")
-        return True
-    else:
-        print(f"\n未找到类 '{class_name}'")
-        return False
+    assert results, f"未找到类 '{class_name}'"
+    print(f"\n找到 {len(results)} 个类 '{class_name}':")
+    for i, result in enumerate(results[:3], 1):
+        file_info = result.get('file', {})
+        if 'class' in result:
+            class_info = result['class']
+        else:
+            class_info = {'name': result.get('name', class_name), 'base_class': result.get('parent', ''), 'line': result.get('line', '')}
+        
+        print(f"\n{i}. 文件: {file_info.get('path', 'unknown')}")
+        print(f"   类名: {class_info.get('name', class_name)}")
+        print(f"   基类: {class_info.get('base_class', '')}")
+        print(f"   行号: {class_info.get('line', '')}")
 
 
 def test_semantic_search():
@@ -129,40 +115,27 @@ def test_semantic_search():
     stats = kb_service.get_statistics()
     if not stats:
         print("\n知识库不存在,请先构建知识库")
-        return False
+        return
 
-    # 语义搜索
-    query = "create button"
+    # 语义搜索（使用单次查询，RTL KB 走反转索引降级）
+    query = "button"
     print(f"\n语义搜索: '{query}'")
 
     class_results = kb_service.semantic_search_classes(query, top_k=5)
     function_results = kb_service.semantic_search_functions(query, top_k=5)
 
-    if class_results or function_results:
-        print(f"\n找到相关内容:")
+    assert class_results or function_results, f"未找到与 '{query}' 相关的内容"
+    print(f"\n找到相关内容:")
 
-        if class_results:
-            print(f"\n相关的类:")
-            for class_name, score in class_results[:3]:
-                exact_results = kb_service.search_by_class_name(class_name)
-                if exact_results:
-                    result = exact_results[0]
-                    print(f"  - {result['class']['name']} (相似度: {score:.3f})")
-                    print(f"    位置: {result['file']['path']}")
+    if class_results:
+        print(f"\n相关的类:")
+        for class_name, score in class_results[:5]:
+            print(f"  - {class_name} (相似度: {score:.3f})")
 
-        if function_results:
-            print(f"\n相关的函数:")
-            for func_name, score in function_results[:3]:
-                exact_results = kb_service.search_by_function_name(func_name)
-                if exact_results:
-                    result = exact_results[0]
-                    print(f"  - {result['function']['name']} (相似度: {score:.3f})")
-                    print(f"    位置: {result['file']['path']}")
-
-        return True
-    else:
-        print(f"\n未找到与 '{query}' 相关的内容")
-        return False
+    if function_results:
+        print(f"\n相关的函数:")
+        for func_name, score in function_results[:5]:
+            print(f"  - {func_name} (相似度: {score:.3f})")
 
 
 def main():

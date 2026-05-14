@@ -43,7 +43,7 @@ def test_empty_file():
         else:
             print("  空文件返回 None (可接受)")
     
-    return True
+    pass
 
 
 def test_large_file():
@@ -65,7 +65,7 @@ def test_large_file():
         print(f"  大文件大小: {result['size']} 字节")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_unicode_filename():
@@ -84,7 +84,7 @@ def test_unicode_filename():
         print(f"  Unicode 文件处理成功")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_special_characters_in_content():
@@ -104,7 +104,7 @@ def test_special_characters_in_content():
         print(f"  特殊字符处理成功")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_nonexistent_directory():
@@ -121,7 +121,7 @@ def test_nonexistent_directory():
         print(f"  错误信息: {result['error']}")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_empty_directory():
@@ -142,7 +142,7 @@ def test_empty_directory():
         print(f"  空目录处理成功")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_search_empty_query():
@@ -166,7 +166,7 @@ def test_search_empty_query():
         gc.collect()
         shutil.rmtree(tmpdir, ignore_errors=True)
     
-    return True
+    pass
 
 
 def test_search_sql_injection():
@@ -198,7 +198,7 @@ def test_search_sql_injection():
         print("  SQL 注入防护测试通过")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_concurrent_access():
@@ -245,7 +245,7 @@ def test_concurrent_access():
         gc.collect()
         shutil.rmtree(tmpdir, ignore_errors=True)
     
-    return True
+    pass
 
 
 def test_database_init():
@@ -276,7 +276,7 @@ def test_database_init():
         print("  数据库和表创建成功")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def main():

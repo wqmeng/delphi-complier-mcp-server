@@ -1985,9 +1985,9 @@ class GenericDocumentScanner:
             立即返回，实际处理在后台线程中进行
         """
         if self._scanning:
-            print("扫描已在进行中...")
+            logger.warning("扫描已在进行中")
             return
-        
+
         def _scan_task():
             try:
                 self._scanning = True
@@ -1998,11 +1998,11 @@ class GenericDocumentScanner:
                     self.progress_callback(100, "扫描完成")
             finally:
                 self._scanning = False
-        
+
         self._scan_thread = threading.Thread(target=_scan_task, daemon=True)
         self._scan_thread.start()
-        
-        print(f"异步扫描已启动: {directory}")
+
+        logger.info(f"异步扫描已启动: {directory}")
     
     def is_scanning(self) -> bool:
         """检查是否正在扫描"""

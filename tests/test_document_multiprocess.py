@@ -50,7 +50,7 @@ def test_multiprocess_scan():
         
         print(f"\n  ✓ 多进程扫描正常")
         
-    return True
+    pass
 
 
 def test_parallel_workers_config():
@@ -89,7 +89,7 @@ def test_parallel_workers_config():
         
         print(f"\n  ✓ parallel_workers 配置生效")
         
-    return True
+    pass
 
 
 def test_large_files_multiprocess():
@@ -126,7 +126,7 @@ def test_large_files_multiprocess():
         
         print(f"\n  ✓ 大量文件多进程处理正常")
         
-    return True
+    pass
 
 
 def test_mixed_file_types():
@@ -168,7 +168,7 @@ def test_mixed_file_types():
         
         print(f"\n  ✓ 混合文件类型多进程处理正常")
         
-    return True
+    pass
 
 
 def main():

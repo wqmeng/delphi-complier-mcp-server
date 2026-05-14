@@ -94,7 +94,7 @@ def test_text_processor():
         print(f"  大小: {result['size']} 字节")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_markdown_processor():
@@ -133,7 +133,7 @@ def test_markdown_processor():
         print(f"  代码块数: {len(result['code_examples'])}")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_html_processor():
@@ -171,7 +171,7 @@ def test_html_processor():
         print(f"  代码块数: {len(result.get('code_examples', []))}")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_docx_processor():
@@ -185,7 +185,7 @@ def test_docx_processor():
     except ImportError:
         print("  ⚠ 跳过测试: python-docx 未安装")
         print("    安装命令: pip install python-docx")
-        return True
+        pass
     
     processor = DocxProcessor()
     
@@ -210,7 +210,7 @@ def test_docx_processor():
         print(f"  行数: {result['line_count']}")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_scanner_scan_directory():
@@ -241,7 +241,7 @@ def test_scanner_scan_directory():
         print(f"  按类型: {stats['by_type']}")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_scanner_search():
@@ -275,7 +275,7 @@ def test_scanner_search():
         gc.collect()
         shutil.rmtree(tmpdir, ignore_errors=True)
     
-    return True
+    pass
 
 
 def test_scanner_content_type_filter():
@@ -308,7 +308,7 @@ def test_scanner_content_type_filter():
         gc.collect()
         shutil.rmtree(tmpdir, ignore_errors=True)
     
-    return True
+    pass
 
 
 def test_web_processor():
@@ -321,7 +321,7 @@ def test_web_processor():
         import requests
     except ImportError:
         print("  ⚠ 跳过测试: requests 未安装")
-        return True
+        pass
     
     processor = WebDocumentProcessor()
     
@@ -332,7 +332,7 @@ def test_web_processor():
     
     if result is None:
         print("  ⚠ 网页抓取失败 (可能是网络问题)")
-        return True
+        pass
     
     assert 'title' in result, "结果应包含 title"
     assert 'content' in result, "结果应包含 content"
@@ -342,7 +342,7 @@ def test_web_processor():
     print(f"  大小: {result['size']} 字节")
     print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def test_scanner_add_web_document():
@@ -355,7 +355,7 @@ def test_scanner_add_web_document():
         import requests
     except ImportError:
         print("  ⚠ 跳过测试: requests 未安装")
-        return True
+        pass
     
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
@@ -368,7 +368,7 @@ def test_scanner_add_web_document():
         
         if result is None or (isinstance(result, dict) and 'error' in result):
             print("  ⚠ 添加网页失败 (可能是网络问题)")
-            return True
+            pass
         
         print(f"  标题: {result['title']}")
         print(f"  URL: {result.get('url', 'N/A')}")
@@ -377,7 +377,7 @@ def test_scanner_add_web_document():
         print(f"  总文档数: {stats['total_documents']}")
         print("  ✓ 测试通过")
     
-    return True
+    pass
 
 
 def main():

@@ -143,7 +143,7 @@ class ThirdPartyKnowledgeBase:
                     finally:
                         winreg.CloseKey(version_path)
 
-                    version_name = self._get_delphi_version_name(version_key)
+                    version_name = self._get_delphi_name_by_version_key(version_key)
 
                     versions.append({
                         "version": version_key,
@@ -174,8 +174,12 @@ class ThirdPartyKnowledgeBase:
         )
         return sorted_versions[0]
 
-    def _get_delphi_version_name(self, version_key: str) -> str:
-        """获取 Delphi 版本名称"""
+    def _get_delphi_name_by_version_key(self, version_key: str) -> str:
+        """根据注册表版本键（如 "22.0"）获取 Delphi 版本名称
+
+        注意与 config_manager._get_delphi_version_name 的区别：
+        后者按安装路径解析版本名，本方法按注册表键名解析。
+        """
         from src.utils.delphi_versions import get_version_name
         return get_version_name(version_key)
 
@@ -520,7 +524,7 @@ class ThirdPartyKnowledgeBase:
                                 total_files += 1
                                 total_lines += file_info.get('line_count', 0)
                         except Exception as e:
-                            logger.debug(f"分析文件失败: {file_path}, {e}")
+                            logger.warning("分析文件失败 %s: %s", file_path, e)
 
                 logger.info(f"  找到 {total_files} 个源文件")
 
@@ -571,7 +575,7 @@ class ThirdPartyKnowledgeBase:
                 conn.commit()
                 logger.info("已清空旧知识库数据")
             except Exception:
-                pass
+                logger.warning("清空旧知识库数据失败（表可能不存在，将自动创建）")
         
         # 增量构建：加载现有文件的hash
         existing_files = {}

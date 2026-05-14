@@ -117,3 +117,8 @@ def test_missing():
         assert not DprojParser(str(Path(d) / "x.dproj")).parse()
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

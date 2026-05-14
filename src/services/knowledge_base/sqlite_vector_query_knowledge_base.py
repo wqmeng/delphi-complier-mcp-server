@@ -64,8 +64,12 @@ class SQLiteVectorKnowledgeBase:
         return conn
 
     def _close_connection(self):
-        """关闭当前线程的数据库连接"""
+        """关闭当前线程的数据库连接（关闭前执行 WAL checkpoint 避免 -wal/-shm 残留）"""
         if hasattr(self._thread_local, 'conn') and self._thread_local.conn is not None:
+            try:
+                self._thread_local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
             try:
                 self._thread_local.conn.close()
             except Exception:
@@ -95,9 +99,13 @@ class SQLiteVectorKnowledgeBase:
 
                 logger.info("使用缓存的索引")
 
-                # 检查 schema 版本
-                from src.services.knowledge_base import check_schema_version
-                check_schema_version(cursor, "SQLiteVectorKnowledgeBase")
+                # 检查 schema 版本（版本不匹配时重建索引）
+                from src.services.knowledge_base import check_schema_version, SCHEMA_VERSION
+                if not check_schema_version(cursor, "SQLiteVectorKnowledgeBase"):
+                    logger.warning(
+                        f"SQLiteVectorKnowledgeBase schema 版本不匹配 "
+                        f"(需要 v{SCHEMA_VERSION})，搜索可能不完整"
+                    )
 
                 # 迁移: 添加 name_lower_rev 列和索引（如果不存在）
                 cursor.execute("PRAGMA table_info(vocabularies)")
@@ -430,7 +438,7 @@ class SQLiteVectorKnowledgeBase:
                         'uses': uses
                     }
                 })
-            conn.close()
+            # 注: 不关闭线程局部连接，由 KB 实例生命周期管理
             return results
 
         # 策略2: files.units_defined 字段（项目 KB 路径）
@@ -475,7 +483,7 @@ class SQLiteVectorKnowledgeBase:
                     }
                 })
 
-        conn.close()
+        # 注: 不关闭线程局部连接，由 KB 实例生命周期管理
         return results
 
     def search_usages(self, name: str, namespace_prefixes: Optional[List[str]] = None) -> List[Dict]:
@@ -638,7 +646,7 @@ class SQLiteVectorKnowledgeBase:
                 }
             })
 
-        conn.close()
+        # 注: 不关闭线程局部连接，由 KB 实例生命周期管理
         return results
 
     def search_by_function_name(self, function_name: str) -> List[Dict]:
@@ -678,7 +686,7 @@ class SQLiteVectorKnowledgeBase:
                 }
             })
 
-        conn.close()
+        # 注: 不关闭线程局部连接，由 KB 实例生命周期管理
         return results
 
     def count_pending_vectors(self) -> int:
@@ -688,7 +696,8 @@ class SQLiteVectorKnowledgeBase:
             cursor = conn.cursor()
             cursor.execute("SELECT COUNT(*) FROM vocabularies WHERE vector IS NULL OR vector_status='pending'")
             return cursor.fetchone()[0]
-        except Exception:
+        except Exception as e:
+            logger.warning("统计待构建向量数失败: %s", e)
             return 0
 
     def build_vectors(self, progress_callback=None) -> int:

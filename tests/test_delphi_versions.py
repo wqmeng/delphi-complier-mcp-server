@@ -170,3 +170,8 @@ def test_detect_registry_version_unknown_compiler():
     """不存在的编译器路径应返回 None"""
     version = detect_registry_version_from_compiler(r"C:\NonExistent\dcc32.exe")
     assert version is None
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

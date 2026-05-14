@@ -9,6 +9,7 @@ Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
 """
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Optional
 from mcp.types import CallToolResult
@@ -21,6 +22,7 @@ _thirdparty_kb_service = None
 
 # 项目知识库缓存 {project_path: ProjectKnowledgeBase instance}
 _pkb_cache = {}
+_pkb_lock = threading.Lock()
 
 
 def _format_build_info(s: dict) -> str:
@@ -40,7 +42,7 @@ def _format_build_info(s: dict) -> str:
 
 
 def _append_stats_guide(guide: str, kb_type: str) -> str:
-    """向 guide 字符串追加知识库统计信息，返回修改后的字符串"""
+    """尝试在指引中追加统计信息"""
     if kb_type in ("all", "delphi") and _delphi_kb_service:
         try:
             s = _delphi_kb_service.get_statistics()
@@ -50,8 +52,8 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
                 f"{s.get('classes', 0)} 类, "
                 f"{s.get('functions', 0)} 函数{bi}\n"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("获取 Delphi KB 统计失败: %s", e)
     if kb_type in ("all", "project"):
         try:
             pp = _resolve_project_path(None)
@@ -66,8 +68,8 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
                     f"{pj.get('classes', 0)} 类, "
                     f"{pj.get('functions', 0)} 函数{bi}\n"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("获取 Project KB 统计失败: %s", e)
     if kb_type in ("all", "thirdparty") and _thirdparty_kb_service:
         try:
             s = _thirdparty_kb_service.get_statistics()
@@ -77,8 +79,8 @@ def _append_stats_guide(guide: str, kb_type: str) -> str:
                 f"{s.get('classes', 0)} 类, "
                 f"{s.get('functions', 0)} 函数{bi}\n"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("获取 Thirdparty KB 统计失败: %s", e)
     return guide
 
 
@@ -132,13 +134,38 @@ def set_thirdparty_kb_service(service):
     _thirdparty_kb_service = service
 
 
-def _get_or_create_pkb(project_path: str):
-    """获取或创建项目知识库实例（带缓存）"""
-    global _pkb_cache
-    if project_path not in _pkb_cache:
-        from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
-        _pkb_cache[project_path] = ProjectKnowledgeBase(project_path)
-    return _pkb_cache[project_path]
+def _get_or_create_pkb(project_path: str, fresh: bool = False):
+    """获取或创建项目知识库实例（带缓存）
+
+    Args:
+        project_path: 项目路径
+        fresh: 是否创建全新实例（用于构建操作，避免 close() 影响缓存）
+
+    Returns:
+        ProjectKnowledgeBase 实例
+    """
+    from ..services.knowledge_base.project_knowledge_base import ProjectKnowledgeBase
+
+    if fresh:
+        return ProjectKnowledgeBase(project_path)
+
+    global _pkb_cache, _pkb_lock
+    with _pkb_lock:
+        if project_path not in _pkb_cache:
+            _pkb_cache[project_path] = ProjectKnowledgeBase(project_path)
+        return _pkb_cache[project_path]
+
+
+def _cleanup_pkb_cache():
+    """关闭并清理所有缓存的 ProjectKnowledgeBase 实例"""
+    global _pkb_cache, _pkb_lock
+    with _pkb_lock:
+        for path, pkb in list(_pkb_cache.items()):
+            try:
+                pkb.close()
+            except Exception:
+                pass
+        _pkb_cache.clear()
 
 
 async def search_knowledge(arguments: Any) -> CallToolResult:
@@ -297,22 +324,13 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                                 _rebuild_path = project_path
                                 _dedup_key = f"project_rebuild:{_rebuild_path}"
 
-                                import subprocess, json, sys as _sys
-                                from pathlib import Path as _Path
-
-                                _worker_script = str(_Path(__file__).resolve().parent / "project_kb_worker.py")
-
                                 def _rebuild_project_task(**kwargs):
                                     _pp = kwargs.get("project_path")
-                                    # 子进程构建，避免 asyncio 干扰
-                                    _cmd = [_sys.executable, _worker_script, f'--project-path={_pp}']
-                                    _result = subprocess.run(_cmd, capture_output=True, text=True, timeout=600,
-                                        env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'})
-                                    for _line in _result.stdout.strip().split('\n'):
-                                        if _line.startswith('{'):
-                                            _out = json.loads(_line)
-                                            return _out.get('success', False)
-                                    return False
+                                    _pc = kwargs.get("_progress_callback")
+                                    _p = _PKB(_pp, progress_callback=_pc)
+                                    _p.build_project_knowledge_base(force_rebuild=False)
+                                    _p.close()
+                                    return True
 
                                 _task_id = _tm.submit_task(
                                     f"重建项目知识库 ({Path(_rebuild_path).stem})",
@@ -582,21 +600,12 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
                 success = _delphi_kb_service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
                 results["delphi"] = "成功" if success else "失败"
             elif kb == "project" and project_path:
-                import subprocess, json
-                _worker = str(Path(__file__).resolve().parent / "project_kb_worker.py")
-                _cmd = [sys.executable, _worker, f'--project-path={project_path}']
-                if force_rebuild:
-                    _cmd.append('--force-rebuild')
-                _result = subprocess.run(
-                    _cmd, capture_output=True, text=True, timeout=600,
-                    env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'})
-                for _line in _result.stdout.strip().split('\n'):
-                    if _line.startswith('{'):
-                        _out = json.loads(_line)
-                        results["project"] = "成功" if _out.get('success') else "失败"
-                        break
-                else:
-                    results["project"] = f"错误: 子进程无输出\n{_result.stderr}"
+                pkb = _get_or_create_pkb(project_path, fresh=True)
+                try:
+                    success = pkb.build_project_knowledge_base(force_rebuild=force_rebuild)
+                    results["project"] = "成功" if success else "失败"
+                finally:
+                    pkb.close()
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 _thirdparty_kb_service.close()
                 success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)

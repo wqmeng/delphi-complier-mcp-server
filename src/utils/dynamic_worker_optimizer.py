@@ -8,6 +8,9 @@ import time
 import multiprocessing
 from typing import Callable, List, Any, Optional, Tuple
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from ..utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class DynamicWorkerOptimizer:
@@ -117,8 +120,7 @@ class DynamicWorkerOptimizer:
                             break
                 
             except Exception as e:
-                # 测试失败，返回当前最佳配置
-                print(f"Worker {workers} 测试失败: {e}")
+                logger.warning("Worker %d 测试失败: %s", workers, e)
                 break
         
         return best_workers

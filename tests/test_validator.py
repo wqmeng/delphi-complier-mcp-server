@@ -116,3 +116,8 @@ def test_validate_warning_level_valid():
 def test_validate_warning_level_out_of_range():
     ok, msg = Validator.validate_warning_level(5)
     assert not ok
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__])

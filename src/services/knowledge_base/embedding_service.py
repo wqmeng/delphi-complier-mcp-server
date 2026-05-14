@@ -10,7 +10,10 @@ Embedding 服务 —— 为知识库提供真语义搜索
 """
 
 import logging
+import os
 import site
+import numpy  # noqa: F401 - used in type annotations and via np alias
+import numpy as np
 from typing import List, Optional
 
 # 确保用户 site-packages 在路径中（pip install 默认安装到用户目录）
@@ -48,7 +51,6 @@ def load_model():
         return _model
 
     from sentence_transformers import SentenceTransformer
-    import os
 
     # 尝试多个镜像源
     # 用户可通过 HF_ENDPOINT 环境变量强制指定
@@ -62,8 +64,21 @@ def load_model():
             "https://hf-mirror.com",
         ]
 
+    # 保存原始环境变量，退出时恢复
+    _saved_env = {
+        'HF_ENDPOINT': os.environ.get('HF_ENDPOINT'),
+        'TRANSFORMERS_OFFLINE': os.environ.get('TRANSFORMERS_OFFLINE'),
+        'HF_HUB_OFFLINE': os.environ.get('HF_HUB_OFFLINE'),
+    }
+
+    def _restore_env():
+        for k, v in _saved_env.items():
+            if v is not None:
+                os.environ[k] = v
+            else:
+                os.environ.pop(k, None)
+
     for ep in _endpoints:
-        old_endpoint = os.environ.get("HF_ENDPOINT") if ep else None
         try:
             if ep:
                 logger.info(f"加载 embedding 模型（镜像: {ep}）: {_model_name}")
@@ -71,19 +86,28 @@ def load_model():
             else:
                 logger.info(f"加载 embedding 模型: {_model_name}")
 
-            # 强制离线模式（避免联网验证 SSL 证书失败）
+            # 优先使用离线模式（避免联网验证 SSL 证书失败）
             os.environ["TRANSFORMERS_OFFLINE"] = "1"
             os.environ["HF_HUB_OFFLINE"] = "1"
             _model = SentenceTransformer(_model_name, local_files_only=True)
-            logger.info("embedding 模型加载完成")
+            logger.info("embedding 模型加载完成（离线模式）")
+            _restore_env()
             return _model
         except Exception as e:
-            logger.warning(f"  镜像 {ep or 'default'} 失败: {e}")
-            if ep and old_endpoint is not None:
-                os.environ["HF_ENDPOINT"] = old_endpoint
-            elif ep:
-                os.environ.pop("HF_ENDPOINT", None)
-            continue
+            logger.warning(f"  镜像 {ep or 'default'} 离线加载失败: {e}，尝试联网下载...")
+            # 清除离线标志，尝试联网下载
+            os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            try:
+                _model = SentenceTransformer(_model_name, local_files_only=False)
+                logger.info("embedding 模型加载完成（联网模式）")
+                _restore_env()
+                return _model
+            except Exception as e2:
+                logger.warning(f"  镜像 {ep or 'default'} 联网加载也失败: {e2}")
+                # 恢复环境变量后继续下一个镜像
+                _restore_env()
+                continue
 
     logger.warning("所有镜像源均无法加载 embedding 模型")
     return None
@@ -135,14 +159,12 @@ def cosine_similarity(query_emb: "numpy.ndarray", db_embs: "numpy.ndarray") -> "
     Returns:
         (n,) 相似度分数
     """
-    import numpy as np
     # 已归一化 → dot = cosine
     return np.dot(db_embs, query_emb)
 
 
 def blob_to_vector(blob: bytes) -> Optional["numpy.ndarray"]:
     """SQLite BLOB → numpy 向量"""
-    import numpy as np
     try:
         return np.frombuffer(blob, dtype=np.float32)
     except Exception:
