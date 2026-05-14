@@ -297,14 +297,22 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                                 _rebuild_path = project_path
                                 _dedup_key = f"project_rebuild:{_rebuild_path}"
 
+                                import subprocess, json, sys as _sys
+                                from pathlib import Path as _Path
+
+                                _worker_script = str(_Path(__file__).resolve().parent / "project_kb_worker.py")
+
                                 def _rebuild_project_task(**kwargs):
                                     _pp = kwargs.get("project_path")
-                                    _pc = kwargs.get("_progress_callback")
-                                    _p = _PKB(_pp, progress_callback=_pc)
-                                    # force_rebuild=False：增量构建，只扫描 hash 变化的文件
-                                    _p.build_project_knowledge_base(force_rebuild=False)
-                                    _p.close()
-                                    return True
+                                    # 子进程构建，避免 asyncio 干扰
+                                    _cmd = [_sys.executable, _worker_script, f'--project-path={_pp}']
+                                    _result = subprocess.run(_cmd, capture_output=True, text=True, timeout=600,
+                                        env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'})
+                                    for _line in _result.stdout.strip().split('\n'):
+                                        if _line.startswith('{'):
+                                            _out = json.loads(_line)
+                                            return _out.get('success', False)
+                                    return False
 
                                 _task_id = _tm.submit_task(
                                     f"重建项目知识库 ({Path(_rebuild_path).stem})",
@@ -574,10 +582,21 @@ async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
                 success = _delphi_kb_service.build_knowledge_base(version=version, force_rebuild=force_rebuild)
                 results["delphi"] = "成功" if success else "失败"
             elif kb == "project" and project_path:
-                pkb = _get_or_create_pkb(project_path)
-                success = pkb.build_project_knowledge_base(force_rebuild=force_rebuild)
-                pkb.close()
-                results["project"] = "成功" if success else "失败"
+                import subprocess, json
+                _worker = str(Path(__file__).resolve().parent / "project_kb_worker.py")
+                _cmd = [sys.executable, _worker, f'--project-path={project_path}']
+                if force_rebuild:
+                    _cmd.append('--force-rebuild')
+                _result = subprocess.run(
+                    _cmd, capture_output=True, text=True, timeout=600,
+                    env={**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'})
+                for _line in _result.stdout.strip().split('\n'):
+                    if _line.startswith('{'):
+                        _out = json.loads(_line)
+                        results["project"] = "成功" if _out.get('success') else "失败"
+                        break
+                else:
+                    results["project"] = f"错误: 子进程无输出\n{_result.stderr}"
             elif kb == "thirdparty" and _thirdparty_kb_service:
                 _thirdparty_kb_service.close()
                 success = _thirdparty_kb_service.build_thirdparty_knowledge_base(version=version, force_rebuild=force_rebuild)
