@@ -126,7 +126,7 @@ src/
 
 ```powershell
 $env:PYTHONIOENCODING='utf-8'
-$7z="C:\User\delphi-complier-mcp-server\tools\7z\7z.exe"
+$7z="$src\tools\7z\7z.exe"
 $src="C:\User\delphi-complier-mcp-server"
 $ver="v2026.05.14"  # 替换为当前版本
 $out="$src\releases\delphi-mcp-server-$ver"
@@ -152,15 +152,7 @@ git ls-files | Where-Object {
 Remove-Item "$out" -Recurse -Force
 ```
 
-### Release 包排除清单
-
-| 排除文件 | 原因 |
-|----------|------|
-| `.arts/` | IDE 本地配置 |
-| `.coverage` | 测试覆盖率数据 |
-| `config/history.json` | 本地编译历史 |
-| `src/config/compilers.json` | 本地编译器路径 |
-| `.gitignore` | 仓库规则，用户不需要 |
+**自动包含**：`tools/pasfmt/cli/pasfmt.exe` 等工具文件由 `git ls-files` 自动纳入（已在版本控制中），无需手动处理。
 
 ### 发布步骤
 
