@@ -20,7 +20,6 @@ from typing import Dict, List, Optional, Set, Callable
 from datetime import datetime
 from src.utils.logger import get_logger
 from src.utils.dproj_parser import DprojParser
-from .scan_delphi_sources import DelphiSourceScanner
 from .sqlite_vector_query_knowledge_base import SQLiteVectorKnowledgeBase
 from src.services.knowledge_base.schema import get_connection, create_source_tables, get_schema_version_from_db
 from src.services.knowledge_base import set_schema_version_in_db
@@ -52,38 +51,7 @@ class ProjectKnowledgeBase:
         self.project_kb: Optional[SQLiteVectorKnowledgeBase] = None
         self.thirdparty_kb: Optional[SQLiteVectorKnowledgeBase] = None
 
-        # 元数据文件
-        self.metadata_file = self.kb_dir / "project_metadata.json"
-
-        # 加载元数据
-        self.metadata = self._load_metadata()
-
         logger.info(f"项目知识库初始化: {self.project_name}")
-
-    def _load_metadata(self) -> Dict:
-        """加载项目元数据"""
-        if self.metadata_file.exists():
-            try:
-                with open(self.metadata_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.warning(f"加载元数据失败: {e}")
-
-        return {
-            "project_name": self.project_name,
-            "project_path": str(self.project_path),
-            "created_at": datetime.now().isoformat(),
-            "last_updated": datetime.now().isoformat(),
-            "thirdparty_paths": [],
-            "source_hash": None,
-            "thirdparty_hash": None
-        }
-
-    def _save_metadata(self):
-        """保存项目元数据"""
-        self.metadata["last_updated"] = datetime.now().isoformat()
-        with open(self.metadata_file, 'w', encoding='utf-8') as f:
-            json.dump(self.metadata, f, ensure_ascii=False, indent=2)
 
     def _get_delphi_install_paths(self) -> Set[str]:
         """
@@ -334,35 +302,13 @@ class ProjectKnowledgeBase:
         Returns:
             是否构建成功
         """
-        # 计算源码哈希
-        current_hash = self._calculate_source_hash(self.project_dir)
-        cached_hash = self.metadata.get("source_hash")
-
-        # 检查是否需要重建
-        if not force_rebuild and cached_hash == current_hash:
-            db_file = self.kb_dir / "knowledge.sqlite"
-            if db_file.exists():
-                logger.info("项目源码知识库已是最新,跳过构建")
-                return True
-
-        logger.info("开始构建项目源码知识库")
-        self._report_progress(5, "扫描项目源码文件...")
         _build_start = time.time()
-
-        # 项目源码知识库目录
-        project_kb_dir = self.kb_dir
-        project_kb_dir.mkdir(parents=True, exist_ok=True)
-
-        # 读取共享 KB 中已收录的路径前缀(仅项目内),用于跳过
-        exclude_prefixes = self._get_shared_exclude_prefixes()
-
-        # 先连接 DB，加载现有文件 hash（用于增量跳过未变更文件）
+        # 先连接 DB，读取缓存的 source_hash
         db_file = self.kb_dir / "knowledge.sqlite"
         conn = get_connection(str(db_file), use_wal=True)
         cursor = conn.cursor()
-
-        current_time = datetime.now().timestamp()
         create_source_tables(cursor)
+        current_hash = self._calculate_source_hash(self.project_dir)
 
         # Schema 升级检测：v1→v2
         if get_schema_version_from_db(cursor) < 2:
@@ -377,6 +323,25 @@ class ProjectKnowledgeBase:
                 logger.info("升级 schema v1→v2：无重复词汇需清理")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vocabularies_dedup ON vocabularies(type, name, file_id)")
 
+        # 读取缓存 hash，检查是否需要重建
+        cached_hash = None
+        try:
+            cursor.execute("SELECT value FROM metadata WHERE key='source_hash'")
+            row = cursor.fetchone()
+            if row:
+                cached_hash = row[0]
+        except Exception:
+            pass
+
+        if not force_rebuild and cached_hash == current_hash and db_file.exists():
+            logger.info("项目源码知识库已是最新,跳过构建")
+            conn.close()
+            return True
+        logger.info("开始构建项目源码知识库")
+        self._report_progress(5, "扫描项目源码文件...")
+        self.kb_dir.mkdir(parents=True, exist_ok=True)
+        exclude_prefixes = self._get_shared_exclude_prefixes()
+
         existing_files = {}
         if force_rebuild:
             cursor.execute("DELETE FROM vocabularies")
@@ -390,6 +355,7 @@ class ProjectKnowledgeBase:
                 existing_files[row[1]] = {'id': row[0], 'hash': row[2]}
             logger.info(f"现有文件数: {len(existing_files)}")
 
+        current_time = datetime.now().timestamp()
         skip_dir_names = {'.delphi-kb', 'thirdpart', 'vendor', 'lib', 'packages',
                           '__pycache__', '.git', '.svn', 'node_modules', 'dist', 'bin', 'obj',
                           'Win32', 'Win64', '__history', '__recovery', 'backup', 'logs'}
@@ -637,6 +603,7 @@ class ProjectKnowledgeBase:
             ('build_time', datetime.now().isoformat()),
             ('last_build_time', datetime.now().isoformat()),
             ('last_build_duration', str(int(time.time() - _build_start))),
+            ('source_hash', current_hash),
         ]:
             cursor.execute("INSERT INTO metadata (key, value, updated_at) VALUES (?, ?, ?)", (key, val, current_time))
         set_schema_version_in_db(cursor)
@@ -649,9 +616,6 @@ class ProjectKnowledgeBase:
         logger.info(f"  函数: {func_count}")
         self._report_progress(95, f"项目 KB: {total_file_count} 文件, {class_count} 类, {func_count} 函数")
 
-        self.metadata["source_hash"] = current_hash
-        logger.debug(f"保存 source_hash: {current_hash!r}")
-        self._save_metadata()
         self._report_progress(100, "项目知识库构建完成")
 
         try:
@@ -667,10 +631,21 @@ class ProjectKnowledgeBase:
         Returns:
             True 表示知识库最新，False 表示已检测到变更（需要重建）
         """
-        # 重新加载元数据（避免被缓存的旧实例在 JSON 更新后仍用过期值）
-        self.metadata = self._load_metadata()
         current_hash = self._calculate_source_hash(self.project_dir)
-        cached_hash = self.metadata.get("source_hash")
+        # 从 SQLite metadata 表读取缓存 hash
+        cached_hash = None
+        try:
+            db_file = self.kb_dir / "knowledge.sqlite"
+            if db_file.exists():
+                conn = get_connection(str(db_file), use_wal=False)
+                try:
+                    row = conn.execute("SELECT value FROM metadata WHERE key='source_hash'").fetchone()
+                    if row:
+                        cached_hash = row[0]
+                finally:
+                    conn.close()
+        except Exception:
+            pass
 
         if current_hash != cached_hash:
             logger.info("检测到项目源码变动（搜索将使用旧知识库，请手动触发重建）")
