@@ -459,8 +459,10 @@ _DFM_INTERESTING_PROPS = {'Caption', 'Hint', 'Text', 'Title',
 
 # -------- 字符串字面量提取 --------
 # Pascal 字符串: 'text' 或 'it''s' ('' 转义单引号)
+# 支持 #ddd/#$hex 字符码: #13'Hello'#10'World' 作为整体提取
 _STRING_PATTERN = re.compile(
-    r"'(?:[^']|'')*'"  # 匹配 '内容' 其中 '' 表示转义的单引号
+    r"(?:'[^']*(?:''[^']*)*'|#\$?[0-9A-Fa-f]+)"
+    r"(?:\s*(?:'[^']*(?:''[^']*)*'|#\$?[0-9A-Fa-f]+))*"
 )
 
 # 最小字符串长度（过滤掉 '' 和单字符）
@@ -476,11 +478,30 @@ def _strip_pascal_comments(content: str) -> str:
     """
     去除 Pascal 注释，用空格替换以保留行号。
     处理: // 行注释, { 块注释 }, (* 块注释 *), {$ 编译器指令 }
+    识别字符串边界，避免将字符串内的 //、{} 当作注释处理。
     """
     result = list(content)
     i = 0
+    in_string = False
     while i < len(content):
         ch = content[i]
+
+        # --- 字符串边界跟踪（必须在注释之前）---
+        if ch == "'":
+            if i + 1 < len(content) and content[i + 1] == "'":
+                # '' 在字符串内 = 转义引号; 在字符串外 = 空字符串
+                # 不论哪种情况，跳过两个字符
+                i += 2
+                continue
+            in_string = not in_string
+            i += 1
+            continue
+
+        if in_string:
+            i += 1
+            continue
+
+        # --- 注释处理（不在字符串内）---
         # 行注释 //
         if ch == '/' and i + 1 < len(content) and content[i + 1] == '/':
             end = content.find('\n', i)
@@ -512,14 +533,54 @@ def _strip_pascal_comments(content: str) -> str:
 
 def _decode_pascal_string(match: re.Match) -> str:
     """
-    解码 Pascal 字符串 '内容' → 实际字符串。
-    处理 '' → ' 转义。
+    解码 Pascal 字符串表达式 → 实际字符串。
+    处理:
+      - '' → ' 转义
+      - #ddd → Unicode 字符（十进制）
+      - #$xxxx → Unicode 字符（十六进制）
+    例如: 'Hello'#13#10'World' → "Hello\r\nWorld"
     """
     s = match.group(0)
-    # 去掉首尾单引号
-    inner = s[1:-1]
-    # '' → '
-    return inner.replace("''", "'")
+    parts = []
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == "'":
+            # 读取到下一个单引号
+            j = i + 1
+            while j < len(s):
+                if s[j] == "'":
+                    if j + 1 < len(s) and s[j + 1] == "'":
+                        parts.append("'")
+                        j += 2
+                    else:
+                        j += 1
+                        break
+                else:
+                    parts.append(s[j])
+                    j += 1
+            i = j
+        elif ch == '#':
+            j = i + 1
+            if j < len(s) and s[j] == '$':
+                # #$hex
+                k = j + 1
+                while k < len(s) and s[k] in '0123456789ABCDEFabcdef':
+                    k += 1
+                if k > j + 1:
+                    parts.append(chr(int(s[j+1:k], 16)))
+                i = k
+            else:
+                # #decimal
+                while j < len(s) and s[j].isdigit():
+                    j += 1
+                if j > i + 1:
+                    parts.append(chr(int(s[i+1:j])))
+                i = j
+        else:
+            # 空白或 + 号，跳过
+            i += 1
+    return ''.join(parts)
 
 
 def _extract_string_literals(content: str, file_ext: str) -> List[Dict]:
