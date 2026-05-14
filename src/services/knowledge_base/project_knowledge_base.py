@@ -448,7 +448,10 @@ class ProjectKnowledgeBase:
                 from concurrent.futures import ProcessPoolExecutor, as_completed
                 cpu = os.cpu_count() or 4
                 n_workers = max(2, min(cpu - 1, len(files_to_parse) // 50))
-                chunk_size = max(1, len(files_to_parse) // (n_workers * 4))
+                # chunksize 不宜过大（首结果需等整块完成）
+                # 也不宜过小（IPC 开销增加）
+                # 目标: 每块 ≤15 文件
+                chunk_size = max(1, min(15, len(files_to_parse) // (n_workers * 10)))
                 logger.info(f"多进程解析: {len(files_to_parse)} 个文件, {n_workers} 进程 (chunksize={chunk_size})")
                 self._report_progress(50, f"多进程解析 {len(files_to_parse)} 个文件...")
 
@@ -457,7 +460,10 @@ class ProjectKnowledgeBase:
                     logger.info(f"日志: 提交 {len(files_to_parse)} 个任务耗时={_p_submitted-_p_start:.3f}s")
                     for i, result in enumerate(executor.map(_analyze_file_worker, files_to_parse, chunksize=chunk_size)):
                         if i == 0:
-                            logger.info(f"日志: 首个结果到达耗时={time.time()-_p_submitted:.1f}s")
+                            _worker_ts = result.get('_worker_ts', 0) if result else 0
+                            _parent_now = time.time()
+                            logger.info(f"日志: 首个结果到达耗时={_parent_now-_p_submitted:.1f}s "
+                                        f"(worker准备到结果={_parent_now-_worker_ts:.1f}s)")
                         if result:
                             parsed_results.append(result)
                         if (i + 1) % 1000 == 0:
