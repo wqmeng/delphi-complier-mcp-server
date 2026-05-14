@@ -293,9 +293,10 @@ async def run_server():
             Tool(
                 name="delphi_kb",
                 description="【优先级 ⭐⭐⭐】知识库搜索/统计/构建 — 搜 Delphi 代码\n"
-                            "【触发词】搜索Delphi类、查找函数定义、T开头类型、Delphi API、VCL/FMX/RTL、类名、函数签名、接口定义、uses单元、查找引用、代码搜索\n"
+                            "【触发词】搜索Delphi类、查找函数定义、T开头类型、Delphi API、VCL/FMX/RTL、类名、函数签名、接口定义、uses单元、查找引用、代码搜索、搜错误消息、查找字符串\n"
                             "❌ 不得用 grep/read/websearch 搜 Delphi 代码（无结构化索引）\n"
-                            "✅ 所有 Delphi 代码搜索必须用此（预建：3081文件、17731类、168925函数）\n"
+                            "✅ 所有 Delphi 代码搜索必须用此（预建：3081文件、17731类、168925函数 + 代码字符串索引）\n"
+                            "✅ 新增：可直接搜索代码中的错误消息、日志文本等字符串字面量（KS类型），无需 grep\n"
                             "【协作链】delphi_kb→read_source_file\n"
                             "【降级】精确搜无结果:1)换名 2)fuzzy 3)semantic；KB未构建自动触发\n"
                             "【首次】先 stats 检查 KB 状态，空则 build\n"
@@ -304,6 +305,8 @@ async def run_server():
                             '   delphi_kb(query="TfrmMain", kb_type="project", search_type="class")  # "项目中的TfrmMain"\n'
                             '   delphi_kb(query="Create", search_type="function")  # "查找Create函数"\n'
                             '   delphi_kb(query="form.main", search_type="reference")  # "谁用了form.main"\n'
+                            '   delphi_kb(query="加载声音文件出错", kb_type="project")  # "搜错误消息/日志字符串"\n'
+                            '   delphi_kb(query="SKU编码", search_type="string", kb_type="project")  # "只搜字符串字面量"\n'
                             '   delphi_kb(action=stats)                           # KB统计\n'
                             '   delphi_kb(action=build, kb_type=project)          # 构建项目KB\n'
                             "【action】search(默认)需query; read需url/doc_id; stats=统计; build(必须async)→async_task轮询; scan/scan目录; web=加网页; build_embedding=建向量",
@@ -312,8 +315,8 @@ async def run_server():
                     "properties": {
                         "action": {"type": "string", "enum": ["search", "read", "stats", "build", "scan", "web", "build_embedding"], "default": "search", "description": "操作: search=语义/精确搜索; read=读取内容; stats=查看统计; build=构建知识库; scan=扫描文档目录(kb_type=document); web=添加网页文档(kb_type=document); build_embedding=构建embedding向量"},
                         "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库范围: all=所有知识库, delphi=Delphi官方源码, project=项目源码, thirdparty=三方库源码, document=通用文档(txt/md/html/docx/doc/pdf/epub/hlp/网页)"},
-                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses", "reference"], "default": "all", "description": "实体类型过滤（仅action=search）。all=全部类型, class=类(TC), function=函数+过程(FF+FP), procedure=过程(FP), reference=查找引用位置"},
-                        "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例: 'TStringList'（精确类名）、'Create'（函数名）、'TfrmMain'（项目自有类）、'SysUtils'（单元名）"},
+                        "search_type": {"type": "string", "enum": ["semantic", "all", "class", "record", "interface", "enum", "set", "type", "function", "procedure", "const", "resourcestring", "property", "field", "method", "unit", "fuzzy", "filename", "event", "uses", "reference", "string"], "default": "all", "description": "实体类型过滤（仅action=search）。all=全部类型, class=类(TC), function=函数+过程(FF+FP), procedure=过程(FP), string=字符串字面量(KS，搜错误消息/日志文本), reference=查找引用位置"},
+                        "query": {"type": "string", "description": "搜索关键词（action=search时必须）。例: 'TStringList'（类名）、'Create'（函数名）、'加载声音文件出错'（错误消息/日志字符串）、'SysUtils'（单元名）"},
                         "doc_id": {"type": "integer", "description": "文档ID（action=read时，与url/file_path三选一）"},
                         "url": {"type": "string", "description": "文档URL（action=read/web时）；网页URL（action=web时需要）"},
                         "file_path": {"type": "string", "description": "源码文件路径（action=read时，与url/doc_id三选一）"},
@@ -433,7 +436,7 @@ async def run_server():
                         "task_params": {"type": "object", "description": "任务参数: version(Delphi版本), force_rebuild, project_path, exclude_dirs(文档KB时可选，排除多语言子目录如['ja','fr','de']), extensions 等"},
                         "task_id": {"type": "string", "description": "任务ID (action=status/result/cancel时需要)"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
-                        "long_poll_seconds": {"type": "integer", "default": 0, "description": "长轮询秒数（action=status时有效，等待进度变化再返回，默认0即立即返回。注意：MCP 请求通道有超时限制，建议不超过 30 秒，超时后切换短轮询）"}
+                        "long_poll_seconds": {"type": "integer", "default": 0, "description": "长轮询秒数（action=status时有效，等待进度变化再返回，默认0即立即返回。注意：MCP 请求通道约 60s 超时，建议 ≤30s，超时后不带 long_poll 再调 status 继续等）"}
                     },
                     "required": []
                 }
