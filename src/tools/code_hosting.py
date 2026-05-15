@@ -133,6 +133,9 @@ def _request(base_url, token, method, path, body=None, params=None, platform="gi
     else:
         headers["Authorization"] = f"token {token}"
 
+    if not token and not basic_auth:
+        raise ValueError("请提供 token 或 basic_auth 认证信息")
+
     data = json.dumps(body).encode("utf-8") if body else None
     req = Request(url, data=data, headers=headers, method=method)
 
@@ -175,10 +178,19 @@ def code_hosting(**kwargs) -> dict:
         return _err(f"不支持的操作: {action}，可选: {', '.join(_DISPATCH.keys())}")
 
     try:
+        # 前置校验：API 操作必须的参数
+        if action in _API_ACTIONS:
+            for req in ("base_url", "token"):
+                if req not in kwargs:
+                    return _err(f"{action} 需要 {req} 参数")
         return handler(platform, **kwargs)
     except Exception as e:
         logger.exception("code_hosting error")
         return _err(str(e))
+
+
+_API_ACTIONS = {"create_token", "init_labels", "create_issue", "close_issue",
+                "add_comment", "list_issues"}
 
 
 _DISPATCH = {}
