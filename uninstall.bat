@@ -21,5 +21,5 @@ if not defined PYTHON (
     exit /b 1
 )
 
-"%PYTHON%" "%SCRIPT_DIR%\install_mcp.py" %*
+"%PYTHON%" "%SCRIPT_DIR%\install_mcp.py" --uninstall %*
 exit /b %ERRORLEVEL%
