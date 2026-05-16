@@ -151,7 +151,7 @@ async def search_compilers(search_path: Optional[str] = None) -> CallToolResult:
     if _config_manager is None:
         logger.error("配置管理器未初始化")
         return CallToolResult(
-            content=[TextContent(type="text", text="配置管理器未初始化，请先启动服务")],
+            content=[{"type": "text", "text": "配置管理器未初始化，请先启动服务"}],
             isError=True
         )
 
@@ -185,7 +185,7 @@ async def search_compilers(search_path: Optional[str] = None) -> CallToolResult:
                 output += f"  路径: {c['path']}\n"
                 output += f"  版本: {c.get('version', '未知')}\n\n"
             
-            return CallToolResult(content=[TextContent(type="text", text=output)])
+            return CallToolResult(content=[{"type": "text", "text": output}])
         else:
             # 搜索模式：在指定路径搜索
             import os
@@ -225,13 +225,13 @@ async def search_compilers(search_path: Optional[str] = None) -> CallToolResult:
                 output += f"  路径: {c['path']}\n"
                 output += f"  版本: {c.get('version', '未知')}\n\n"
             
-            return CallToolResult(content=[TextContent(type="text", text=output)])
+            return CallToolResult(content=[{"type": "text", "text": output}])
 
     except Exception as e:
         error_msg = f"搜索过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return CallToolResult(
-            content=[TextContent(type="text", text=error_msg)],
+            content=[{"type": "text", "text": error_msg}],
             isError=True
         )
 

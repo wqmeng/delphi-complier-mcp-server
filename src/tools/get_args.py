@@ -65,7 +65,7 @@ async def get_compiler_args(
     if _compiler_service is None:
         logger.error("编译服务未初始化")
         return CallToolResult(
-            content=[TextContent(type="text", text="编译服务未初始化，请先启动服务")],
+            content=[{"type": "text", "text": "编译服务未初始化，请先启动服务"}],
             isError=True
         )
 
@@ -106,7 +106,7 @@ async def get_compiler_args(
 
         # 返回结果
         return CallToolResult(
-            content=[TextContent(type="text", text=str(result.to_dict()))],
+            content=[{"type": "text", "text": str(result.to_dict())}],
             isError=False
         )
 
@@ -114,6 +114,6 @@ async def get_compiler_args(
         error_msg = f"生成参数过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return CallToolResult(
-            content=[TextContent(type="text", text=error_msg)],
+            content=[{"type": "text", "text": error_msg}],
             isError=True
         )

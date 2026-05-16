@@ -316,7 +316,6 @@ async def compile_project(
         if (result.status.value == "failed" and result.log and
             ("F2084" in result.log or "Internal Error" in result.log)):
             logger.warning("检测到编译器内部错误(F2084)，清理 .dcu 缓存后重新编译...")
-            from ..services.compiler_service import CompilerService
             _cleanup_project_dcu(Path(project_path).parent)
             result = await _compiler_service.compile_project(request)
             if result.status.value == "success":

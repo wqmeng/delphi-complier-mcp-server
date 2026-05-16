@@ -503,7 +503,7 @@ async def format_code(
         error_msg = "未找到 pasfmt 可执行文件，请先安装 pasfmt 并设置 PASFMT_PATH 环境变量"
         logger.error(error_msg)
         return CallToolResult(
-            content=[TextContent(type="text", text=error_msg)],
+            content=[{"type": "text", "text": error_msg}],
             isError=True
         )
     
@@ -1050,7 +1050,7 @@ async def check_pasfmt_installation() -> CallToolResult:
     
     if pasfmt_path and os.path.exists(pasfmt_path):
         return CallToolResult(
-            content=[TextContent(type="text", text=f"pasfmt 已安装: {pasfmt_path}")]
+            content=[{"type": "text", "text": f"pasfmt 已安装: {pasfmt_path}"}]
         )
     else:
         # 检查可能的安装位置
@@ -1075,7 +1075,7 @@ async def check_pasfmt_installation() -> CallToolResult:
             # 设置找到的路径
             set_pasfmt_path(found_paths[0])
             return CallToolResult(
-                content=[TextContent(type="text", text=f"找到 pasfmt: {found_paths[0]}")]
+                content=[{"type": "text", "text": f"找到 pasfmt: {found_paths[0]}"}]
             )
         else:
             # 建议安装到项目目录下的 tools/pasfmt/cli
@@ -1083,7 +1083,7 @@ async def check_pasfmt_installation() -> CallToolResult:
             suggested_dir = str(project_root / "tools" / "pasfmt" / "cli")
             
             return CallToolResult(
-                content=[TextContent(type="text", text=f"未找到 pasfmt，建议安装到: {suggested_dir}")],
+                content=[{"type": "text", "text": f"未找到 pasfmt，建议安装到: {suggested_dir}"}],
                 isError=True
             )
 

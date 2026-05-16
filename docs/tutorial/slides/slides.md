@@ -1,12 +1,12 @@
-# Delphi MCP Server
-## AI 辅助 Delphi 开发完全指南
+# Daofy
+## 与 AI 共舞 · 享 AI 时代
 
 ---
 
 ## 目录
 
 1. 什么是 MCP？
-2. Delphi MCP Server 能做什么？
+2. Daofy 能做什么？
 3. 安装（AI 自动）
 4. 知识库搜索
 5. 编译与格式化
@@ -51,7 +51,7 @@ AI 从"给建议"变成"帮你做"。
 
 ---
 
-## Delphi MCP Server 功能全景
+## Daofy 功能全景
 
 | 模块 | 功能 |
 |------|------|
@@ -68,7 +68,7 @@ AI 从"给建议"变成"帮你做"。
 **用户只需：**
 
 ```
-用户: 帮我安装 Delphi MCP Server
+用户: 帮我安装 Daofy
 ```
 
 **AI 自动完成：**

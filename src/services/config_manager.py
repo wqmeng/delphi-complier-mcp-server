@@ -70,7 +70,7 @@ class ConfigManager:
                 logger.info(f"加载配置成功,共 {len(config.compilers)} 个编译器配置")
                 return config
         except Exception as e:
-            logger.error(f"加载配置失败: {str(e)}")
+            logger.error(f"加载配置失败: {str(e)}", exc_info=True)
             return ConfigFile()
 
     def _load_history(self) -> HistoryFile:
@@ -86,7 +86,7 @@ class ConfigManager:
                 logger.info(f"加载历史成功,共 {len(history.entries)} 条记录")
                 return history
         except Exception as e:
-            logger.error(f"加载历史失败: {str(e)}")
+            logger.error(f"加载历史失败: {str(e)}", exc_info=True)
             return HistoryFile()
 
     def save_config(self):

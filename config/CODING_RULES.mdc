@@ -70,6 +70,21 @@ delphi_kb(action="read", file_path="...", offset=100, limit=200)        # 按路
 ---
 
 ## ③ 写 Delphi 代码
+
+### 文件编码检查（修改前必做）
+- **修改任何 Delphi 源文件前，必须先确认文件编码，避免中文乱码。**
+- Python 读取规则：优先 UTF-8 → 失败则尝试 GBK → 仍失败则 UTF-8
+  ```python
+  try:
+      raw.decode('utf-8')
+      encoding = 'utf-8'
+  except UnicodeDecodeError:
+      encoding = 'gbk'  # 中文 Windows 上常见
+  ```
+- **写回时必须保持原始编码**，不可将 GBK 文件强行以 UTF-8 写出
+- 使用 `format_delphi` 时确认 `backup=True`（默认），以便编码错误时可恢复
+- 如果文件含 BOM（UTF-8 BOM / UTF-16 LE/BE），保留 BOM 不删除
+
 ### 命名
 - **类型**：`T`类 `I`接口 `E`异常 `P`指针
 - **字段**：`F`前缀 `FName: string;`

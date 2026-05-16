@@ -4,7 +4,10 @@
 import json
 import os
 import shutil
+import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
 MCP_SERVER_NAME = "daofy-delphi-mcp-server"
@@ -743,6 +746,166 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "") -> None:
 # 入口
 # ============================================================
 
+# ============================================================
+# 自安装：检查当前目录是否为 MCP Server 目录
+# ============================================================
+
+RELEASE_REPO = "daofy-nlp/delphi-complier-mcp-server"
+RELEASE_API = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
+
+
+def _is_server_dir() -> bool:
+    """检查当前目录是否包含 MCP Server 核心文件"""
+    script_dir = get_script_dir()
+    return (script_dir / "src" / "server.py").exists() and (script_dir / "requirements.txt").exists()
+
+
+MAX_RETRY = 30
+RETRY_DELAY = 2  # 秒
+
+
+def _retry_urlopen(url: str, headers: dict | None = None, timeout: int = 15, max_retry: int = MAX_RETRY) -> bytes:
+    """带重试的 urllib 请求，最多重试 max_retry 次"""
+    import urllib.request
+    import urllib.error
+    import time
+
+    last_err = None
+    for attempt in range(1, max_retry + 1):
+        try:
+            req = urllib.request.Request(url, headers=headers or {})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as e:
+            last_err = e
+            if attempt < max_retry:
+                wait = RETRY_DELAY * min(attempt, 10)
+                warn(f"请求失败(第{attempt}次): {e}，{wait}秒后重试...")
+                time.sleep(wait)
+    raise last_err  # type: ignore[misc]
+
+
+def _get_latest_release_url() -> tuple[str, str]:
+    """获取最新 release 的 zip 下载地址和版本号"""
+    try:
+        data = json.loads(_retry_urlopen(RELEASE_API, headers={"User-Agent": "daofy-installer"}).decode("utf-8"))
+        version = data.get("tag_name", "unknown")
+        for asset in data.get("assets", []):
+            name = asset.get("name", "")
+            if name.endswith(".zip"):
+                return asset["browser_download_url"], version
+    except Exception as e:
+        warn(f"获取 Release 信息失败: {e}")
+    return "", ""
+
+
+def _download_file(url: str, dest: str) -> bool:
+    """下载文件到指定路径，带重试"""
+    import urllib.request
+    import time
+
+    last_err = None
+    for attempt in range(1, MAX_RETRY + 1):
+        try:
+            if attempt == 1:
+                info(f"正在下载: {url}")
+            else:
+                info(f"重试下载(第{attempt}次)...")
+            urllib.request.urlretrieve(url, dest)
+            return True
+        except Exception as e:
+            last_err = e
+            if os.path.exists(dest):
+                os.remove(dest)
+            if attempt < MAX_RETRY:
+                wait = RETRY_DELAY * min(attempt, 10)
+                warn(f"下载失败(第{attempt}次): {e}，{wait}秒后重试...")
+                time.sleep(wait)
+    error(f"下载失败(已重试{MAX_RETRY}次): {last_err}")
+    return False
+
+
+def ensure_server_files() -> bool:
+    """检查当前目录是否为 MCP Server 安装目录，如果不是则下载并解压最新 release。
+
+    返回 True 表示文件就绪（已有或已安装），False 表示失败。
+    不会覆盖当前正在执行的 bat 文件。
+    """
+    if _is_server_dir():
+        return True
+
+    separator("MCP Server 文件未找到")
+    info("当前目录不包含 MCP Server 核心文件 (src/server.py)")
+    info("将自动下载最新 Release 并解压到当前目录")
+    info("")
+
+    zip_url, version = _get_latest_release_url()
+    if not zip_url:
+        error("无法获取最新 Release 下载地址")
+        error(f"请手动下载: https://github.com/{RELEASE_REPO}/releases")
+        return False
+
+    info(f"最新版本: {version}")
+
+    with tempfile.TemporaryDirectory(prefix="daofy-install-") as tmp_dir:
+        zip_path = os.path.join(tmp_dir, f"delphi-mcp-server-{version}.zip")
+        if not _download_file(zip_url, zip_path):
+            return False
+
+        info("正在解压...")
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(tmp_dir)
+        except Exception as e:
+            error(f"解压失败: {e}")
+            return False
+
+        # 找到解压后的子目录（release zip 通常包含一个顶层目录）
+        src_dir = tmp_dir
+        entries = os.listdir(tmp_dir)
+        extracted_dirs = [e for e in entries if e != os.path.basename(zip_path) and os.path.isdir(os.path.join(tmp_dir, e))]
+        if len(extracted_dirs) == 1:
+            src_dir = os.path.join(tmp_dir, extracted_dirs[0])
+        elif len(extracted_dirs) > 1:
+            # 找包含 src/server.py 的目录
+            for d in extracted_dirs:
+                if os.path.exists(os.path.join(tmp_dir, d, "src", "server.py")):
+                    src_dir = os.path.join(tmp_dir, d)
+                    break
+
+        if not os.path.exists(os.path.join(src_dir, "src", "server.py")):
+            error("解压后未找到 src/server.py")
+            return False
+
+        # 复制文件到当前目录，跳过 .bat 文件（正在运行）
+        dest_dir = str(get_script_dir())
+        bat_files = set()
+        info(f"正在安装文件到: {dest_dir}")
+        for root, dirs, files in os.walk(src_dir):
+            rel_root = os.path.relpath(root, src_dir)
+            for f in files:
+                src_file = os.path.join(root, f)
+                if rel_root == ".":
+                    dest_file = os.path.join(dest_dir, f)
+                else:
+                    dest_file = os.path.join(dest_dir, rel_root, f)
+
+                # 跳过正在运行的 .bat 文件，稍后覆盖
+                if f.lower().endswith(".bat"):
+                    bat_files.add((src_file, dest_file))
+                    continue
+
+                os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+                shutil.copy2(src_file, dest_file)
+
+        # 最后覆盖 .bat 文件（bat 已读入内存，覆盖不影响本次执行）
+        for src_bat, dest_bat in bat_files:
+            shutil.copy2(src_bat, dest_bat)
+
+        success(f"MCP Server {version} 安装完成")
+        return True
+
+
 def main() -> None:
     import argparse
 
@@ -762,6 +925,11 @@ def main() -> None:
     if args.uninstall:
         do_uninstall(agent_filter=args.agent, project_dir=args.project_dir)
     else:
+        # 检查 MCP Server 文件是否存在，不存在则自动下载解压
+        if not ensure_server_files():
+            error("MCP Server 文件准备失败")
+            sys.exit(1)
+
         python_exe = args.python or get_python_exe()
         if not os.path.exists(python_exe):
             error(f"Python 不存在: {python_exe}")

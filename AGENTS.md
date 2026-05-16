@@ -1,6 +1,6 @@
 # AGENTS.md - Agent Coding Guidelines
 
-Delphi MCP Server — Python 3.10-3.14, Windows, pytest.
+Daofy — Python 3.10-3.14, Windows, pytest.
 
 ## Quick Command Reference
 
@@ -119,6 +119,186 @@ src/
 ### 编译
 - `shell=True` 执行编译事件前记录 `logger.warning`（命令来自 `.dproj` 文件）
 - 长轮询 ≤30 秒（MCP 请求通道约 60s 超时），超时后切换短轮询
+
+## 源码审计
+
+### 审计触发条件
+当用户要求以下内容时，Agent 必须执行源码审计流程：
+
+| 触发词 | 说明 |
+|--------|------|
+| "审计代码"、"审查代码"、"代码审核"、"review code"、"audit" | 全面审计 |
+| "安全检查"、"漏洞扫描"、"安全隐患"、"security review" | 安全专项审计 |
+| "性能分析"、"性能审计"、"慢在哪"、"performance" | 性能专项审计 |
+| "资源泄漏"、"内存泄漏"、"句柄泄漏"、"resource leak" | 资源管理专项审计 |
+
+### 审计工作流
+
+```
+① 确定审计对象
+   ├─ Delphi 代码（.pas/.dproj/.dpk）→ get_coding_rules(section="review")
+   └─ Python 项目（当前 MCP Server）→ 按下方 Python 审计要求逐项检查
+② 确定审计范围（全局/指定文件/新增代码）
+③ 搜索相关 API 定义，评估用法（Delphi 用 delphi_kb，Python 用 grep/LSP）
+④ 按对应标准的审计类别逐项检查
+⑤ compile_project / pytest 验证（如果涉及代码修改）
+⑥ 输出审计报告
+```
+
+### Delphi 审计
+
+审计 Delphi 代码时，直接引用 `CODING_RULES.mdc` 的「审核」章节作为检查项来源：
+
+> **检查项来源**：`get_coding_rules(section="review")` 获取完整的 Delphi 审核表
+>（一致性、完整性、资源泄露、Delphi 特有、常见错误模式、代码质量、数据转换、安全、性能）。
+
+### Python 项目审计（当前 MCP Server）
+
+审计本 MCP Server 项目（Python 代码）时，按以下类别逐项检查：
+
+#### 1. 安全审计（Security）
+| # | 检查项 | 说明 |
+|---|--------|------|
+| 1.1 | 命令/Shell 注入 | `subprocess`/`Popen`/`os.system` 参数拼接用户输入 → 必须用列表参数 `["cmd", arg]`，禁用 `shell=True` 传参 |
+| 1.2 | 路径遍历 | 用户传入路径未经 `resolve()`/`abspath()` 校验直接文件操作 → 限制在允许目录内 |
+| 1.3 | 注册表安全 | `winreg` 读写仅读 HKLM/HKCU 的 Embarcadero BDS 路径，不写关键系统位置 |
+| 1.4 | 敏感信息泄露 | `compilers.json` 等配置文件中密钥/密码 → 环境变量替代；日志中不输出 token/password |
+| 1.5 | 临时文件安全 | `tempfile` 模块创建临时文件用 `NamedTemporaryFile(delete=True)`，防竞争 |
+| 1.6 | Pickle 反序列化 | 禁止 `pickle.loads` 从不可信源加载数据 → 用 JSON 替代 |
+
+#### 2. MCP 协议与工具审计（MCP Protocol）
+| # | 检查项 | 说明 |
+|---|--------|------|
+| 2.1 | 工具注册一致性 | `list_tools()` 和 `call_tool()` 必须同步注册 — 所有 call_tool 中处理的工具必须在 list_tools 中声明 |
+| 2.2 | 参数校验 | 工具输入参数前置校验，缺失必需参数返回明确错误信息 |
+| 2.3 | 异常安全 | 工具内全部异常在顶层 `call_tool` 中统一捕获并返回 `CallToolResult(isError=True)`，不得泄露 traceback 给 MCP 客户端 |
+| 2.4 | 返回格式统一 | 所有工具最终返回 `CallToolResult(content=[TextContent(...)], isError=...)`，不得直接返回 dict |
+| 2.5 | 超时控制 | 编译等耗时操作设置 `timeout` 参数，避免 MCP 通信通道超时（约 60s） |
+| 2.6 | 子进程通信保护 | Worker 进程 stdout 已 pipe 为 JSON-RPC 通道时禁用 `print()`，使用 `sys.stderr` 或 logging |
+
+#### 3. 并发与进程审计（Concurrency & Process）
+| # | 检查项 | 说明 |
+|---|--------|------|
+| 3.1 | Worker print 禁令 | `multiprocessing` worker 内部禁用 `print()`，MCP 环境下 stdout 是通信管道，print 破坏协议边界 |
+| 3.2 | 子进程退出清理 | 使用 `Popen`/`ProcessPoolExecutor` 后确保进程退出时资源清理（`terminate()`/`join()`/`cancel()`） |
+| 3.3 | 竞态条件 | 共享变量（`_pkb_cache` 等）加锁保护，用 `threading.Lock` 而非 `global` 裸访问 |
+| 3.4 | 跨平台兼容 | Windows `spawn` 模式下子进程重新导入模块 → 在 `if __name__ != '__mp_main__'` 保护下延迟导入 |
+| 3.5 | 长轮询超时 | 编译状态轮询 ≤30 秒，超时后切换短轮询，防止阻塞 MCP 请求通道 |
+
+#### 4. 资源管理审计（Resource Management）
+| # | 检查项 | 说明 |
+|---|--------|------|
+| 4.1 | 数据库连接泄漏 | SQLite 连接用 `with` 或 `try...finally` 保障关闭，`use_wal=False` 时注意独占锁 |
+| 4.2 | 文件句柄泄漏 | `open()` 在 `with` 块内使用，手动 `f.open()` 必须有对应的 `f.close()` |
+| 4.3 | 临时文件清理 | 编译过程中创建的临时 `.res`/`.dcu` 文件应在结束时清理 |
+| 4.4 | 缓存未清理 | `_pkb_cache` 在服务关闭时通过 `_cleanup_resources()` 清理，确保所有 KB 实例 `close()` |
+| 4.5 | 进程残留 | 子进程超时后需 `kill()` 而非仅 `wait()`，避免僵尸进程 |
+
+#### 5. 错误处理审计（Error Handling）
+| # | 检查项 | 说明 |
+|---|--------|------|
+| 5.1 | 空 except | `except: pass` / `except Exception: pass` — 禁止静默忽略，必须记录日志 |
+| 5.2 | 异常范围过宽 | 用具体异常类型而非裸 `except:`，区分 IOError/ValueError/KeyError 等 |
+| 5.3 | 日志完整性 | `except` 块中记录异常用 `logger.error(msg, exc_info=True)` 附带调用栈 |
+| 5.4 | finally 遗漏 | 资源获取（文件/DB/锁）后必须 `try...finally` 确保释放 |
+| 5.5 | 外部调用容错 | 调用编译器/外部工具时的异常需降级处理，不因外部异常导致 MCP Server 崩溃 |
+
+#### 6. 代码质量审计（Code Quality）
+| # | 检查项 | 说明 |
+|---|--------|------|
+| 6.1 | Type Hints | 所有函数/方法必须包含完整的类型注解，返回类型不可省略 |
+| 6.2 | 导入顺序 | stdlib → third-party → local 三组，空格分隔，组内字母序 |
+| 6.3 | 命名规范 | `snake_case` 函数/变量/方法，`PascalCase` 类，`UPPER_SNAKE` 常量，`_前缀` 私有 |
+| 6.4 | 文档字符串 | 公共函数必须有 Google-style docstring，说明 Args/Returns/Raises |
+| 6.5 | 圈复杂度 | 函数不超过 50 行，嵌套不超过 4 层，过长需拆分 |
+| 6.6 | 异步模式 | 异步函数内慎用 `time.sleep()`，使用 `asyncio.sleep()`；避免同步阻塞事件循环 |
+| 6.7 | 字符串格式化 | 禁用 f-string 嵌套字典键 `f'{d["key"]}'`（引号冲突），用 `.format()` 或前置变量 |
+| 6.8 | 函数内局部 import | 禁止在函数内部出现 `from X import Y`（会使 Y 在整个函数作用域成为局部变量），import 必须写在模块顶部 |
+
+#### 7. 配置与环境审计（Configuration）
+| # | 检查项 | 说明 |
+|---|--------|------|
+| 7.1 | 编译器路径 | `compilers.json` 中的路径在服务启动时可校验有效性，无效路径应有降级 |
+| 7.2 | 注册表回退 | 注册表读取失败时自动回退默认路径列表 |
+| 7.3 | 编码设置 | Windows 下必须设置 `PYTHONIOENCODING=utf-8` / `PYTHONUTF8=1` |
+| 7.4 | 依赖完整性 | 新增依赖需同时更新 `requirements.txt` 和 `pyproject.toml` |
+
+### 审计报告模板
+
+```
+## 源码审计报告
+
+**项目**: <项目名称>
+**审计范围**: <全局 / 文件列表>
+**审计日期**: <日期>
+
+---
+
+### 概览
+
+审计范围是 Delphi 代码时：
+
+| 类别 | 发现数 | 严重 | 一般 | 建议 |
+|------|--------|------|------|------|
+| 安全 | N | N | N | N |
+| 资源管理 | N | N | N | N |
+| 错误处理 | N | N | N | N |
+| Delphi 特有 | N | N | N | N |
+| 一致性 | N | N | N | N |
+| **合计** | **N** | **N** | **N** | **N** |
+
+审计范围是 Python MCP Server 时：
+
+| 类别 | 发现数 | 严重 | 一般 | 建议 |
+|------|--------|------|------|------|
+| 安全 | N | N | N | N |
+| MCP 协议与工具 | N | N | N | N |
+| 并发与进程 | N | N | N | N |
+| 资源管理 | N | N | N | N |
+| 错误处理 | N | N | N | N |
+| 代码质量 | N | N | N | N |
+| 配置与环境 | N | N | N | N |
+| **合计** | **N** | **N** | **N** | **N** |
+
+### 严重问题
+
+1. **[严重] <文件:F行>: <问题描述>**
+   - **问题**: ...
+   - **风险**: ...
+   - **建议修复**: ...
+   - **代码示例**:
+     ```pascal
+     // 当前代码
+     ...
+     // 修复后
+     ...
+     ```
+
+### 一般问题
+
+...
+
+### 建议项
+
+...
+
+### 审计结论
+
+<整体评估：代码质量评级、主要风险点、建议优先修复项>
+```
+
+### 审计工具配合
+
+```
+get_coding_rules(section="review")          → 获取 Delphi 审核标准
+read_source_file(file_path="unit.pas")       → 查看 Delphi 源码
+delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
+compile_project(project_path="proj.dproj")   → Delphi 审计后验证编译
+--- Python 项目审计用以下工具 ---
+grep / ast_grep_search                      → 搜索 Python 代码中的模式
+lsp_diagnostics / lsp_symbols               → 类型检查和符号分析
+pytest                                      → 审计后运行测试验证
+```
 
 ## 发布打包流程
 

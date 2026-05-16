@@ -39,7 +39,7 @@ RUN_ALL = "--all" in sys.argv
 test_list = BASIC_TESTS + (EXTENDED_TESTS if RUN_ALL else [])
 
 print("=" * 60)
-print("  Delphi MCP Server 完整测试")
+print("  Daofy 完整测试")
 print("=" * 60)
 if not RUN_ALL:
     print("  提示: 加 --all 参数运行扩展测试（需要 Delphi 环境）")

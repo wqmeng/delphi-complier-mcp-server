@@ -3,7 +3,7 @@ chcp 65001 >nul 2>&1
 setlocal enabledelayedexpansion
 
 echo ============================================================
-echo   Delphi MCP Server 完整测试
+echo   Daofy 完整测试
 echo ============================================================
 echo.
 

@@ -1,5 +1,5 @@
 """
-Delphi MCP Server 主程序
+Daofy 主程序
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
@@ -214,7 +214,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
 
 async def run_server():
     """运行 MCP Server"""
-    logger.info(f"启动 Delphi MCP Server v{__version__}")
+    logger.info(f"启动 Daofy v{__version__}")
     logger.info(f"{__copyright__}")
 
     # 初始化配置管理器
@@ -253,16 +253,21 @@ async def run_server():
     server = Server("delphi-mcp-server")
     logger.info("MCP Server 实例创建完成")
 
-    # 注册工具 (精简版)
+    # ============================================================
+    # MCP 工具注册
+    # 所有工具必须同时在 list_tools() 和 call_tool() 中注册
+    # ============================================================
     @server.list_tools()
     async def list_tools():
         """列出所有可用工具"""
         from mcp.types import Tool
         return [
+            # ===== 编译/检查 — 构建 Delphi ⭐⭐⭐ =====
             Tool(
                 name="compile_project",
                 description="【优先级 ⭐⭐⭐】编译/检查 — 构建 Delphi\n"
                             "【触发词】编译、构建、生成exe、语法检查、编译报错、build、compile、msbuild、dcc32\n"
+                            "【Delphi 文件触发】看到 .dproj .dpr .dpk .pas .dfm 等文件时，需要先 get_coding_rules 再编译\n"
                             "❌ 不得用 bash/cmd 运行 dcc32/msbuild（绕过 MSBuild/事件/依赖）\n"
                             "✅ 编译 .dproj/.dpr/.dpk 或检查 .pas 语法必须用此\n"
                             "【协作链】get_coding_rules→写代码→compile→失败→check_environment\n"
@@ -296,6 +301,238 @@ async def run_server():
                     "required": ["project_path"]
                 }
             ),
+
+            # ===== 知识库搜索/管理 ⭐⭐⭐ =====
+            Tool(
+                name="delphi_kb",
+                description="【优先级 ⭐⭐⭐】知识库搜索/管理 — 查 Delphi API、项目代码、文档\n"
+                            "【触发词】搜索类、搜索函数、查API、查定义、知识库、构建知识库、KB、语义搜索\n"
+                            "【Delphi 文件触发】写 .pas 代码前应先搜索 KB 查 API 定义(TODO先调用 delphi_kb 搜索类/函数)\n"
+                            "【协作链】写代码前→delphi_kb查API→read_source_file看定义→写代码→compile\n"
+                            "【action 说明】\n"
+                            '  action="search"    默认 — 搜索类/函数/文档, kb_type=all/delphi/project/thirdparty/document\n'
+                            '                    search_type=function/procedure/class/record/semantic/reference\n'
+                            '  action="stats"     查看知识库统计(文件数、类数、函数数、末次构建时间)\n'
+                            '  action="build"     构建/更新知识库（支持异步 async_mode=true）\n'
+                            '  action="scan"      扫描目录添加文档(kb_type=document)\n'
+                            '  action="web"       添加网页文档(kb_type=document)\n'
+                            '  action="read"      读取文档内容(url/doc_id)或源码文件(file_path)\n'
+                            "【示例】\n"
+                            '   delphi_kb(query="TStringList")           — 搜索类\n'
+                            '   delphi_kb(query="Create", search_type="function") — 搜索函数\n'
+                            '   delphi_kb(action="stats")                — 查看统计\n'
+                            '   delphi_kb(action="build", kb_type="project") — 构建项目知识库',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["search", "stats", "build", "scan", "web", "read", "build_embedding"], "default": "search", "description": "操作类型: search=搜索, stats=统计, build=构建, scan=扫描文档, web=添加网页, read=读取, build_embedding=构建向量"},
+                        "query": {"type": "string", "description": "搜索关键词（action=search时需要）"},
+                        "kb_type": {"type": "string", "enum": ["all", "delphi", "project", "thirdparty", "document"], "default": "all", "description": "知识库类型"},
+                        "search_type": {"type": "string", "enum": ["function", "procedure", "class", "record", "interface", "enum", "type", "const", "property", "method", "field", "event", "semantic", "reference", "all"], "description": "搜索类型（action=search 时生效）"},
+                        "top_k": {"type": "integer", "default": 200, "description": "最大返回结果数（默认200，最大500）"},
+                        "project_path": {"type": "string", "description": "项目路径（搜索project/thirdparty知识库时需要，不传则自动检测目录下的.dproj）"},
+                        "version": {"type": "string", "description": "Delphi版本（构建知识库时使用）"},
+                        "async_mode": {"type": "boolean", "default": True, "description": "是否异步执行（build操作时生效，默认true）"},
+                        "force_rebuild": {"type": "boolean", "default": False, "description": "是否强制重建（build操作时生效）"},
+                        "incremental": {"type": "boolean", "default": False, "description": "是否增量更新（build操作时生效）"},
+                        "build_thirdparty": {"type": "boolean", "default": True, "description": "构建项目KB时是否同时构建第三方库KB"},
+                        "build_project": {"type": "boolean", "default": True, "description": "是否构建项目KB"},
+                        "directory": {"type": "string", "description": "扫描目录（action=scan时使用，或build document时可以不传自动检测Delphi帮助目录）"},
+                        "extensions": {"type": "array", "items": {"type": "string"}, "description": "文件扩展名过滤（action=scan/build时使用，如[\".chm\"]）"},
+                        "content_type": {"type": "string", "description": "文档类型过滤（action=search kb_type=document时使用）"},
+                        "url": {"type": "string", "description": "网页URL（action=web时使用）或文档URL（action=read时使用）"},
+                        "doc_id": {"type": "string", "description": "文档ID（action=read时使用，与url二选一）"},
+                        "file_path": {"type": "string", "description": "文件路径（action=read时使用）"},
+                        "offset": {"type": "integer", "default": 0, "description": "读取偏移量（action=read时使用）"},
+                        "limit": {"type": "integer", "default": 5000, "description": "读取字节数限制（action=read时使用）"},
+                        "max_pages": {"type": "integer", "default": 100, "description": "最大抓取页数（build document KB时使用）"},
+                        "max_depth": {"type": "integer", "default": 3, "description": "最大抓取深度（build document KB时使用）"},
+                        "domain_filter": {"type": "string", "description": "域名过滤（build document KB时使用）"},
+                        "url_pattern": {"type": "string", "description": "URL模式过滤（build document KB时使用）"},
+                        "exclude_dirs": {"type": "array", "items": {"type": "string"}, "description": "排除目录列表（build document KB时使用）"},
+                        "max_workers": {"type": "integer", "description": "最大工作进程数（action=scan时使用）"},
+                        "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
+                    }
+                }
+            ),
+
+            # ===== 读取 Delphi 源码 ⭐⭐ =====
+            Tool(
+                name="read_source_file",
+                description="【优先级 ⭐⭐】读取 Delphi 源码文件 — 读取 .pas/.dproj 源码内容\n"
+                            "【触发词】读取源码、查看文件、读.pas、看代码、cat\n"
+                            "【Delphi 文件触发】要理解 .pas 文件内容时先用此工具\n"
+                            "支持两种模式：\n"
+                            "  search_type=\"path\"     — 按文件路径读取内容（默认）\n"
+                            '                          read_source_file(file_path="Unit1.pas", start_line=1, max_lines=500)\n'
+                            "  search_type=\"class\"    — 搜索类/函数定义后读取\n"
+                            '                          read_source_file(search_type="class", type_name="TForm1")\n'
+                            "  search_type=\"function\" — 搜索函数定义后读取\n"
+                            '                          read_source_file(search_type="function", function_name="Create")\n'
+                            "【协作链】delphi_kb 找到目标→read_source_file 看完整定义",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string", "description": "文件路径（search_type=path时必需，相对路径或完整路径）"},
+                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "default": "path", "description": "搜索类型: path=按路径, class=按类名, function=按函数名, record=按record名"},
+                        "type_name": {"type": "string", "description": "类型名称（search_type=class时使用）"},
+                        "class_name": {"type": "string", "description": "类名（兼容旧参数，与type_name二选一）"},
+                        "record_name": {"type": "string", "description": "Record名称（search_type=record时使用）"},
+                        "function_name": {"type": "string", "description": "函数名（search_type=function时使用）"},
+                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始）"},
+                        "end_line": {"type": "integer", "description": "结束行号（不传则到文件末尾）"},
+                        "max_lines": {"type": "integer", "default": 500, "description": "最大返回行数（默认500，最大1000）"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围"},
+                        "project_path": {"type": "string", "description": "项目路径（可选，用于查找项目文件）"},
+                    }
+                }
+            ),
+
+            # ===== 环境检查 ⭐⭐⭐ =====
+            Tool(
+                name="check_environment",
+                description="【优先级 ⭐⭐⭐】环境检查 — 诊断 Delphi 编译环境、检测编译器、安装 pasfmt\n"
+                            "【触发词】检查环境、检测编译器、诊断、环境状态、环境就绪、编译器找不到\n"
+                            "【action 说明】\n"
+                            '  action="check"         默认 — 检查当前编译环境状态（有多少编译器可用）\n'
+                            '  action="detect"        重新从注册表/指定路径检测 Delphi 编译器\n'
+                            '  action="install"       下载并安装 pasfmt 格式化工具\n'
+                            '  action="format_install"安装 pasfmt RAD Studio 插件\n'
+                            "【协作链】首次使用→check_environment(action=check)→compile→失败→check_environment(action=detect)\n"
+                            "【示例】\n"
+                            '   check_environment(action="check")   # "检查环境"\n'
+                            '   check_environment(action="detect", search_path="D:\\Delphi")  # "指定路径检测"',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["check", "detect", "install", "format_install"], "default": "check", "description": "操作类型: check=检查, detect=检测编译器, install=安装pasfmt, format_install=安装pasfmt RAD插件"},
+                        "search_path": {"type": "string", "description": "额外搜索路径（action=detect时使用）"},
+                        "install_dir": {"type": "string", "description": "安装目录（action=install/format_install时使用）"},
+                        "delphi_version": {"type": "string", "default": "11", "description": "Delphi版本（action=format_install时使用，如\"11\"、\"12\"）"},
+                    }
+                }
+            ),
+
+            # ===== Delphi 代码格式化 ⭐⭐ =====
+            Tool(
+                name="format_delphi",
+                description="【优先级 ⭐⭐】格式化 Delphi 源码 — 使用 pasfmt 格式化 .pas/.dfm 代码\n"
+                            "【触发词】格式化代码、换行、排版、整理代码、代码风格、自动格式化\n"
+                            "【Delphi 文件触发】编辑完 .pas 文件后应调用此工具格式化\n"
+                            "【action 说明】\n"
+                            '  action="file"     默认 — 格式化指定文件\n'
+                            '  action="code"     格式化一段代码文本\n'
+                            '  action="check"    仅检查格式是否合规，不修改\n'
+                            '  action="set_path" 手动设置 pasfmt 路径\n'
+                            '  action="status"   检查 pasfmt 安装状态\n'
+                            "【协作链】写代码→format_delphi→compile\n"
+                            "【示例】\n"
+                            '   format_delphi(action="file", file_path="Unit1.pas")   # "格式化文件"\n'
+                            '   format_delphi(action="code", code="procedure TForm1...") # "格式化代码"\n'
+                            '   format_delphi(action="check", file_path="Unit1.pas")  # "仅检查"',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["file", "code", "check", "set_path", "status"], "default": "file", "description": "操作类型: file=格式化文件, code=格式化代码段, check=仅检查, set_path=设置路径, status=检查状态"},
+                        "file_path": {"type": "string", "description": "文件路径（action=file/check时使用）"},
+                        "code": {"type": "string", "description": "代码文本（action=code时使用）"},
+                        "config_path": {"type": "string", "description": "pasfmt 配置文件路径（可选）"},
+                        "backup": {"type": "boolean", "default": True, "description": "是否备份原文件（action=file时生效）"},
+                        "in_place": {"type": "boolean", "default": True, "description": "是否原地修改文件"},
+                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "uses子句格式: compact=合并为一行, pasfmt_default=每行一个"},
+                        "path": {"type": "string", "description": "pasfmt 可执行文件路径（action=set_path时使用）"},
+                        "check_rad": {"type": "boolean", "default": False, "description": "是否检查RAD Studio集成（action=status时使用）"},
+                        "delphi_version": {"type": "string", "description": "Delphi版本（action=status check_rad=true时使用）"},
+                    }
+                }
+            ),
+
+            # ===== 异步任务管理 ⭐ =====
+            Tool(
+                name="async_task",
+                description="【优先级 ⭐】异步任务管理 — 管理后台构建知识库等耗时任务\n"
+                            "【触发词】任务状态、查看进度、后台任务、构建进度、取消任务\n"
+                            "【action 说明】\n"
+                            '  action="start"  启动异步任务（通常 delphi_kb(action=build) 已自动启动，无需手动调用）\n'
+                            '  action="status" 查询任务状态（返回进度百分比和状态）\n'
+                            '  action="result" 获取任务结果\n'
+                            '  action="list"   列出所有任务\n'
+                            '  action="cancel" 取消运行中的任务\n'
+                            "【示例】\n"
+                            '   async_task(action="status", task_id="...")  # "查看任务进度"\n'
+                            '   async_task(action="list")                   # "列出所有任务"',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "description": "操作类型", "default": "list"},
+                        "task_id": {"type": "string", "description": "任务ID（action=status/result/cancel时使用）"},
+                        "task_type": {"type": "string", "description": "任务类型（action=start时使用），如: build_knowledge_base, build_thirdparty_knowledge_base, init_project_knowledge_base, build_document_knowledge_base, build_embedding"},
+                        "task_params": {"type": "object", "description": "任务参数（action=start时使用，根据task_type不同而不同）"},
+                        "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
+                    }
+                }
+            ),
+
+            # ===== 组件包安装 ⭐⭐ =====
+            Tool(
+                name="install_package",
+                description="【优先级 ⭐⭐】编译并安装 Delphi 组件包到 IDE\n"
+                            "【触发词】安装组件、安装包、编译包、dpk安装、注册组件、install package\n"
+                            "自动将设计期包注册到 IDE，运行期包仅编译\n"
+                            "支持 .dproj / .dpk / .groupproj 三种格式\n"
+                            "【协作链】install_package→list_installed_packages 验证安装\n"
+                            "【示例】\n"
+                            '   install_package(package_path="MyPackage.dpk")  # "安装组件包"',
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "package_path": {"type": "string", "description": "包文件路径(.dproj/.dpk/.groupproj) [必需]"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64"], "default": "win32", "description": "目标平台"},
+                        "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置(Debug/Release)"},
+                        "timeout": {"type": "integer", "default": 300, "description": "超时时间(秒)"},
+                        "install": {"type": "boolean", "default": True, "description": "是否自动安装到 IDE"},
+                    },
+                    "required": ["package_path"]
+                }
+            ),
+
+            # ===== 列出已安装的组件包 =====
+            Tool(
+                name="list_installed_packages",
+                description="列出已安装到 IDE 的 Delphi 组件包\n"
+                            "【触发词】已安装的包、列出组件、查看已安装、验证安装\n"
+                            "【协作链】install_package 后调用此工具验证组件已成功注册",
+                inputSchema={
+                    "type": "object",
+                    "properties": {}
+                }
+            ),
+
+            # ===== 编码规则（AI 必读）⭐⭐⭐ =====
+            Tool(
+                name="get_coding_rules",
+                description="【优先级 ⭐⭐⭐】获取 Delphi 编码规则 — AI 写/改 Delphi 代码前必须先调用\n"
+                            "【触发词】编码规则、编码规范、代码风格、命名规范、规则、coding rules\n"
+                            "【Delphi 文件触发】\n"
+                            "  ⚠️ 看到 .pas .dfm .dproj .dpk .dpr .inc .res 等 Delphi 文件时，必须先调用此工具\n"
+                            "  ⚠️ 在写/修改任何 Delphi 代码前，必须先 get_coding_rules 了解编码规范\n"
+                            "【section 参数】按需获取各章节（节省 token）：\n"
+                            '  section="workflow"    — 工作流总览（先看这个了解整体流程）\n'
+                            '  section="writing"     — 写 Delphi 代码时的命名/格式/泛型规则\n'
+                            '  section="review"      — 编译后审查代码（含完整审核表）\n'
+                            '  section="safety"      — 安全敏感操作规则\n'
+                            '  section="agent_rules" — Agent 操作硬规则\n'
+                            "不传 section=返回工作流总览+章节索引（推荐首次调用）\n"
+                            "【协作链】任何 .pas/.dproj 操作前→get_coding_rules(section='workflow') 了解流程",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "项目路径（可选），用于查找项目自定义的编码规则文件(CODING_RULES.mdc)"},
+                        "section": {"type": "string", "description": "章节名称（可选），如 workflow/writing/review/safety/agent_rules/kb_search/format/compile/cleanup/kb_build。不传则返回工作流总览+章节索引"},
+                    }
+                }
+            ),
+
             # ===== 代码托管平台统一工具 =====
             Tool(
                 name="code_hosting",
@@ -327,7 +564,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "platform": {"type": "string", "enum": ["gitea", "github", "gitlab"], "description": "平台类型（API 操作需要，Git 本地操作不需要）"},
-                        "action": {"type": "string", "description": "操作类型: create_token, init_labels, create_issue, close_issue, add_comment, list_issues, git_clone, git_add, git_commit, git_push, git_status, sync_to_github"},
+                        "action": {"type": "string", "description": "操作类型: create_token, init_labels, create_issue, close_issue, add_comment, list_issues, git_clone, git_add, git_commit, git_push, git_push_retry, git_status"},
                         "base_url": {"type": "string", "description": "平台实例地址，如 https://code.qdac.cc:3000 (API 操作需要)"},
                         "token": {"type": "string", "description": "API 访问令牌 (API 操作需要)"},
                         "repo": {"type": "string", "description": "仓库名，格式 owner/repo (API 操作需要)"},
@@ -349,7 +586,7 @@ async def run_server():
                         "files": {"type": "array", "items": {"type": "string"}, "description": "要 add 的文件列表 (git_add 需要)"},
                         "remote_name": {"type": "string", "description": "远程名称 (git_push/git_push_retry 可选，默认 origin)"},
                         "retry_interval": {"type": "integer", "description": "重试间隔秒数 (git_push_retry 可选，默认 300)"},
-                        "task_id": {"type": "string", "description": "异步任务ID (git_task_status 需要)"},
+                        "task_id": {"type": "string", "description": "异步任务ID (配合 async_task 工具查询)"},
                     },
                     "required": ["action"]
                 }
@@ -644,7 +881,7 @@ async def run_server():
                     or result.get('success') is False
                     or 'error' in result
                 )
-                return CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
+                return CallToolResult(content=[{"type": "text", "text": text}], isError=is_error)
             else:
                 return result
 
@@ -653,7 +890,7 @@ async def run_server():
             log_api_call(logger, name, arguments, {"error": str(e)})
             logger.error(f"工具调用失败: {str(e)}", exc_info=True)
             return CallToolResult(
-                content=[TextContent(type="text", text=f"错误: {str(e)}")],
+                content=[{"type": "text", "text": f"错误: {str(e)}"}],
                 isError=True
             )
 

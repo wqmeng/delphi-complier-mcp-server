@@ -1,4 +1,4 @@
-# Delphi MCP Server
+# Daofy
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -6,9 +6,11 @@
 
 An MCP Server that provides Delphi project compilation capabilities and knowledge base query functionality for AI assistants (such as Claude Desktop, CodeArts Agent, etc.). If you find it useful, please don't hesitate to give it a Star! ⭐
 
+Daofy — Spread your wings for creativity.
+
 ## Project Introduction
 
-Delphi MCP Server is a server based on Model Context Protocol (MCP) that allows AI assistants to directly compile Delphi projects and query Delphi knowledge bases. With this tool, you can compile Delphi projects, query API documentation, search code examples directly in conversations with AI assistants, without manually switching to IDE or command line.
+Daofy is a server based on Model Context Protocol (MCP) that allows AI assistants to directly compile Delphi projects and query Delphi knowledge bases. With this tool, you can compile Delphi projects, query API documentation, search code examples directly in conversations with AI assistants, without manually switching to IDE or command line.
 
 **Key Advantages:**
 - Seamless integration into AI assistant workflow
@@ -89,7 +91,7 @@ Each knowledge base has a `config.json` file. Configs are auto-generated on firs
 
 ### AI Assistant Automatic Installation Prompt
 
-Please follow these steps to install Delphi MCP Server:
+Please follow these steps to install Daofy:
 
 [] Check and install Git/Python 3.10-3.14/7-Zip (prioritize using domestic mirror sources for faster downloads during installation)
 [] Install `https://github.com/chinawsb/delphi-complier-mcp-server.git`

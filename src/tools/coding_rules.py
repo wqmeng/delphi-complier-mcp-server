@@ -239,14 +239,14 @@ async def get_coding_rules(
         if not merged:
             logger.warning("未找到任何编码规则文件")
             return CallToolResult(
-                content=[TextContent(type="text", text="未找到任何编码规则文件")],
+                content=[{"type": "text", "text": "未找到任何编码规则文件"}],
                 isError=True
             )
 
         # section 参数处理
         if section == "list":
             output = _list_available_sections(merged)
-            return CallToolResult(content=[TextContent(type="text", text=output)])
+            return CallToolResult(content=[{"type": "text", "text": output}])
 
         if section:
             # 先查元章节
@@ -255,7 +255,7 @@ async def get_coding_rules(
             meta_content = _extract_meta_section(merged, section, ranges)
             if meta_content:
                 logger.info(f"返回元章节: {section}")
-                return CallToolResult(content=[TextContent(type="text", text=meta_content)])
+                return CallToolResult(content=[{"type": "text", "text": meta_content}])
 
             # 再查单章节
             section_content = _extract_section(merged, section)
@@ -265,7 +265,7 @@ async def get_coding_rules(
                          "用户规则" if user_rules else "默认规则"
                 output = f"编码规则 (来源: {source}, 章节: {section}):\n\n"
                 output += section_content
-                return CallToolResult(content=[TextContent(type="text", text=output)])
+                return CallToolResult(content=[{"type": "text", "text": output}])
 
             # 未找到章节
             logger.warning(f"未知章节: {section}")
@@ -321,12 +321,12 @@ async def get_coding_rules(
         index_text = "\n".join(index_lines)
 
         output = workflow_part + "\n" + index_text
-        return CallToolResult(content=[TextContent(type="text", text=output)])
+        return CallToolResult(content=[{"type": "text", "text": output}])
 
     except Exception as e:
         error_msg = f"获取编码规则过程发生异常: {str(e)}"
         logger.error(error_msg, exc_info=True)
         return CallToolResult(
-            content=[TextContent(type="text", text=error_msg)],
+            content=[{"type": "text", "text": error_msg}],
             isError=True
         )

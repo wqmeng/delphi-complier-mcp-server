@@ -180,9 +180,10 @@ def code_hosting(**kwargs) -> dict:
     try:
         # 前置校验：API 操作必须的参数
         if action in _API_ACTIONS:
-            for req in ("base_url", "token"):
-                if req not in kwargs:
-                    return _err(f"{action} 需要 {req} 参数")
+            if "base_url" not in kwargs:
+                return _err(f"{action} 需要 base_url 参数")
+            if action != "create_token" and "token" not in kwargs:
+                return _err(f"{action} 需要 token 参数")
         return handler(platform, **kwargs)
     except Exception as e:
         logger.exception("code_hosting error")
@@ -504,7 +505,7 @@ def _act_git_clone(platform=None, **kw):
       设置 mirror="https://hub.fastgit.xyz"
       会自动将 repo_url 中的 github.com 替换为镜像地址。
 
-    返回 task_id，通过 git_task_status 查询进度。
+    返回 task_id，通过 async_task 查询进度。
     """
     url = kw["repo_url"]
     work_dir = kw.get("work_dir", ".")
@@ -542,7 +543,7 @@ def _act_git_push(platform=None, **kw):
     """推送到远程（异步，网络不稳定可能耗时较长）。
 
     推送方式取决于用户的 Git 配置（SSH/HTTPS代理/VPN），工具不做假设。
-    返回 task_id，通过 git_task_status 查询进度。
+    返回 task_id，通过 async_task 查询进度。
     """
     work_dir = kw.get("work_dir", ".")
     remote = kw.get("remote_name", "origin")
@@ -564,7 +565,7 @@ def _act_git_push_retry(platform=None, **kw):
     """异步后台推送，每隔 N 秒重试一次直到成功（解决 GitHub 不稳定）。
 
     GitHub 在国内访问不稳定时，此工具在后台自动重试，不阻塞对话。
-    返回 task_id，通过 git_task_status 查询进度。
+    返回 task_id，通过 async_task 查询进度。
     """
     work_dir = kw.get("work_dir", ".")
     remote = kw.get("remote_name", "origin")

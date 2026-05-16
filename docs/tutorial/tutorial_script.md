@@ -1,6 +1,6 @@
-# Delphi MCP Server 使用教程 — 录制演示脚本
+# Daofy 使用教程 — 录制演示脚本
 
-**总时长**: 约 40-45 分钟  
+**总时长**: 约 45-50 分钟  
 **目标受众**: Delphi 开发者（了解基本 Delphi 开发，初次接触 MCP/AI 辅助编程）  
 **录制工具建议**: OBS Studio / Bandicam / ScreenFlow  
 **屏幕分辨率建议**: 1920×1080 或更高  
@@ -18,11 +18,11 @@
 
 大家好，欢迎收看本期教程。
 
-今天给大家介绍一个非常实用的工具——**Delphi MCP Server**。
+今天给大家介绍一个非常实用的工具——**Daofy**。
 
 MCP 全称是 Model Context Protocol，由 Anthropic 公司推出的一种开放协议。它让 AI 助手（比如 Claude、CodeArts Agent 等）能够直接与你的本地开发环境交互。
 
-简单来说：**装了 Delphi MCP Server 之后，你可以在 AI 助手的聊天对话中，直接编译 Delphi 项目、搜索 VCL/FMX 源码、查询 API 文档、甚至格式化代码。**
+简单来说：**装了 Daofy 之后，你可以在 AI 助手的聊天对话中，直接编译 Delphi 项目、搜索 VCL/FMX 源码、查询 API 文档、甚至格式化代码。**
 
 不用在 AI 和 IDE 之间来回切换。一条指令下去，AI 调用 MCP 工具帮你完成。
 
@@ -52,13 +52,13 @@ MCP 全称是 Model Context Protocol，由 Anthropic 公司推出的一种开放
 #### AI 对话演示
 
 ```
-用户: 帮我安装 Delphi MCP Server
+用户: 帮我安装 Daofy
 ```
 
 或者粘贴 README 中的安装提示词：
 
 ```
-用户: 请按以下步骤安装 Delphi MCP Server:
+用户: 请按以下步骤安装 Daofy:
 
 [] 检查并安装 Git/Python 3.10-3.14/7-Zip (安装时优先使用国内镜像源加速下载)
 
@@ -73,7 +73,7 @@ MCP 全称是 Model Context Protocol，由 Anthropic 公司推出的一种开放
 
 但在我们这个教程里，**这些全都不需要手动做**。
 
-你只需要在 AI 助手的对话框里，输入一条指令："帮我安装 Delphi MCP Server"。
+你只需要在 AI 助手的对话框里，输入一条指令："帮我安装 Daofy"。
 
 AI Agent 收到指令后会：
 1. 检查你的电脑上有没有 Python 和 Git
@@ -95,7 +95,7 @@ AI Agent 收到指令后会：
 #### AI 对话输出（示意）
 
 ```
-AI: 开始安装 Delphi MCP Server...
+AI: 开始安装 Daofy...
 
 第一步: 检查环境...
   ✅ Git 已安装 (2.47.0)
@@ -386,21 +386,20 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 
 ---
 
-### 场景 4.7 — 代码审计 Code Review（约 2 分钟）
+### 场景 4.7 — 代码审计 + Gitea 缺陷闭环（约 4 分钟）
+
+> **威力点**：从审计到工单到修复到关闭，全链路在一个 MCP 工具中完成，无需离开 AI 对话。
 
 #### AI 对话演示
+
+##### Phase 1：代码审计
 
 ```
 用户: 审查一下 review-demo/LegacyData.pas 的代码质量，
       对比项目编码规则，输出审查报告
 ```
 
-##### 第 1 步：获取审核规则
-
 - AI 调用 `get_coding_rules(section="review")` — 获取审核维度和标准
-
-##### 第 2 步：逐项审查
-
 - AI 逐行分析代码，对照编码规则逐项检查：
 
 ```
@@ -434,58 +433,128 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
   建议: 直接内联 'data1;data2;data3'
 ```
 
-##### 第 3 步：自动创建工单（Gitea 工单）
-
-> `code_hosting` 是统一的代码托管平台工具，一个工具覆盖 Gitea/GitHub/GitLab 的工单管理 + Git 本地操作 + 跨平台同步。
+##### Phase 2：一键创建 Gitea 工单
 
 ```
-用户: 将严重问题创建为 Gitea 工单，连接到 https://code.qdac.cc:3000，
-      仓库为 myteam/demo-project
+用户: 把严重问题创建为 Gitea 工单，连接到 https://code.qdac.cc:3000，
+      仓库 myteam/demo-project
 ```
 
-- AI 调用 `code_hosting(platform="gitea", action="init_labels", base_url="https://code.qdac.cc:3000", token="...", repo="myteam/demo-project")`
-  - 创建四组标签：优先级（紧急/高/中/低）、审阅结论（待审阅/需修改/已通过/已拒绝）、处理状态（待确认/处理中/已验证/已关闭/无法复现）、问题类型（缺陷/需求/改进/文档/测试）
+- AI 调用 `code_hosting(platform="gitea", action="create_token", base_url="https://code.qdac.cc:3000", username="...", password="...")` → 获取 API Token（首次使用）
+  ```
+  ✅ Token 创建成功
+    值: 93f2c9e8...a083
+  ```
+
+- AI 调用 `code_hosting(platform="gitea", action="init_labels", base_url="...", token="...", repo="myteam/demo-project")`
+  → 初始化四维标签体系（可重复执行，不会重复创建）
+  ```
+  ✅ 标签初始化完成
+    新增: 18 | 跳过(已有): 18 | 合计: 18
+    分组: 优先级(4) 审阅(4) 状态(5) 类型(5)
+  ```
+
 - AI 调用 `code_hosting(platform="gitea", action="create_issue", base_url="...", token="...", repo="myteam/demo-project",
-     title="LegacyData.pas 代码质量问题",
-     body="审计发现的严重问题清单...",
+     title="LegacyData.pas 代码质量审计问题",
+     body="""## 发现的问题
+
+### 🔴 严重
+1. 资源泄漏风险 — ExportData:26
+   TStringList.Create 没有 try/finally 保护
+2. 循环内删除导致跳项 — ProcessItems:82
+
+### 🟡 警告
+3. 魔法数值 — CalculateTotal:62-68
+4. 逻辑错误风险 — GetUserCount:49-53""",
      label_names=["类型/缺陷", "优先级/高", "状态/待确认"])`
-- 返回工单链接：`https://code.qdac.cc:3000/myteam/demo-project/issues/42`
-- Issue 内容自动填充：标题、描述、问题清单、严重级别、建议修复方案
+  ```
+  ✅ 工单已创建
+    编号: #42 | 状态: open
+    标签: 类型/缺陷, 优先级/高, 状态/待确认
+    地址: https://code.qdac.cc:3000/myteam/demo-project/issues/42
+  ```
 
-```markdown
-# Issue: LegacyData.pas 代码质量问题
+##### Phase 3：修复代码
 
-## 🔴 严重问题
-### 1. 资源泄漏风险 — ExportData
-TStringList.Create 没有 try/finally 保护...
-### 2. 循环内删除导致跳项 — ProcessItems
-...
-
-## 🟡 警告
-### 3. 魔法数值 ...
+```
+用户: 按照审计建议修复代码
 ```
 
-- 返回 Issue 链接
+- AI 读取 `LegacyData.pas` 源码
+- AI 逐项修复：
+  - ExportData: 添加 try/finally 包裹
+  - ProcessItems: 改为倒序遍历
+  - CalculateTotal: 魔法数值改为常量定义
+  - GetUserCount: 简化逻辑
+  - ExportData: 删除未使用的 LValue 变量
+- AI 调用 `compile_project(project_path="review-demo/LegacyData.pas")` — 编译验证修复后的代码
+
+##### Phase 4：提交修复并关闭工单
+
+```
+用户: 提交修复代码，并在工单中关联提交记录后关闭
+```
+
+- AI 调用 `code_hosting(action="git_add", work_dir=".", files=["review-demo/LegacyData.pas"])`
+- AI 调用 `code_hosting(action="git_commit", work_dir=".", commit_message="fix: resolve code audit issues in LegacyData.pas
+
+- Add try/finally guard to prevent resource leak
+- Fix loop index skipping on Delete
+- Replace magic numbers with constants
+- Clean up unused variable")`
+  ```
+  ✅ 提交成功
+    Hash: a1b2c3d4e5f6
+    信息: fix: resolve code audit issues in LegacyData.pas
+  ```
+
+- AI 调用 `code_hosting(platform="gitea", action="add_comment", base_url="...", token="...", repo="myteam/demo-project",
+     issue_number=42, body="已在 commit a1b2c3d4 中修复所有 5 个问题。")`
+  ```
+  ✅ 评论已添加 (ID: 14203)  工单: #42
+  ```
+
+- AI 调用 `code_hosting(platform="gitea", action="close_issue", base_url="...", token="...", repo="myteam/demo-project",
+     issue_number=42, comment_body="已在 a1b2c3d4 中修复，编译通过 ✅")`
+  ```
+  ✅ 工单 #42 已关闭
+    地址: https://code.qdac.cc:3000/myteam/demo-project/issues/42
+    关闭说明: 已在 a1b2c3d4 中修复，编译通过 ✅
+  ```
+
+##### Phase 5：验证闭环
+
+```
+用户: 查一下已关闭的工单，确认修复记录
+```
+
+- AI 调用 `code_hosting(platform="gitea", action="list_issues", base_url="...", token="...", repo="myteam/demo-project", state="closed")`
+  ```
+  📋 共 1 个工单 (gitea, closed):
+    #42 [closed] LegacyData.pas 代码质量审计问题  类型/缺陷, 优先级/高, 状态/已关闭
+  ```
 
 #### 旁白
 
-审计部分，这次我们做一个完整的编码规范驱动审计 + 自动建工单的演示。
+这个场景展示的是 **代码审计 → 工单跟踪 → 修复 → 关闭** 的完整闭环，也是 `code_hosting` 统一工具的集中体现。
 
-**第一步**，AI 调用 `get_coding_rules` 获取审核规范——包括命名规范、资源泄漏、异常处理、代码质量、类型安全等维度的检查标准。
+整个流程拆解为五个阶段：
 
-**第二步**，AI **逐条对照编码规则**审查代码。它不是泛泛地说"代码有问题"，而是：
-- 指出具体行号
-- 说明违反了哪条规则
-- 给出修复建议
-- 标注严重级别（🔴严重 / 🟡警告 / 🔵建议）
+**Phase 1 — 审计**：`get_coding_rules` 获取规范 → 逐行审查 → 输出结构化报告（含行号、严重级别、修复建议）
 
-比如说，`ExportData` 方法里创建了 `TStringList` 但没有 `try/finally`——如果 `SaveToFile` 抛异常，对象就泄漏了。这是 🔴 严重级别的问题。
+**Phase 2 — 工单创建**：`code_hosting` 的四个 action 衔接：
+1. `create_token` → 获取 API 访问令牌（仅首次需要）
+2. `init_labels` → 初始化四维标签，同 scope 互斥
+3. `create_issue` → 创建工单，自动按名称匹配标签 ID
+4. 返回的工单链接可直接在浏览器中打开
 
-`ProcessItems` 里在 `for` 循环中执行 `Delete`——删除后元素前移，`I++` 导致跳过一个元素。这又是一个 🔴 严重 bug。
+**Phase 3 — 修复**：AI 根据审计建议逐项修改源码，每处修改针对具体行号，改完后编译验证。
 
-**第三步**，你还可以让 AI 把严重问题一键创建为 **Gitea 工单**。AI 调用 MCP 内置的 `gitea_create_issue` 工具，自动填充标签、标题、问题清单，生成规范的 Issue 内容，然后返回链接。
+**Phase 4 — 关闭**：修复代码通过 `git_commit` 提交后，通过 `add_comment` 在工单中记录 commit hash，再用 `close_issue` 关闭。**commit 和 issue 之间的关联被保留在 Gitea 的评论中**，后续开发者可以追溯每个问题的修复历史。
 
-这就实现了从"代码审计 → 问题追踪"的完整闭环，特别适合团队协作场景。
+**Phase 5 — 验证**：通过 `list_issues` 按状态过滤，确认工单已正确关闭，标签已自动切换为"状态/已关闭"。
+
+关键点：**全部操作通过一个 `code_hosting` 工具完成**，不同的 action 参数切换操作类型。从发现问题到修复关闭，整个生命周期不离开 AI 对话框。这就是 MCP 协议 + 统一工具接口的威力。
 
 ---
 
@@ -1016,11 +1085,96 @@ AI 的做法跟人类完全不同：
 
 关键区别在于 **第②步和第⑥步**：
 - 第②步不是 AI 凭训练数据"回忆"API——它真的去知识库里查了 `TJSONObject` 的类继承链和构造函数签名
-- 第⑥步不是简单的"改完拉倒"——审计报告可以通过 MCP 内置的 `gitea_create_issue` 工具一键转为工单，纳入 Gitea 问题追踪
+- 第⑥步不是简单的"改完拉倒"——审计报告可以通过 MCP 内置的 `code_hosting` 工具一键转为工单，纳入 Gitea 问题追踪
 
 **⑧ Gitea 缺陷闭环** → 审计工单 → 修复 → `gitea_close_issue` 关联提交并关闭
 
 整个流程你只需要做决策和提需求，AI 负责执行和验证。这就是 **MCP Server + AI 辅助 Delphi 开发** 的完整形态。
+
+---
+
+### 场景 5.5 — Gitea 缺陷闭环实战（约 3 分钟）
+
+> **威力点**：以本项目自身作为案例，演示代码提交 → 审计 → 创建工单 → 修复 → 关闭工单的完整 Gitea 闭环。
+>
+> 所有操作通过 `code_hosting` 一个工具完成，无需切换平台。
+
+#### AI 对话演示
+
+故事线：我们刚完成 `code_hosting` 工具的开发，需要提交代码、审计、并将审计发现登记到 Gitea 跟踪。
+
+```
+用户: 把我们刚完成的 code_hosting.py 提交到 Git，
+      然后审计代码质量，有发现就创建 Gitea 工单跟踪。
+```
+
+##### 第 1 步：代码提交
+
+- AI 调用 `code_hosting(action="git_add", work_dir=".", files=["src/tools/code_hosting.py", "src/server.py", "tests/test_code_hosting.py"])`
+- AI 调用 `code_hosting(action="git_commit", work_dir=".", commit_message="feat: add unified code_hosting tool")`
+- 返回 commit hash：`0a7e8b7`
+
+##### 第 2 步：代码审计
+
+- AI 调用 `get_coding_rules(section="review")` 获取审核规范
+- AI 分析 `code_hosting.py` 代码，逐项检查：
+  - ✅ 参数校验完整性
+  - ✅ 异常处理覆盖
+  - ✅ 返回格式一致性
+  - ✅ 跨平台路径配置
+- 输出审查报告：列出通过项和改进建议
+
+##### 第 3 步：连接 Gitea 并创建工单
+
+```
+用户: 将审计结果创建为 Gitea 工单，连接到 https://code.qdac.cc:3000，
+      仓库 swish/api_test
+```
+
+- AI 调用 `code_hosting(platform="gitea", action="create_token", base_url="https://code.qdac.cc:3000", username="...", password="...")` ← 获得 Token
+- AI 调用 `code_hosting(platform="gitea", action="init_labels", base_url="...", token="...", repo="swish/api_test")` ← 确保标签存在
+- AI 调用 `code_hosting(platform="gitea", action="create_issue", base_url="...", token="...", repo="swish/api_test",
+     title="[审计] code_hosting.py 代码审查",
+     body="审计发现的改进建议...",
+     label_names=["类型/改进", "优先级/中", "状态/待确认"])`
+- 返回工单链接：`https://code.qdac.cc:3000/swish/api_test/issues/7`
+
+##### 第 4 步：修复问题
+
+- AI 根据审计建议修改代码：
+  - `_request()` 增加 token 空值校验
+  - `code_hosting()` 增加 API 操作前置参数检查
+- AI 调用 `code_hosting(action="git_add", ...)` + `git_commit` → commit `8f929b5`
+
+##### 第 5 步：关闭工单（关联提交）
+
+```
+用户: 在工单中说明修复内容并关闭
+```
+
+- AI 调用 `code_hosting(platform="gitea", action="add_comment", base_url="...", token="...", repo="swish/api_test",
+     issue_number=7, body="已在 commit 8f929b5 中修复: ...")`
+- AI 调用 `code_hosting(platform="gitea", action="close_issue", base_url="...", token="...", repo="swish/api_test",
+     issue_number=7, comment_body="已修复并合并，commit: 8f929b5")`
+- 工单关闭 ✅
+
+#### 旁白
+
+最后一个场景，我们用 **本项目自身** 作为案例，走一遍完整的 Gitea 缺陷闭环。
+
+这是一个真正发生在项目开发中的场景——你刚完成一个功能模块的开发，需要走完"提交 → 审计 → 跟踪 → 修复 → 关闭"的全流程。
+
+**① 代码提交**：`git_add` + `git_commit` 提交到本地仓库。
+
+**② 代码审计**：调用 `get_coding_rules` 获取审核规范，逐项审查代码质量。
+
+**③ 创建 Gitea 工单**：通过 `code_hosting` 的 `create_token` 获取访问令牌 → `init_labels` 确保四维标签存在 → `create_issue` 创建工单并打标签。全部通过**同一个工具**完成，不用离开 AI 对话。
+
+**④ 修复**：根据审计建议修改代码，再次提交。
+
+**⑤ 关闭**：`add_comment` 记录修复内容（可包含 commit hash），`close_issue` 关闭工单。工单历史完整可追溯。
+
+这个闭环的关键价值在于：**审计结果不落地在对话里——而是被登记到 Gitea 的问题追踪系统中**，纳入团队的标准化流程。commit 与 issue 之间的关联也被记录下来，后续开发者可以 trace 每个问题的修复历史。
 
 ---
 
@@ -1052,7 +1206,7 @@ AI 的做法跟人类完全不同：
 **📝 第四节 — AI 辅助开发**
 - **🆕 知识库驱动的代码生成**：AI 先在 KB 查 API 签名，再写代码，一次编译通过
 - **🆕 编码规范驱动的代码审计**：逐条对照规范审查，输出结构化报告
-- **🆕 审计结果自动创建工单**：通过 MCP 内置 Gitea 工具一键创建标签和工单
+- **🆕 审计结果自动创建工单**：通过 MCP 内置 `code_hosting` 工具一键创建标签和工单
 - **🆕 多文件重构**：引用查询 → 影响评估 → 逐文件修改 → 编译验证
 - **🆕 修改前自动备份**：format/重构前自动创建 `__history` 版本备份，可恢复
 - **🆕 编码规范控制 AI 行为**：同一需求换套规则，生成风格完全不同的代码
@@ -1061,6 +1215,7 @@ AI 的做法跟人类完全不同：
 - 构建 CHM 帮助文档知识库，16 万页全文检索
 - 安装 .dpk 组件包到 IDE
 - 完整从 0 到 1 工作流：规范 → API 查证 → 代码生成 → 编译 → 格式化 → 审计 → 工单
+- **🆕 Gitea 缺陷闭环实战**：代码提交 → 审计 → 创建工单 → 修复 → 关闭，以本项目自身为案例
 
 你可以把这个 MCP Server 配合任何支持 MCP 协议的 AI 助手使用——Claude Desktop、Trae、CodeArts Agent、Cursor 等等。
 
@@ -1089,7 +1244,7 @@ AI 的做法跟人类完全不同：
 | 文档 KB 实战搜索 | 全屏 AI 对话，展示搜索命中的帮助文档内容 |
 | 代码格式化 + 自动备份 | 分屏：左 = AI 对话，右 = 文件资源管理器展示 __history 目录 |
 | 编码规范影响对比 | 分屏：左 = 现代规范生成代码，右 = 旧规范生成代码，并排对比 |
-| 从 0 到 1 工作流 | 全屏 AI 对话，自然流转，无需切换画面 |
+| Gitea 缺陷闭环实战 | 全屏 AI 对话 + **画中画** Gitea 工单界面展示工单状态变化 |
 
 ### 需要提前准备
 
@@ -1108,6 +1263,7 @@ AI 的做法跟人类完全不同：
 - [ ] 文档知识库需要在录制前完成构建（构建耗时数分钟）
 - [ ] 语义搜索场景需要提前构建 embedding 向量索引：`delphi_kb(action="build_embedding")`
 - [ ] Gitea 场景需要可访问的 Gitea 实例（如 https://code.qdac.cc:3000）和仓库权限
+- [ ] Gitea 缺陷闭环场景需要预先在仓库中运行一次 init_labels 创建标签
 - [ ] 延时代码：`Start-Sleep -Seconds 3` 插入操作间控制节奏
 
 ### 剪辑标记
