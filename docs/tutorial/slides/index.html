@@ -780,14 +780,14 @@ AI:
   <!-- ==================== 06 格式化+备份 ==================== -->
   <section>
     <div class="slide-content">
-      <h2><span class="ico ico-orange">&#x1F3A8;</span> 06 格式化 &amp; 自动备份</h2>
+      <h2><span class="ico ico-orange">&#x1F3A8;</span> 06 文件写入 &amp; 自动备份</h2>
       <div class="two-col">
         <div class="col" style="border-top:3px solid #ff7a00;">
           <p style="font-weight:600; color:#ff7a00; font-size:0.68em; display:flex; align-items:center; gap:0.4em;">
             <span class="ico ico-orange ico-sm">&#x1F4C1;</span> 格式化前自动备份
           </p>
           <pre style="font-size:0.5em;"><code data-trim>DataProcessor.pas
-    ↓  format_delphi(backup=true)
+    ↓  file_tool(action="write", backup=true)
 __history/
 ├── DataProcessor.pas.~1~
 ├── DataProcessor.pas.~2~  (版本递增)
@@ -927,7 +927,7 @@ __history/
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; border-left:3px solid #007aff;">
             <strong>&#x1F50D; 扫描代码</strong>
-            <div class="dim">read_source_file(file_path)<br>读取源码，定位类/函数</div>
+            <div class="dim">file_tool(action="read", file_path)<br>读取源码，定位类/函数</div>
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; border-left:3px solid #ff9500;">
             <strong>&#x1F4DD; 输出报告</strong>
@@ -1059,9 +1059,9 @@ procedure Draw(X, Y: Integer;
         <pre class="mermaid" style="font-size:0.65em;">
 flowchart LR
     S1["① 获取规范"] --> S2["② 搜索 API"]
-    S2 --> S3["③ 生成代码"]
+    S2 --> S3["③ 写入代码<br/>(自动备份)"]
     S3 --> S4["④ 编译验证"]
-    S4 --> S5["⑤ 格式化+备份"]
+    S4 --> S5["⑤ 格式化"]
     S5 --> S6["⑥ 代码审计"]
     S6 --> S7["⑦ 创建工单"]
     classDef step1 fill:#e8f8f0,stroke:#34c759
@@ -1093,8 +1093,8 @@ flowchart LR
             <div class="dim">delphi_kb("TJSONObject")</div>
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #ff9500;">
-            <strong>&#x2462; 生成代码</strong>
-            <div class="dim">规范 × API → TJsonConfigManager</div>
+            <strong>&#x2462; 写入代码</strong>
+            <div class="dim">file_tool(action="write", backup=True)<br>自动备份到 __history</div>
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #ff3b30;">
             <strong>&#x2463; 编译验证</strong>
@@ -1102,7 +1102,7 @@ flowchart LR
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #34c759;">
             <strong>&#x2464; 格式化 + 备份</strong>
-            <div class="dim">format_delphi(backup=true)</div>
+            <div class="dim">file_tool(action="format")</div>
           </div>
           <div style="background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e8e4e0; border-left:3px solid #007aff;">
             <strong>&#x2465; 审计</strong>
@@ -1167,8 +1167,8 @@ flowchart LR
             <div class="dim">2005→13 全版本，注册表自动检测</div>
           </div>
           <div style="border-left:3px solid #2563eb; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
-            <strong>&#x1F4D6; 源码读取工具</strong>
-            <div class="dim">read_source_file 类/函数导航+行级定位</div>
+            <strong>&#x1F4D6; 文件读写工具</strong>
+            <div class="dim">file_tool(action="read") 类/函数导航+行级定位</div>
           </div>
           <div style="border-left:3px solid #16a34a; background:#fff; border-radius:10px; padding:0.4em 0.6em; border:1px solid #e7e5e4; box-shadow:0 1px 4px rgba(0,0,0,0.04);">
             <strong>&#x23F3; 异步任务管理</strong>

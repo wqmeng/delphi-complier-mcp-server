@@ -59,7 +59,7 @@ __all__ = [
     # 第三方库知识库工具
     'build_thirdparty_knowledge_base',
     'set_thirdparty_knowledge_base_service',
-    # 源码文件读取工具
+    # 源码文件读取工具（旧，仍可用）
     'read_source_file',
     'search_and_read_file',
     'set_knowledge_base_services',
@@ -77,5 +77,10 @@ __all__ = [
     'download_and_install_pasfmt_rad',
     'check_pasfmt_installation',
     'check_pasfmt_rad_installation',
-    'compile_from_source'
+    'compile_from_source',
+    # 统一文件工具
+    'handle_file_tool',
+    # DFM 转换工具
+    'convert_dfm',
+    'set_compiler_path',
 ]

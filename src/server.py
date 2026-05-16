@@ -67,7 +67,7 @@ else:
         build_unified_knowledge_base,
         get_unified_knowledge_stats
     )
-    from src.tools.read_source_file import set_knowledge_base_services, read_source_file, search_and_read_file
+    from src.tools.read_source_file import set_knowledge_base_services, read_source_file
     from src.tools import knowledge_base as kb_tools
     from src.tools import thirdparty_knowledge_base as thirdparty_kb_tools
     from src.tools import async_tasks as async_tools
@@ -75,6 +75,8 @@ else:
     from src.tools.install_package import install_package, list_installed_packages, set_compiler_service as sip
     from src.tools import document_kb_tools as doc_tools
     from src.tools.code_hosting import code_hosting
+    from src.tools import file_tool
+    from src.tools import dfm_utils as dfm_utils_mod
     from src.utils.logger import init_default_logger, get_logger, log_api_call
     from src.__version__ import __version__, __copyright__
 
@@ -157,7 +159,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                     "  check_environment(action='check') — 检查编译环境\n"
                     "  compile_project(..., get_args_only=True) — 预览编译参数")
         elif not is_pas and not arguments.get("get_args_only"):
-            return ("✨ 提示：建议用 format_delphi(action='file', file_path=...) "
+            return ("✨ 提示：建议用 file_tool(action='format', file_path=...) "
                     "统一格式化代码风格")
 
     elif name == "delphi_kb":
@@ -167,7 +169,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
                 results = result.get('results') or result.get('data') or []
                 if isinstance(results, list) and len(results) > 0:
                     return ("✨ 提示：找到目标后，可用 "
-                            "read_source_file 读取完整源码定义")
+                            'file_tool(action="read", file_path="...") 读取完整源码定义')
         elif action == "stats":
             return ("✨ 提示：如果知识库数据过期，"
                     "可用 delphi_kb(action='build', kb_type='project') 重建")
@@ -247,6 +249,15 @@ async def run_server():
     # 项目 KB 服务由 project_path 参数动态创建,不在启动时初始化
     # set_project_kb_service(kb_service)  # kb_service 是 Delphi RTL KB,不适合作为项目 KB
     set_thirdparty_kb_service(thirdparty_kb_service)
+
+    # 设置 DFM 工具编译器路径
+    newest = config_manager.get_newest_compiler()
+    if newest and newest.path:
+        dfm_utils_mod.set_compiler_path(newest.path)
+        logger.info(f"DFM 工具编译器路径已设置: {newest.path}")
+    else:
+        logger.warning("未找到可用编译器，DFM 转换功能将不可用")
+
     logger.info("工具服务实例设置完成")
 
     # 创建 MCP Server 实例
@@ -266,11 +277,12 @@ async def run_server():
             Tool(
                 name="compile_project",
                 description="【优先级 ⭐⭐⭐】编译/检查 — 构建 Delphi\n"
-                            "【触发词】编译、构建、生成exe、语法检查、编译报错、build、compile、msbuild、dcc32\n"
-                            "【Delphi 文件触发】看到 .dproj .dpr .dpk .pas .dfm 等文件时，需要先 get_coding_rules 再编译\n"
+                            "【触发词】编译、构建、生成exe、语法检查、编译报错、build、compile、msbuild、dcc32、\n"
+                            "           检查语法、编译验证、编译项目、dproj编译\n"
+                            "【Delphi 文件触发】看到 .dproj/.dpr/.dpk/.pas 文件时优先编译\n"
                             "❌ 不得用 bash/cmd 运行 dcc32/msbuild（绕过 MSBuild/事件/依赖）\n"
                             "✅ 编译 .dproj/.dpr/.dpk 或检查 .pas 语法必须用此\n"
-                            "【协作链】get_coding_rules→写代码→compile→失败→check_environment\n"
+                            "【协作链】get_coding_rules→file_tool→compile→失败→check_environment\n"
                             "【降级】MSBuild 不可用→dcc32；get_args_only 预览参数\n"
                             "【示例】\n"
                             '   compile_project(build_configuration="Release")  # "编译Release版本"\n'
@@ -280,23 +292,23 @@ async def run_server():
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "project_path": {"type": "string", "description": "项目文件路径(.dproj/.dpr/.dpk)或PAS文件路径 [必需]"},
-                        "target_platform": {"type": "string", "enum": ["win32", "win64", "osx64", "osxarm64", "iosdevice64", "iosdevice", "iossimulator", "android", "android64", "linux64"], "default": "win32", "description": "目标平台"},
-                        "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置(Debug/Release)"},
-                        "output_path": {"type": "string", "description": "输出目录"},
-                        "compiler_version": {"type": "string", "description": "编译器版本名称（可选，不传时自动检测）"},
-                        "conditional_defines": {"type": "array", "items": {"type": "string"}, "description": "条件编译符号列表"},
-                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "单元搜索路径列表"},
+                        "project_path": {"type": "string", "description": "[必需] 项目文件(.dproj/.dpr/.dpk)或 .pas 文件路径"},
+                        "target_platform": {"type": "string", "enum": ["win32", "win64", "osx64", "osxarm64", "iosdevice64", "iosdevice", "iossimulator", "android", "android64", "linux64"], "default": "win32", "description": "目标平台: win32/win64/osx64/android 等"},
+                        "build_configuration": {"type": "string", "default": "Debug", "description": "构建配置: Debug（调试）或 Release（发布）"},
+                        "output_path": {"type": "string", "description": "编译输出目录（可选，默认是项目目录）"},
+                        "compiler_version": {"type": "string", "description": "编译器版本（可选，不传时自动检测最新安装的版本）"},
+                        "conditional_defines": {"type": "array", "items": {"type": "string"}, "description": "条件编译符号列表，如 [\"DEBUG\", \"USE_MYLIB\"]"},
+                        "unit_search_paths": {"type": "array", "items": {"type": "string"}, "description": "额外单元搜索路径列表，系统会自动从.dproj和Delphi默认路径获取"},
                         "resource_search_paths": {"type": "array", "items": {"type": "string"}, "description": "资源搜索路径列表"},
-                        "optimization_enabled": {"type": "boolean", "default": True, "description": "是否启用优化"},
-                        "debug_info_enabled": {"type": "boolean", "default": True, "description": "是否包含调试信息"},
-                        "warning_level": {"type": "integer", "default": 2, "description": "警告级别(0-4)"},
-                        "disabled_warnings": {"type": "array", "items": {"type": "string"}, "description": "禁用的警告列表"},
-                        "output_type": {"type": "string", "default": "gui", "enum": ["console", "gui", "dll"], "description": "输出类型"},
-                        "runtime_library": {"type": "string", "default": "static", "enum": ["static", "dynamic"], "description": "运行时库链接方式"},
-                        "timeout": {"type": "integer", "default": 600, "description": "超时秒数"},
-                        "install_if_design_package": {"type": "boolean", "default": True, "description": "设计期包是否自动安装"},
-                        "get_args_only": {"type": "boolean", "default": False, "description": "仅返回编译参数，不执行编译"}
+                        "optimization_enabled": {"type": "boolean", "default": True, "description": "是否启用编译器优化"},
+                        "debug_info_enabled": {"type": "boolean", "default": True, "description": "是否生成调试信息（含行号信息）"},
+                        "warning_level": {"type": "integer", "default": 2, "description": "警告级别(0-4)，越高越严格"},
+                        "disabled_warnings": {"type": "array", "items": {"type": "string"}, "description": "要禁用的编译器警告编号列表，如 [\"W1000\"]"},
+                        "output_type": {"type": "string", "default": "gui", "enum": ["console", "gui", "dll"], "description": "输出类型: console=控制台程序, gui=窗口程序, dll=动态库"},
+                        "runtime_library": {"type": "string", "default": "static", "enum": ["static", "dynamic"], "description": "运行时库链接方式: static=静态链接, dynamic=动态链接"},
+                        "timeout": {"type": "integer", "default": 600, "description": "编译超时秒数（默认600秒，即10分钟）"},
+                        "install_if_design_package": {"type": "boolean", "default": True, "description": "设计期包是否自动安装到IDE（仅.dpk有效）"},
+                        "get_args_only": {"type": "boolean", "default": False, "description": "true=仅显示编译参数不实际编译，用于调试编译选项"}
                     },
                     "required": ["project_path"]
                 }
@@ -308,7 +320,7 @@ async def run_server():
                 description="【优先级 ⭐⭐⭐】知识库搜索/管理 — 查 Delphi API、项目代码、文档\n"
                             "【触发词】搜索类、搜索函数、查API、查定义、知识库、构建知识库、KB、语义搜索\n"
                             "【Delphi 文件触发】写 .pas 代码前应先搜索 KB 查 API 定义(TODO先调用 delphi_kb 搜索类/函数)\n"
-                            "【协作链】写代码前→delphi_kb查API→read_source_file看定义→写代码→compile\n"
+                            "【协作链】写代码前→delphi_kb查API→file_tool(read)看定义→写代码→compile\n"
                             "【action 说明】\n"
                             '  action="search"    默认 — 搜索类/函数/文档, kb_type=all/delphi/project/thirdparty/document\n'
                             '                    search_type=function/procedure/class/record/semantic/reference\n'
@@ -356,34 +368,80 @@ async def run_server():
                 }
             ),
 
-            # ===== 读取 Delphi 源码 ⭐⭐ =====
+            # ===== 文件操作 — 读/写/格式化/备份管理 ⭐⭐⭐ =====
             Tool(
-                name="read_source_file",
-                description="【优先级 ⭐⭐】读取 Delphi 源码文件 — 读取 .pas/.dproj 源码内容\n"
-                            "【触发词】读取源码、查看文件、读.pas、看代码、cat\n"
-                            "【Delphi 文件触发】要理解 .pas 文件内容时先用此工具\n"
-                            "支持两种模式：\n"
-                            "  search_type=\"path\"     — 按文件路径读取内容（默认）\n"
-                            '                          read_source_file(file_path="Unit1.pas", start_line=1, max_lines=500)\n'
-                            "  search_type=\"class\"    — 搜索类/函数定义后读取\n"
-                            '                          read_source_file(search_type="class", type_name="TForm1")\n'
-                            "  search_type=\"function\" — 搜索函数定义后读取\n"
-                            '                          read_source_file(search_type="function", function_name="Create")\n'
-                            "【协作链】delphi_kb 找到目标→read_source_file 看完整定义",
+                name="file_tool",
+                description="【优先级 ⭐⭐⭐】读写文件 / 格式化 / 备份管理 — .pas/.dfm/.dproj 等 Delphi 文件\n"
+                            "【触发词】修改代码、编辑文件、写入代码、新建文件、改代码、替换内容、覆盖文件、读文件、查看源码、打开文件、cat文件、\n"
+                            "           格式化代码、整理代码、排版、代码风格、自动格式化、恢复备份、备份文件、历史版本、\n"
+                            "           查看备份、还原文件、回退修改、修改前备份、差异对比、diff\n"
+                            "【Delphi 文件触发】操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此，\n"
+                            "【严禁】使用 edit/write/bash echo 直接修改 .pas/.dfm 文件（会绕过备份机制）\n"
+                            "\n"
+                            "四种工作模式(action)，每种只使用自己的参数：\n"
+                            "\n"
+                            "═══ action=\"read\" — 读文件 / 查源码 ═══\n"
+                            '  file_tool(action="read", file_path="Unit1.pas", start_line=1)\n'
+                            '  file_tool(action="read", search_type="class", type_name="TForm1")   # 搜类定义位置\n'
+                            '  file_tool(action="read", search_type="function", function_name="Create")  # 搜函数\n'
+                            "  ⭐ DFM 自动转文本：二进制 DFM 读成文本，无需手动转换\n"
+                            "\n"
+                            "═══ action=\"write\" — 写文件 / 改代码 / 替换内容 ═══\n"
+                            '  file_tool(action="write", file_path="src/Unit1.pas", content="...", backup=True)\n'
+                            "  ⭐ 自动备份到 __history（backup=True 默认）\n"
+                            "  ⭐ 自动识别并保持原始编码（UTF-8/GBK/UTF-16），不乱码\n"
+                            "  ⭐ DFM 二进制自动转换：写入文本后自动转回二进制格式\n"
+                            '  📌 写入后自动格式化: format_after_write=True\n'
+                            "\n"
+                            "═══ action=\"format\" — 格式化 / 整理代码 ═══\n"
+                            '  file_tool(action="format", file_path="src/Unit1.pas")\n'
+                            "  使用 pasfmt 格式化 .pas/.dfm 代码（自动备份）\n"
+                            '  file_tool(action="format", file_path="Unit1.pas", check_only=True)   # 仅检查不修改\n'
+                            '  file_tool(action="format", format_action="code", code="procedure...")  # 格式化代码段\n'
+                            "\n"
+                            "═══ action=\"backup\" — 备份管理 / 历史版本 / 恢复 ═══\n"
+                            '  file_tool(action="backup", file_path="src/Unit1.pas")             # 手动创建备份\n'
+                            '  file_tool(action="backup", backup_action="list", file_path="Unit1.pas")  # 列出所有版本\n'
+                            '  file_tool(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)  # 恢复\n'
+                            "\n"
+                            "【协作链】get_coding_rules→file_tool(read)→file_tool(write)→file_tool(format)→compile_project",
                 inputSchema={
                     "type": "object",
                     "properties": {
-                        "file_path": {"type": "string", "description": "文件路径（search_type=path时必需，相对路径或完整路径）"},
-                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "default": "path", "description": "搜索类型: path=按路径, class=按类名, function=按函数名, record=按record名"},
-                        "type_name": {"type": "string", "description": "类型名称（search_type=class时使用）"},
-                        "class_name": {"type": "string", "description": "类名（兼容旧参数，与type_name二选一）"},
-                        "record_name": {"type": "string", "description": "Record名称（search_type=record时使用）"},
-                        "function_name": {"type": "string", "description": "函数名（search_type=function时使用）"},
-                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始）"},
-                        "end_line": {"type": "integer", "description": "结束行号（不传则到文件末尾）"},
-                        "max_lines": {"type": "integer", "default": 500, "description": "最大返回行数（默认500，最大1000）"},
-                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围"},
-                        "project_path": {"type": "string", "description": "项目路径（可选，用于查找项目文件）"},
+                        # ---- 全局参数 ----
+                        "action": {"type": "string", "enum": ["read", "write", "format", "backup"], "default": "read", "description": "操作类型: read=读文件, write=写文件(自动备份), format=格式化, backup=备份管理"},
+
+                        # ---- 所有 action 共用 ----
+                        "file_path": {"type": "string", "description": "目标文件路径，支持 .pas/.dfm/.dproj/.dpk/.fmx/.inc"},
+
+                        # ---- read 参数 ----
+                        "search_type": {"type": "string", "enum": ["path", "class", "function", "record"], "description": "读取模式: path=按路径, class=按类名定位, function=按函数名定位, record=按record名定位"},
+                        "type_name": {"type": "string", "description": "类名/接口名/枚举名（search_type=class时使用，如 'TForm1'）"},
+                        "class_name": {"type": "string", "description": "类名（与type_name二选一，兼容旧版）"},
+                        "record_name": {"type": "string", "description": "Record 类型名（search_type=record时使用）"},
+                        "function_name": {"type": "string", "description": "函数/过程名（search_type=function时使用，如 'Create'）"},
+                        "start_line": {"type": "integer", "default": 1, "description": "起始行号（从1开始），读大文件时分段使用"},
+                        "max_lines": {"type": "integer", "default": 500, "description": "最大返回行数，读大文件时建议用此参数分段"},
+                        "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "搜索范围: all=所有知识库, delphi=官方源码, thirdparty=第三方库"},
+                        "project_path": {"type": "string", "description": "项目文件路径(可选)，用于在项目知识库中查找 .pas"},
+                        "end_line": {"type": "integer", "description": "结束行号，不传则到文件末尾"},
+
+                        # ---- write 参数 ----
+                        "content": {"type": "string", "description": "写入的完整文件内容（action=write时必需）"},
+                        "encoding": {"type": "string", "default": "auto", "description": "写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
+                        "format_after_write": {"type": "boolean", "default": False, "description": "写入后自动调用 pasfmt 格式化代码"},
+                        "backup": {"type": "boolean", "default": True, "description": "写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
+
+                        # ---- format 参数 ----
+                        "format_action": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "格式化子操作: file=格式化文件, code=格式化代码段, check=仅检查格式"},
+                        "code": {"type": "string", "description": "待格式化的代码文本（format_action=code时使用）"},
+                        "config_path": {"type": "string", "description": "pasfmt 配置文件路径（可选，高级用法）"},
+                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "uses子句风格: compact=合并为一行, pasfmt_default=每行一个"},
+                        "check_only": {"type": "boolean", "default": False, "description": "true=仅检查格式是否正确但不修改文件"},
+
+                        # ---- backup 参数 ----
+                        "backup_action": {"type": "string", "enum": ["create", "list", "restore"], "default": "create", "description": "备份子操作: create=创建备份, list=列出版本, restore=恢复指定版本"},
+                        "version": {"type": "integer", "description": "要恢复的版本号（backup_action=restore时使用，不传则恢复最新版）"},
                     }
                 }
             ),
@@ -409,40 +467,6 @@ async def run_server():
                         "search_path": {"type": "string", "description": "额外搜索路径（action=detect时使用）"},
                         "install_dir": {"type": "string", "description": "安装目录（action=install/format_install时使用）"},
                         "delphi_version": {"type": "string", "default": "11", "description": "Delphi版本（action=format_install时使用，如\"11\"、\"12\"）"},
-                    }
-                }
-            ),
-
-            # ===== Delphi 代码格式化 ⭐⭐ =====
-            Tool(
-                name="format_delphi",
-                description="【优先级 ⭐⭐】格式化 Delphi 源码 — 使用 pasfmt 格式化 .pas/.dfm 代码\n"
-                            "【触发词】格式化代码、换行、排版、整理代码、代码风格、自动格式化\n"
-                            "【Delphi 文件触发】编辑完 .pas 文件后应调用此工具格式化\n"
-                            "【action 说明】\n"
-                            '  action="file"     默认 — 格式化指定文件\n'
-                            '  action="code"     格式化一段代码文本\n'
-                            '  action="check"    仅检查格式是否合规，不修改\n'
-                            '  action="set_path" 手动设置 pasfmt 路径\n'
-                            '  action="status"   检查 pasfmt 安装状态\n'
-                            "【协作链】写代码→format_delphi→compile\n"
-                            "【示例】\n"
-                            '   format_delphi(action="file", file_path="Unit1.pas")   # "格式化文件"\n'
-                            '   format_delphi(action="code", code="procedure TForm1...") # "格式化代码"\n'
-                            '   format_delphi(action="check", file_path="Unit1.pas")  # "仅检查"',
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "action": {"type": "string", "enum": ["file", "code", "check", "set_path", "status"], "default": "file", "description": "操作类型: file=格式化文件, code=格式化代码段, check=仅检查, set_path=设置路径, status=检查状态"},
-                        "file_path": {"type": "string", "description": "文件路径（action=file/check时使用）"},
-                        "code": {"type": "string", "description": "代码文本（action=code时使用）"},
-                        "config_path": {"type": "string", "description": "pasfmt 配置文件路径（可选）"},
-                        "backup": {"type": "boolean", "default": True, "description": "是否备份原文件（action=file时生效）"},
-                        "in_place": {"type": "boolean", "default": True, "description": "是否原地修改文件"},
-                        "uses_style": {"type": "string", "enum": ["compact", "pasfmt_default"], "description": "uses子句格式: compact=合并为一行, pasfmt_default=每行一个"},
-                        "path": {"type": "string", "description": "pasfmt 可执行文件路径（action=set_path时使用）"},
-                        "check_rad": {"type": "boolean", "default": False, "description": "是否检查RAD Studio集成（action=status时使用）"},
-                        "delphi_version": {"type": "string", "description": "Delphi版本（action=status check_rad=true时使用）"},
                     }
                 }
             ),
@@ -750,14 +774,8 @@ async def run_server():
                 else:
                     result = {"error": f"未知action: {action}"}
             
-            elif name == "read_source_file":
-                # 合并 search_and_read_file
-                search_type = arguments.get("search_type", "path")
-                if search_type == "path":
-                    result = await read_source_file(arguments)
-                else:
-                    # 搜索模式
-                    result = await search_and_read_file(arguments)
+            elif name == "file_tool":
+                result = await file_tool.handle_file_tool(arguments)
             
             elif name == "check_environment":
                 # 合并 search_compilers, install_pasfmt, install_pasfmt_rad
@@ -773,43 +791,6 @@ async def run_server():
                         delphi_version=arguments.get("delphi_version", "11"),
                         install_dir=arguments.get("install_dir"),
                     )
-                else:
-                    result = {"error": f"未知action: {action}"}
-            
-            elif name == "format_delphi":
-                # 合并 format_delphi_file, format_delphi_code, set_pasfmt_path, install_pasfmt, check_pasfmt_installation
-                action = arguments.get("action", "file")
-                if action == "file":
-                    result = await pasfmt.format_file(
-                        file_path=arguments.get("file_path", ""),
-                        config_path=arguments.get("config_path"),
-                        backup=arguments.get("backup", True),
-                        in_place=arguments.get("in_place", True),
-                        uses_style=arguments.get("uses_style"),
-                    )
-                elif action == "code":
-                    result = await pasfmt.format_code(
-                        code=arguments.get("code", ""),
-                        config_path=arguments.get("config_path"),
-                        uses_style=arguments.get("uses_style"),
-                    )
-                elif action == "check":
-                    result = await pasfmt.format_file(file_path=arguments.get("file_path"), check_only=True)
-                elif action == "set_path":
-                    path = arguments.get("path")
-                    if path:
-                        pasfmt.set_pasfmt_path(path)
-                        result = {"message": f"pasfmt 路径已设置为: {path}"}
-                    else:
-                        result = {"message": "未提供 pasfmt 路径"}
-                elif action == "status":
-                    check_rad = arguments.get("check_rad", False)
-                    if check_rad:
-                        result = await pasfmt.check_pasfmt_rad_installation(
-                            delphi_version=arguments.get("delphi_version", "11")
-                        )
-                    else:
-                        result = await pasfmt.check_pasfmt_installation()
                 else:
                     result = {"error": f"未知action: {action}"}
             

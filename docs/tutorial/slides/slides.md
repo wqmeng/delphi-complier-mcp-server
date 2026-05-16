@@ -57,7 +57,7 @@ AI 从"给建议"变成"帮你做"。
 |------|------|
 | 🔧 编译 | 项目编译、语法检查、批量编译 |
 | 📚 知识库 | 30 万函数、16 万页面索引 |
-| 🎨 格式化 | pasfmt 集成 + 自动备份 |
+| 📝 文件操作 | 读/写/格式化/备份 一站集成（含 pasfmt） |
 | 📋 编码规范 | 规范驱动代码生成与审计 |
 | 📦 组件管理 | 编译安装 .dpk 组件包 |
 
@@ -172,9 +172,18 @@ TDictionary<TCustomKey, string>  // 编译错误！
 
 ---
 
-## 代码格式化 + 自动备份
+## 统一文件操作 + 自动备份
 
-**格式化前自动备份：**
+**一体化的文件接口 `file_tool`：**
+
+```
+file_tool(action="read")             — 读文件（DFM 二进制→文本自动转换）
+file_tool(action="write", backup=True)  — 写文件（自动备份到 __history）
+file_tool(action="format")           — 格式化（pasfmt 驱动）
+file_tool(action="backup")           — 备份管理（创建/列表/恢复）
+```
+
+**自动备份机制：**
 
 ```
 源文件                 __history/
@@ -182,12 +191,44 @@ DataProcessor.pas  →  DataProcessor.pas.~1~
                        DataProcessor.pas.~2~  (自动递增)
 ```
 
-**备份管理：**
-- 查看备份列表
-- 对比差异
-- 从备份恢复
+**⚠️ 不只是格式化才备份 — 每次写入都会备份**
 
-> 💡 与 Delphi IDE 的 History 机制兼容
+```
+file_tool(action="write", file_path="Unit1.pas", content="...")
+                              ↑ 默认 backup=True，自动创建 __history
+```
+
+**备份管理：**
+- 查看备份列表 `backup_action="list"`
+- 恢复指定版本 `backup_action="restore", version=3`
+- 与 Delphi IDE 的 History 机制兼容
+
+> 💡 旧接口 `read_source_file` / `format_delphi` 已合并到此工具
+
+---
+
+## DFM 二进制文件透明处理
+
+**DFM 表单文件也有二进制格式，传统方式处理麻烦：**
+
+```
+读取二进制 DFM → 乱码 → 还得手动转换
+编辑后保存 → 格式搞错 → 编译器报错
+```
+
+**`file_tool` 透明处理：**
+
+```
+file_tool(action="read",  file_path="Form1.dfm")
+  → 检测到二进制 → 自动转文本 → 返回可读内容 ✓
+
+file_tool(action="write", file_path="Form1.dfm", content="...")
+  → 原文件是二进制 → 写出后自动转回二进制 ✓
+```
+
+**原理：按需编译 Delphi 转换器，调用 `ObjectResourceToText` / `ObjectTextToResource`**
+
+> 💡 修改者无需关心 DFM 格式，读写接口一致
 
 ---
 
@@ -241,9 +282,10 @@ GitHub Issue / Gitee 工单
 
 **AI 工作流：**
 1. 🔗 引用查询 → 评估影响范围
-2. 📝 逐文件修改
-3. ✅ 每改一个编译验证
-4. 🎨 统一格式化
+2. 🛡️ 自动备份（file_tool write 默认 backup=True）
+3. 📝 逐文件修改
+4. ✅ 每改一个编译验证
+5. 🎨 统一格式化
 
 > 💡 你做决策，AI 执行 + 验证
 
@@ -313,12 +355,12 @@ AI: 列出所有注册的 BPL 包
 ```
 
 ```
-① get_coding_rules     → 获取规范
-② delphi_kb(TJSON*)    → 搜索 API 确认签名
-③ 生成代码             → 编码规范 + API 定义
-④ compile_project      → 编译验证
-⑤ format_delphi        → 格式化 + 备份
-⑥ get_coding_rules     → 审计
+① get_coding_rules          → 获取规范
+② delphi_kb(TJSON*)         → 搜索 API 确认签名
+③ file_tool(action="write", backup=True) → 写入代码（自动备份到 __history）
+④ compile_project           → 编译验证
+⑤ file_tool(action="format") → 格式化代码
+⑥ get_coding_rules(section="review") → 审计
 ⑦ 审计报告 → GitHub Issue
 ```
 
@@ -348,9 +390,9 @@ AI: 列出所有注册的 BPL 包
 |------|--------|
 | 🔧 编译 | 编译 + 诊断 + 批量 |
 | 📚 KB 搜索 | 精确 + 语义 + 引用 |
-| 🎨 格式化 | pasfmt + 自动备份 |
+| 📝 文件操作 | 读/写/格式化/备份一站集成（含 pasfmt） |
 | 📋 规范 | 驱动生成 + 驱动审计 |
-| 🛡️ 安全 | 备份 + 恢复 |
+| 🛡️ 安全 | 写前自动备份 + 恢复 |
 | 📦 组件 | 编译 + 安装 |
 | 🤖 自动化 | 重构 + 修复 + 工单 |
 

@@ -18,9 +18,11 @@ from mcp.types import CallToolResult, TextContent
 
 try:
     from ..utils.logger import get_logger
+    from ..utils.file_backup import create_backup as _create_backup, detect_encoding as _detect_encoding, list_backups as _list_backups
 except ImportError:
     try:
         from src.utils.logger import get_logger
+        from src.utils.file_backup import create_backup as _create_backup, detect_encoding as _detect_encoding, list_backups as _list_backups
     except ImportError:
         import logging
         def get_logger(name: str) -> logging.Logger:
@@ -272,65 +274,13 @@ async def format_file(
             "formatted": False
         }
     
-    # 检查文件编码（根据用户编码规范要求）
-    try:
-        with open(file_path, 'rb') as f:
-            raw_data = f.read()
-            # 尝试检测编码
-            if raw_data.startswith(b'\xff\xfe') or raw_data.startswith(b'\xfe\xff'):
-                encoding = 'utf-16'
-            elif raw_data.startswith(b'\xef\xbb\xbf'):
-                encoding = 'utf-8-sig'
-            else:
-                # 尝试 UTF-8，如果失败则尝试 gbk
-                try:
-                    raw_data.decode('utf-8')
-                    encoding = 'utf-8'
-                except UnicodeDecodeError:
-                    try:
-                        raw_data.decode('gbk')
-                        encoding = 'gbk'
-                    except UnicodeDecodeError:
-                        encoding = 'utf-8'
-    except Exception as e:
-        logger.warning(f"检测文件编码失败: {str(e)}，使用默认编码")
-        encoding = 'utf-8'
+    # 检测文件编码（使用公共函数）
+    encoding = _detect_encoding(file_path)
     
-    # 创建备份（根据用户编码规范要求）
+    # 创建备份（使用公共函数）
     backup_path = None
     if backup:
-        try:
-            # 创建 __history 目录
-            file_dir = os.path.dirname(file_path)
-            history_dir = os.path.join(file_dir, "__history")
-            os.makedirs(history_dir, exist_ok=True)
-            
-            # 查找现有备份文件版本号
-            base_name = os.path.basename(file_path)
-            backup_files = [f for f in os.listdir(history_dir) 
-                          if f.startswith(f"{base_name}.~") and f.endswith("~")]
-            
-            max_version = 0
-            for backup_file in backup_files:
-                try:
-                    # 提取版本号：filename.~数字~
-                    version_str = backup_file[len(base_name) + 2:-1]
-                    version = int(version_str)
-                    if version > max_version:
-                        max_version = version
-                except (ValueError, IndexError):
-                    continue
-            
-            # 新版本号
-            new_version = max_version + 1 if max_version > 0 else 1
-            backup_path = os.path.join(history_dir, f"{base_name}.~{new_version}~")
-            
-            # 复制文件到备份位置
-            import shutil
-            shutil.copy2(file_path, backup_path)
-            logger.info(f"创建备份文件: {backup_path}")
-        except Exception as e:
-            logger.warning(f"创建备份文件失败: {str(e)}")
+        backup_path = _create_backup(file_path)
     
     # 构建 pasfmt 命令
     cmd = [pasfmt_path]

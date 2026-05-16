@@ -607,7 +607,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 - AI 逐个文件编辑修改
 - 每次修改后调用 `compile_project(project_path="当前文件.pas")` 做语法检查
 - 全部修改完成后，调用 `compile_project(project_path="项目.dproj")` 做全项目编译验证，确保跨文件类型引用正确
-- 编译通过后，调用 `format_delphi()` 格式化代码
+- 编译通过后，调用 `file_tool(action="format")` 格式化代码
 - 展示最终编译通过的确认
 
 #### 旁白
@@ -638,7 +638,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 
 ##### 第 1 步：自动备份
 
-- AI 调用 `format_delphi(action="file", file_path="DataProcessor.pas", backup=true)`
+- AI 调用 `file_tool(action="format", file_path="DataProcessor.pas", backup=true)`
 - pasfmt 在执行格式化前自动执行备份逻辑：
   ```
   ✅ 备份文件已创建: DataProcessor.pas.__history\DataProcessor.pas.~1~
@@ -680,7 +680,7 @@ AI 会自动找到当前目录下的 .dproj 工程文件，调用 MSBuild 或 dc
 
 代码格式化和重构有一个让人担心的问题——"改坏了怎么办？"
 
-`format_delphi` 工具内置了自动备份机制。默认 `backup=true`，在执行任何修改前，它会在源文件同级目录下创建 `__history` 文件夹，保存一份带版本号的备份。
+`file_tool` 内置了自动备份机制。默认 `backup=true`，在执行任何写入前，它会在源文件同级目录下创建 `__history` 文件夹，保存一份带版本号的备份。
 
 备份文件的命名规则和 **Delphi IDE 自带的 History 机制完全一致**——`文件名.~版本号~`。如果你反复格式化多次，版本号会自动递增：`~1~`、`~2~`、`~3~`……
 
@@ -1048,7 +1048,7 @@ AI 的做法跟人类完全不同：
 用户: 格式化代码
 ```
 
-- AI 调用 `format_delphi(action="file", file_path="JsonConfigManager.pas")`
+- AI 调用 `file_tool(action="format", file_path="JsonConfigManager.pas")`
 - 展示格式化后的最终代码
 
 ##### 第 6 步：代码审计

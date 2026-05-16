@@ -28,13 +28,15 @@ src/
 
 ## Agent 编码工作流（优先级顺序）
 
-### 编译 Delphi 前
+### 编辑 Delphi 文件前
 
 ```
 ① check_environment(action="check")       → 确认编译器
 ② get_coding_rules(project_path=...)       → 获取编码规则
 ③ delphi_kb(query=...)                     → 搜索 API 定义（下面详述）
-④ 写代码 → compile_project → format_delphi
+④ file_tool(action="backup", file_path=...)→ 备份到 __history（关键）
+⑤ file_tool(action="read", file_path=...)  → 读源码（确认修改点）
+⑥ 写代码 → file_tool(format) → compile_project
 ```
 
 ### 知识库搜索（先猜精确名，再模糊搜）
@@ -115,6 +117,14 @@ src/
 - **DDL 统一**：所有建表语句集中在 `schema.py`，各 Builder 调 `create_source_tables()`/`create_document_tables()`
 - **同一 DB 文件所有连接用相同 journal 模式**：本项目统一使用 WAL（`PRAGMA journal_mode=WAL`），切换模式需要独占锁，运行中若有其他连接会 locked
 - 修改表结构后 `grep` 全项目旧表名/列名的所有 INSERT/DELETE/SELECT/ALTER 引用
+
+### 文件修改前备份
+- **修改任何 Delphi 源文件（.pas/.dfm/.dproj/.dpk/.fmx/.inc）前必须先创建 `__history` 备份**
+- ✅ `file_tool(action="write", file_path=..., content=...)` 默认 `backup=True`，自动备份
+- ✅ 如需单独创建备份：`file_tool(action="backup", file_path="src/Unit1.pas")`
+- ✅ 恢复：`file_tool(action="backup", backup_action="restore", file_path="src/Unit1.pas", version=3)`
+- ✅ 列出备份：`file_tool(action="backup", backup_action="list", file_path="src/Unit1.pas")`
+- ❌ 禁止直接使用 edit/write 工具修改 .pas/.dfm 文件而不通过 file_tool 进行备份
 
 ### 编译
 - `shell=True` 执行编译事件前记录 `logger.warning`（命令来自 `.dproj` 文件）
@@ -290,8 +300,17 @@ src/
 ### 审计工具配合
 
 ```
+get_coding_rules(section="review")               → 获取 Delphi 审核标准
+file_tool(action="read", file_path="unit.pas")   → 查看 Delphi 源码
+delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
+compile_project(project_path="proj.dproj")        → Delphi 审计后验证编译
+--- Python 项目审计用以下工具 ---
+grep / ast_grep_search                      → 搜索 Python 代码中的模式
+lsp_diagnostics / lsp_symbols               → 类型检查和符号分析
+pytest                                      → 审计后运行测试验证
+```
 get_coding_rules(section="review")          → 获取 Delphi 审核标准
-read_source_file(file_path="unit.pas")       → 查看 Delphi 源码
+file_tool(action="read", file_path="unit.pas")  → 查看 Delphi 源码
 delphi_kb(query="TThread", search_type="reference") → 查 Delphi API 用法
 compile_project(project_path="proj.dproj")   → Delphi 审计后验证编译
 --- Python 项目审计用以下工具 ---

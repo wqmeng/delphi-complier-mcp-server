@@ -250,17 +250,11 @@ If you need to manually configure or add a custom compiler, you can directly edi
 |-----------|-------------|----------------|
 | `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base | `action`(search/stats/build/scan/web), `query`, `kb_type`(all/delphi/project/thirdparty/document), `search_type`(function=functions+procedures, procedure=procedures only), `top_k`(default 200, max 500) |
 
-### Source Code Tools
+### File Operations
 
 | Tool Name | Description | Key Parameters |
 |-----------|-------------|----------------|
-| `read_source_file` | Read file content or search by class/function name | `file_path`, `search_type`(path/class/function), `type_name`, `function_name` |
-
-### Formatting Tools
-
-| Tool Name | Description | Key Parameters |
-|-----------|-------------|----------------|
-| `format_delphi` | Format Delphi source code, check/set pasfmt | `action`(file/code/check/set_path/status), `file_path`, `code` |
+| `file_tool` | Unified file operations: read/write/format/backup | `action`(read/write/format/backup), `file_path`, `content`, `search_type`, `type_name`, `function_name`, `start_line`, `max_lines`, `backup`, `encoding`
 
 ### Async Task Tools
 
