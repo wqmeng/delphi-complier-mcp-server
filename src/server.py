@@ -26,8 +26,9 @@ if __name__ != '__mp_main__':
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=False)
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=False)
     except Exception:
-        logger = get_logger(__name__)
-        logger.warning("stdout/stderr 编码设置失败，部分输出可能乱码", exc_info=True)
+        import logging as _logging
+        _logger = _logging.getLogger(__name__)
+        _logger.warning("stdout/stderr 编码设置失败，部分输出可能乱码", exc_info=True)
 
 # 添加项目根目录到 Python 路径
 project_root = Path(__file__).parent.parent
@@ -149,7 +150,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             is_error = (
                 result.get('status') == 'failed'
                 or result.get('success') is False
-                or 'error' in result
+                or (result.get('error') is not None and result.get('error') != '')
             )
         else:
             is_error = False
@@ -208,7 +209,7 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             is_error = (
                 result.get('status') == 'failed'
                 or result.get('success') is False
-                or 'error' in result
+                or (result.get('error') is not None and result.get('error') != '')
             )
         else:
             is_error = False
@@ -563,7 +564,7 @@ async def run_server():
             # ===== 列出已安装的组件包 =====
             Tool(
                 name="list_installed_packages",
-                description="列出已安装到 IDE 的 Delphi 组件包\n"
+                description="【优先级 ⭐】列出已安装到 IDE 的 Delphi 组件包\n"
                             "【触发词】已安装的包、列出组件、查看已安装、验证安装\n"
                             "【协作链】install_package 后调用此工具验证组件已成功注册",
                 inputSchema={
@@ -600,7 +601,7 @@ async def run_server():
             # ===== 代码托管平台统一工具 =====
             Tool(
                 name="code_hosting",
-                description="【代码托管平台】统一操作 Gitea / GitHub / GitLab + Git 本地操作\n"
+                description="【优先级 ⭐⭐】代码托管平台 — 统一操作 Gitea / GitHub / GitLab + Git 本地操作\n"
                             "通过 platform 切换后端(gitea/github/gitlab)，action 选择操作。\n"
                             "\n"
                             "▶ 平台 API 操作:\n"
@@ -628,7 +629,7 @@ async def run_server():
                     "type": "object",
                     "properties": {
                         "platform": {"type": "string", "enum": ["gitea", "github", "gitlab"], "description": "平台类型（API 操作需要，Git 本地操作不需要）"},
-                        "action": {"type": "string", "description": "操作类型: create_token, init_labels, create_issue, close_issue, add_comment, list_issues, git_clone, git_add, git_commit, git_push, git_push_retry, git_status"},
+                        "action": {"type": "string", "enum": ["create_token", "init_labels", "create_issue", "close_issue", "add_comment", "list_issues", "git_clone", "git_add", "git_commit", "git_push", "git_push_retry", "git_status"], "description": "操作类型: create_token, init_labels, create_issue, close_issue, add_comment, list_issues, git_clone, git_add, git_commit, git_push, git_push_retry, git_status"},
                         "base_url": {"type": "string", "description": "平台实例地址，如 https://code.qdac.cc:3000 (API 操作需要)"},
                         "token": {"type": "string", "description": "API 访问令牌 (API 操作需要)"},
                         "repo": {"type": "string", "description": "仓库名，格式 owner/repo (API 操作需要)"},
@@ -803,6 +804,12 @@ async def run_server():
     @server.call_tool()
     async def call_tool(name: str, arguments: dict):
         """调用工具（由 _TOOL_HANDLERS dispatch）"""
+        import time as _time
+        from datetime import datetime as _datetime
+
+        _call_start = _time.monotonic()
+        _call_start_dt = _datetime.now()
+
         logger.info(f"调用工具: {name}")
         result = None
 
@@ -812,6 +819,17 @@ async def run_server():
                 result = await handler(arguments)
             else:
                 raise ValueError(f"未知工具: {name}")
+
+            # 计算调用用时
+            _call_end = _time.monotonic()
+            _call_end_dt = _datetime.now()
+            _duration = _call_end - _call_start
+            _timing_footer = (
+                f"\n\n---\n"
+                f"⏱ {_duration:.3f}s | "
+                f"⌛ {_call_start_dt.strftime('%H:%M:%S.%f')[:-3]} → "
+                f"🏁 {_call_end_dt.strftime('%H:%M:%S.%f')[:-3]}"
+            )
 
             # P2: 智能提示
             hint = _get_smart_hint(name, result, arguments)
@@ -827,19 +845,41 @@ async def run_server():
             # P3: API 调用日志
             log_api_call(logger, name, arguments, result)
 
-            # 统一返回格式
+            # 统一返回格式: dict → CallToolResult
             if isinstance(result, dict):
-                text = str(result.get('message', str(result)))
+                import json as _json
                 is_error = (result.get('status') == 'failed'
                             or result.get('success') is False
-                            or 'error' in result)
-                return CallToolResult(content=[{"type": "text", "text": text}], isError=is_error)
+                            or (result.get('error') is not None and result.get('error') != ''))
+                try:
+                    text = _json.dumps(result, ensure_ascii=False, indent=2, default=str)
+                except (TypeError, ValueError):
+                    text = str(result)
+                result = CallToolResult(content=[TextContent(type="text", text=text)], isError=is_error)
+
+            # 统一追加 timing footer 到 CallToolResult 文本内容
+            if isinstance(result, CallToolResult):
+                if result.content and len(result.content) > 0:
+                    first = result.content[0]
+                    if hasattr(first, 'text') and first.text:
+                        first.text += _timing_footer
             return result
 
         except Exception as e:
+            _call_end = _time.monotonic()
+            _call_end_dt = _datetime.now()
+            _duration = _call_end - _call_start
+            _timing = (
+                f"⏱ {_duration:.3f}s | "
+                f"⌛ {_call_start_dt.strftime('%H:%M:%S.%f')[:-3]} → "
+                f"🏁 {_call_end_dt.strftime('%H:%M:%S.%f')[:-3]}"
+            )
             log_api_call(logger, name, arguments, {"error": str(e)})
             logger.error(f"工具调用失败: {str(e)}", exc_info=True)
-            return CallToolResult(content=[{"type": "text", "text": f"错误: {str(e)}"}], isError=True)
+            return CallToolResult(
+                content=[TextContent(type="text", text=f"错误: {str(e)}\n\n{_timing}")],
+                isError=True
+            )
 
     # 注册 MCP 资源
     _resources_dir = project_root / "config"
