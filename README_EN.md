@@ -282,7 +282,7 @@ The following configs apply to users who installed via git clone. Replace the pa
 | `get_coding_rules` | Get Delphi coding standards, supports section-based retrieval |
 | `delphi_kb` | Search code/classes/functions/docs, view stats, or build knowledge base |
 | `file_tool` | Unified file operations: read/write/format/backup |
-| `generate_component_dfm` | Compile + run AI-written Pascal code to generate component DFM definitions |
+| `manage_component` | Manage DFM components: add/remove/modify/create + PAS auto-sync |
 | `code_hosting` | Unified operations for Gitea/GitHub/GitLab + local Git operations |
 | `async_task` | Manage background tasks (e.g., build knowledge base) |
 
@@ -326,7 +326,7 @@ MIT License - See [LICENSE](LICENSE) file.
 
 ### v2026.05.14 (Latest)
 
-- New `generate_component_dfm` tool: compile+run Pascal code to generate DFM
+- New `manage_component` tool: DFM component CRUD/create + PAS auto-sync (replaces `generate_component_dfm`)
 - `file_tool` enhanced: DFM binary auto-conversion, backup management, search positioning
 - Install script refactored: Python-first with bat bootstrap, global/project modes
 - Server restructuring: MCP tool registration and invocation logic separation

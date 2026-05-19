@@ -87,7 +87,7 @@ delphi_kb(
 | `get_coding_rules` | 获取 Delphi 编码规范，支持按章节分段获取 |
 | `delphi_kb` | 搜索代码/类/函数/文档，查看统计或构建知识库 |
 | `file_tool` | 统一文件操作：读/写/格式化/备份管理 |
-| `generate_component_dfm` | 编译+运行 AI 写的 Pascal 代码来生成组件 DFM 定义 |
+| `manage_component` | DFM 组件增/删/改/生成 + PAS 自动同步 |
 | `code_hosting` | 统一操作 Gitea/GitHub/GitLab 平台 + Git 本地操作 |
 | `async_task` | 管理后台任务（构建知识库等） |
 
@@ -364,7 +364,7 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ### v2026.05.14 (最新)
 
-- 新增 `generate_component_dfm` 工具：编译+运行 Pascal 代码生成 DFM
+- 新增 `manage_component` 工具：DFM 组件增/删/改/生成 + PAS 自动同步（替代原 `generate_component_dfm`）
 - `file_tool` 增强：DFM 二进制自动转换、备份管理、搜索定位
 - `get_coding_rules` 增强：支持按章节分段获取，节省 token
 - 新增 `code_hosting` 工具：统一 Gitea/GitHub/GitLab 操作
