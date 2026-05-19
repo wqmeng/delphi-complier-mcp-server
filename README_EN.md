@@ -370,11 +370,35 @@ Full history: See [CHANGELOG.md](CHANGELOG.md)
 
 ## Sponsor
 
-If Daofy for Delphi is helpful to you, please consider sponsoring us:
-
-<https://blog.qdac.cc/?page_id=13>
-
+If Daofy for Delphi is helpful to you, please consider sponsoring us through the following methods.
 Your support means a lot! ❤️
+
+### Alipay
+
+**Account**: guansonghuan@sina.com (Name: 管耸寰, please include your QQ number)
+
+![Alipay QR Code](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_alipay.jpg)
+
+### WeChat
+
+**Account**: wangshengbo (send red packets or transfer)
+
+![WeChat QR Code](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_wechat.jpg)
+
+### QQ
+
+Send red packets to group owner directly.
+
+![QQ QR Code](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_qq.png)
+
+**QQ Official Group**: 250530692
+
+### Bank Transfer
+
+| Bank | Name | Account | Branch |
+|------|------|---------|--------|
+| China Everbright Bank | 王胜波 | 6226 6208 0391 5552 | Changchun Renmin Street Sub-branch |
+| China Construction Bank | 管耸寰 | 4367 4209 4324 0179 731 | Changchun Tuanfeng Savings Office |
 
 ## Contributing
 

@@ -411,11 +411,35 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 赞助
 
-如果您觉得 Daofy for Delphi 对您有帮助，欢迎赞助支持我们：
-
-<https://blog.qdac.cc/?page_id=13>
-
+如果您觉得 Daofy for Delphi 对您有帮助，欢迎通过以下方式赞助支持我们。
 您的支持让项目走得更远！❤️
+
+### 支付宝
+
+**账号**: guansonghuan@sina.com（姓名：管耸寰，请标明QQ号）
+
+![支付宝收款码](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_alipay.jpg)
+
+### 微信
+
+**账号**: wangshengbo（发送红包或转账）
+
+![微信收款码](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_wechat.jpg)
+
+### QQ
+
+直接群支付，或给群主发红包
+
+![QQ收款码](https://blog.qdac.cc/wp-content/uploads/2018/04/pay_qq.png)
+
+**QQ官方群**: 250530692
+
+### 银行卡
+
+| 银行 | 户名 | 账号 | 开户行 |
+|------|------|------|--------|
+| 光大银行 | 王胜波 | 6226 6208 0391 5552 | 光大银行长春人民大街支行 |
+| 建设银行 | 管耸寰 | 4367 4209 4324 0179 731 | 建设银行长春团风储蓄所 |
 
 ## 联系方式
 
