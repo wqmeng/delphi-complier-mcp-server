@@ -89,30 +89,45 @@ Each knowledge base has a `config.json` file. Configs are auto-generated on firs
 
 ## Installation
 
-### AI Assistant Automatic Installation Prompt
+### Method 1: pip install (Recommended)
+
+```bash
+pip install daofy-for-delphi
+```
+
+After installation, skip to → [Configure AI Assistant](#configure-ai-assistant).
+
+> **For users in China**, use a mirror source for faster download:
+> ```bash
+> pip install daofy-for-delphi -i https://pypi.tuna.tsinghua.edu.cn/simple
+> ```
+
+### Method 2: Install from Source
+
+#### AI Assistant Automatic Installation Prompt
 
 Please follow these steps to install Daofy:
 
-[] Check and install Git/Python 3.10-3.14/7-Zip (prioritize using domestic mirror sources for faster downloads during installation)
+[] Check and install Git/Python 3.10-3.14/7-Zip
 [] Install `https://github.com/chinawsb/daofy.git`
 [] After installation, verify results and configure current client for me
 
-### Manual Installation Steps
+#### Manual Installation Steps
 
-#### 1. Clone or Download Project
+##### 1. Clone or Download Project
 
 ```bash
 git clone https://github.com/chinawsb/daofy.git
 cd daofy
 ```
 
-#### 2. Create Virtual Environment
+##### 2. Create Virtual Environment
 
 ```bash
 python -m venv venv
 ```
 
-#### 3. Activate Virtual Environment
+##### 3. Activate Virtual Environment
 
 Windows:
 ```bash
@@ -124,7 +139,7 @@ Linux/macOS:
 source venv/bin/activate
 ```
 
-#### 4. Install Dependencies (using mirror sources for faster download)
+##### 4. Install Dependencies (using mirror sources for faster download)
 
 ```bash
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
@@ -168,7 +183,30 @@ Supported Delphi versions for automatic detection:
 
 If you need to manually configure or add a custom compiler, you can directly edit the `config/compilers.json` file, or use the `check_environment` tool with `detect` action to re-detect.
 
-### Configure Claude Desktop
+### Common Configuration (pip install)
+
+If installed via `pip install daofy-for-delphi`, use the simplest config:
+
+```json
+{
+  "mcpServers": {
+    "daofy": {
+      "command": "daofy",
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
+```
+
+### Source Install Configuration
+
+The following configs apply to users who installed via git clone. Replace the paths with your actual installation paths.
+
+#### Claude Desktop
 
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
@@ -188,7 +226,7 @@ If you need to manually configure or add a custom compiler, you can directly edi
 }
 ```
 
-### Configure Trae
+#### Trae
 
 **Windows**: `C:\Users\<username>\.trae-cn\mcp_config.json`
 
@@ -212,7 +250,7 @@ If you need to manually configure or add a custom compiler, you can directly edi
 
 **Note**: Please modify the paths to your actual installation paths.
 
-### Configure CodeArts Agent
+#### CodeArts Agent
 
 **Windows**: `~/.codeartsdoer/mcp/mcp_settings.json`
 
@@ -329,6 +367,14 @@ MIT License - See [LICENSE](LICENSE) file.
 - Performance fix: nested parenthesis regex from 219s → 0.002s
 
 Full history: See [CHANGELOG.md](CHANGELOG.md)
+
+## Sponsor
+
+If Daofy for Delphi is helpful to you, please consider sponsoring us:
+
+<https://blog.qdac.cc/?page_id=13>
+
+Your support means a lot! ❤️
 
 ## Contributing
 

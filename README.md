@@ -156,32 +156,47 @@ delphi_kb(
 
 ## 安装
 
-### AI 助手自动安装提示词
+### 方式一：pip 安装（推荐）
+
+```bash
+pip install daofy-for-delphi
+```
+
+安装完成后直接进入 → [配置 AI 助手](#配置-ai-助手) 步骤即可。
+
+> **国内用户**可使用镜像源加速：
+> ```bash
+> pip install daofy-for-delphi -i https://pypi.tuna.tsinghua.edu.cn/simple
+> ```
+
+### 方式二：源码安装
+
+#### AI 助手自动安装提示词
 
 请按以下步骤安装 Daofy:
 
-[] 检查并安装 Git/Python 3.10-3.14/7-Zip (安装时优先使用国内镜像源加速下载)
+[] 检查并安装 Git/Python 3.10-3.14/7-Zip
 
 [] 安装 `https://github.com/chinawsb/daofy.git`
 
 [] 安装完成后验证结果并帮我配置当前客户端
 
-### 手动安装步骤
+#### 手动安装步骤
 
-#### 1. 克隆或下载项目
+##### 1. 克隆或下载项目
 
 ```bash
 git clone https://github.com/chinawsb/daofy.git
 cd daofy
 ```
 
-#### 2. 创建虚拟环境
+##### 2. 创建虚拟环境
 
 ```bash
 python -m venv venv
 ```
 
-#### 3. 激活虚拟环境
+##### 3. 激活虚拟环境
 
 Windows:
 
@@ -195,7 +210,7 @@ Linux/macOS:
 source venv/bin/activate
 ```
 
-#### 4. 安装依赖 (使用国内镜像源加速)
+##### 4. 安装依赖 (使用国内镜像源加速)
 
 ```bash
 pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
@@ -241,7 +256,28 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 如果需要手动配置或添加自定义编译器,可以直接编辑 `config/compilers.json` 文件,或使用 `check_environment` 工具的 `detect` action 重新检测。
 
-### 配置 Claude Desktop
+### 通用配置（pip 安装）
+
+如果通过 `pip install daofy-for-delphi` 安装，配置最简：
+
+```json
+{
+  "mcpServers": {
+    "daofy": {
+      "command": "daofy",
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1"
+      }
+    }
+  }
+}
+```
+
+### 源码安装配置
+
+以下配置适用于通过 git clone 源码安装的用户，请将路径替换为实际安装路径。
 
 #### Claude Desktop
 
@@ -263,7 +299,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 }
 ```
 
-### 配置 Trae
+#### Trae
 
 **Windows**: `C:\Users\<用户名>\.trae-cn\mcp_config.json`
 
@@ -287,7 +323,7 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 **注意**: 请将路径修改为您的实际安装路径。
 
-### 配置 CodeArts Agent
+#### CodeArts Agent
 
 **Windows**: `~/.codeartsdoer/mcp/mcp_settings.json`
 
@@ -372,6 +408,14 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request!
+
+## 赞助
+
+如果您觉得 Daofy for Delphi 对您有帮助，欢迎赞助支持我们：
+
+<https://blog.qdac.cc/?page_id=13>
+
+您的支持让项目走得更远！❤️
 
 ## 联系方式
 

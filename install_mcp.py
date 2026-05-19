@@ -526,13 +526,36 @@ def detect_agents() -> list[dict]:
 # MCP 配置生成
 # ============================================================
 
-def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "") -> dict:
+def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
+                   use_pip: bool = False) -> dict:
+    if use_pip:
+        # pip 安装模式：直接使用 daofy CLI 命令
+        if config_type == "OpenCode":
+            return {
+                "type": "local",
+                "command": ["daofy"],
+                "environment": {
+                    "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONUTF8": "1",
+                },
+            }
+        else:
+            return {
+                "command": "daofy",
+                "env": {
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUTF8": "1",
+                },
+            }
+
+    # 源码安装模式：通过 python 解释器执行 src/server.py
     script_dir = str(get_script_dir())
     server_script = os.path.join(script_dir, "src", "server.py")
     cwd = project_dir if project_dir and os.path.isdir(project_dir) else script_dir
 
     if config_type == "OpenCode":
-        # OpenCode McpLocalConfig: command 是数组（包含命令和参数），无 args/cwd
         return {
             "type": "local",
             "command": [python_exe, server_script],
@@ -646,7 +669,8 @@ def _prompt_restart(agents: list[dict], auto_restart: bool | None = None) -> Non
 
 
 def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All",
-               force: bool = False, restart: bool | None = None) -> None:
+               force: bool = False, restart: bool | None = None,
+               use_pip: bool = False) -> None:
     """安装/配置 MCP Server 到指定 AI Agent。
 
     Args:
@@ -655,14 +679,16 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
         agent_filter: Agent 名称过滤器（"All" 或特定名称）。
         force: 是否强制重新配置已存在的 MCP Server。
         restart: 重启策略，None=交互询问，True=自动重启，False=不重启。
+        use_pip: 是否使用 pip 安装模式（直接使用 daofy CLI 命令）。
     """
     separator("Daofy for Delphi 安装脚本")
     info(f"版本: {VERSION}")
 
-    server_script = os.path.join(str(get_script_dir()), "src", "server.py")
-    if not os.path.exists(server_script):
-        error(f"MCP Server 脚本不存在: {server_script}")
-        sys.exit(1)
+    if not use_pip:
+        server_script = os.path.join(str(get_script_dir()), "src", "server.py")
+        if not os.path.exists(server_script):
+            error(f"MCP Server 脚本不存在: {server_script}")
+            sys.exit(1)
 
     agents = detect_agents()
 
@@ -810,34 +836,57 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
     for a in selected:
         cprint(f"  - {a['name']}", GREEN)
 
-    # 先安装 Python 依赖
-    separator("安装 Python 依赖")
-    req_file = os.path.join(str(get_script_dir()), "requirements.txt")
-    if os.path.exists(req_file):
-        info("正在通过 pip 安装依赖 ...")
+    if use_pip:
+        # pip 安装模式：直接安装 daofy-for-delphi 包
+        separator("安装 Daofy for Delphi")
+        mirror = "https://pypi.tuna.tsinghua.edu.cn/simple"
         try:
-            mirror = "https://pypi.tuna.tsinghua.edu.cn/simple"
+            info("正在通过 pip 安装 daofy-for-delphi ...")
             result = subprocess.run(
-                [python_exe, "-m", "pip", "install", "-r", req_file, "-i", mirror],
+                [python_exe, "-m", "pip", "install", "daofy-for-delphi", "-i", mirror],
                 capture_output=True, text=True, timeout=120
             )
             if result.returncode == 0:
-                success("Python 依赖安装完成")
-                for line in result.stdout.strip().splitlines():
-                    if line.strip():
-                        info(f"  {line.strip()}")
+                success("daofy-for-delphi 安装完成")
             else:
                 error(f"pip install 失败 (return code {result.returncode})")
                 for line in result.stderr.strip().splitlines():
                     if line.strip():
                         error(f"  {line.strip()}")
-                error("请手动运行: pip install -r requirements.txt")
+                error("请手动运行: pip install daofy-for-delphi")
         except subprocess.TimeoutExpired:
             error("pip install 超时（>120s）")
         except Exception as e:
-            error(f"安装依赖时出错: {e}")
+            error(f"安装 daofy-for-delphi 时出错: {e}")
     else:
-        warn(f"未找到 requirements.txt: {req_file}")
+        # 源码安装模式：安装 requirements.txt 依赖
+        separator("安装 Python 依赖")
+        req_file = os.path.join(str(get_script_dir()), "requirements.txt")
+        if os.path.exists(req_file):
+            info("正在通过 pip 安装依赖 ...")
+            try:
+                mirror = "https://pypi.tuna.tsinghua.edu.cn/simple"
+                result = subprocess.run(
+                    [python_exe, "-m", "pip", "install", "-r", req_file, "-i", mirror],
+                    capture_output=True, text=True, timeout=120
+                )
+                if result.returncode == 0:
+                    success("Python 依赖安装完成")
+                    for line in result.stdout.strip().splitlines():
+                        if line.strip():
+                            info(f"  {line.strip()}")
+                else:
+                    error(f"pip install 失败 (return code {result.returncode})")
+                    for line in result.stderr.strip().splitlines():
+                        if line.strip():
+                            error(f"  {line.strip()}")
+                    error("请手动运行: pip install -r requirements.txt")
+            except subprocess.TimeoutExpired:
+                error("pip install 超时（>120s）")
+            except Exception as e:
+                error(f"安装依赖时出错: {e}")
+        else:
+            warn(f"未找到 requirements.txt: {req_file}")
 
     separator("配置 MCP Server")
     success_count = 0
@@ -856,7 +905,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             for sn in (MCP_SERVER_NAME, LEGACY_SERVER_NAME):
                 remove_mcp_config(a["config_path"], sn, a["config_type"])
 
-        mcp_cfg = get_mcp_config(python_exe, a["config_type"], project_dir)
+        mcp_cfg = get_mcp_config(python_exe, a["config_type"], project_dir, use_pip=use_pip)
         try:
             add_mcp_config(a["config_path"], MCP_SERVER_NAME, mcp_cfg, a["config_type"])
             success(f"已配置 MCP Server 到: {a['config_path']}")
@@ -1288,6 +1337,8 @@ def main() -> None:
     parser.add_argument("--python", default="", help="Python 解释器路径")
     parser.add_argument("--project-dir", default="",
                         help="项目目录路径（项目级 MCP 配置的 Agent 使用，不传则交互式输入）")
+    parser.add_argument("--pip", action="store_true",
+                        help="使用 pip 安装模式（从 PyPI 安装 daofy-for-delphi）")
     args = parser.parse_args()
 
     # 确定重启策略
@@ -1311,7 +1362,8 @@ def main() -> None:
             error(f"Python 不存在: {python_exe}")
             sys.exit(1)
         do_install(python_exe, project_dir=args.project_dir,
-                   agent_filter=args.agent, force=args.force, restart=restart)
+                   agent_filter=args.agent, force=args.force, restart=restart,
+                   use_pip=args.pip)
 
 
 if __name__ == "__main__":
