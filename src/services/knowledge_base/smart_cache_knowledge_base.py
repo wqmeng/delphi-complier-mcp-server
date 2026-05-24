@@ -14,6 +14,8 @@ import sqlite3
 import re
 import hashlib
 import logging
+import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -220,34 +222,8 @@ class SmartCacheKnowledgeBase:
         return None
     
     @classmethod
-    def _call_daudit_kb(cls, file_path_str: str) -> Optional[Dict]:
-        """调用 daudit.exe --mode=kb 单文件模式
-        
-        Returns:
-            解析结果 dict，或 None（daudit 不可用/解析失败）
-        """
-        daudit = cls._find_daudit()
-        if not daudit:
-            return None
-        
-        import json, subprocess
-        
-        try:
-            result = subprocess.run(
-                [daudit, "--mode=kb", "--input", file_path_str, "--format", "json"],
-                capture_output=True, text=True, timeout=60,
-                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return json.loads(result.stdout)
-        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
-            logger.debug("AST 解析失败 %s: %s", file_path_str, e)
-        
-        return None
-    
-    @classmethod
     def _call_daudit_audit(cls, source_dir: str, rules: str = "P0") -> Optional[Dict]:
-        """调用 daudit.exe --mode=audit 全项目审计
+        """调用 daudit.exe --mode audit 全项目审计
         
         Returns:
             审计报告 dict，或 None
@@ -260,7 +236,7 @@ class SmartCacheKnowledgeBase:
         
         try:
             result = subprocess.run(
-                [daudit, "--mode=audit", "--source-dir", source_dir, "--rules", rules],
+                [daudit, "--mode", "audit", "--source-dir", source_dir, "--rules", rules],
                 capture_output=True, text=True, timeout=300,
                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )
@@ -533,55 +509,340 @@ class SmartCacheKnowledgeBase:
     def _parse_delphi_file_static(file_path_str: str) -> Tuple[str, List[Dict], int, List[str]]:
         """解析 Delphi 源文件（主入口）
         
-        优先级: AST 引擎 (daudit.exe --mode=kb) → 正则 fallback (_regex_fallback)
+        双通道策略：
+          1. 优先 daudit --mode kb（AST 引擎，更准确）
+          2. 失败/不可用时 fallback 到正则解析
         
         Returns:
             (file_path_str, items, line_count, uses_list)
         """
-        # 尝试 AST 引擎解析
-        ast_result = SmartCacheKnowledgeBase._call_daudit_kb(file_path_str)
+        # 通道 1：daudit --mode kb
+        try:
+            result = SmartCacheKnowledgeBase._parse_with_daudit(file_path_str)
+            if result is not None:
+                return result
+        except Exception:
+            logger.debug("daudit 解析异常，走正则 fallback: %s", file_path_str, exc_info=True)
         
-        if ast_result and ast_result.get("status") == "ok":
-            items = []
-            for ent in ast_result.get("entities", []):
-                item = {
-                    'type': ent.get('kind', ''),
-                    'name': ent.get('name', ''),
-                    'line': ent.get('start_line', 0),
-                    'base_class': ent.get('inherits_from'),
-                    'description': ent.get('definition', ''),
-                    # AST 增强字段
-                    'end_line': ent.get('end_line'),
-                    'end_offset': ent.get('end_offset'),
-                    'body_length': ent.get('body_length'),
-                    'code_block': ent.get('code_block', ''),
-                    'signature': ent.get('signature', ''),
-                    'modifiers': json.dumps(ent.get('modifiers', []), ensure_ascii=False),
-                    'visibility': ent.get('visibility', 'published'),
-                    'type_refs': json.dumps(ent.get('type_refs', []), ensure_ascii=False),
-                    'member_count': ent.get('member_count'),
-                    'inheritance_chain': json.dumps(ent.get('inheritance_chain', []), ensure_ascii=False),
-                    'generics': json.dumps(ent.get('generics', {}), ensure_ascii=False),
-                    'params': json.dumps(ent.get('params', []), ensure_ascii=False),
-                    'return_type': ent.get('return_type', ''),
-                    'calls': json.dumps(ent.get('calls', []), ensure_ascii=False),
-                    'source': 'ast',
-                }
-                items.append(item)
-            
-            uses_data = ast_result.get('uses', {})
-            uses_list = uses_data.get('interface', []) + uses_data.get('implementation', [])
-            total_lines = ast_result.get('file_stats', {}).get('total_lines', 0)
-            
-            if items:
-                logger.debug(f"AST 解析成功: {file_path_str} ({len(items)} 实体)")
-            
-            return (file_path_str, items, total_lines, uses_list)
-        
-        # AST 不可用或失败 → fallback 到正则
-        if SmartCacheKnowledgeBase._find_daudit():
-            logger.debug(f"AST 解析失败，fallback 到正则: {file_path_str}")
+        # 通道 2：正则 fallback
         return SmartCacheKnowledgeBase._regex_fallback(file_path_str)
+    
+    @staticmethod
+    def _parse_with_daudit(file_path_str: str) -> Optional[Tuple[str, List[Dict], int, List[str]]]:
+        """使用 daudit --mode kb 解析 Delphi 源文件
+        
+        Returns:
+            (file_path_str, items, line_count, uses_list) 或 None（失败时）
+        """
+        daudit = SmartCacheKnowledgeBase._find_daudit()
+        if not daudit:
+            return None
+        
+        cmd = [daudit, '--mode', 'kb', '--format', 'json', file_path_str]
+        
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tmp:
+                tmp_path = tmp.name
+            
+            with open(tmp_path, 'wb') as f:
+                result = subprocess.run(
+                    cmd, stdout=f, stderr=subprocess.PIPE, timeout=120,
+                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                )
+            
+            if result.returncode != 0 or not os.path.getsize(tmp_path):
+                return None
+            
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+            
+            finfo = payload.get('data', {}).get('files', [{}])[0]
+            
+            # daudit 自身解析失败 -> fallback
+            if finfo.get('status') != 'ok':
+                return None
+            
+            entities = finfo.get('entities', [])
+            uses_data = finfo.get('uses', {})
+            uses_list = []
+            uses_list.extend(uses_data.get('interface', []))
+            uses_list.extend(uses_data.get('implementation', []))
+            
+            # 行数：从文件统计
+            try:
+                with open(file_path_str, 'r', encoding='utf-8', errors='ignore') as f:
+                    line_count = f.read().count('\n') + 1
+            except Exception:
+                line_count = 0
+            
+            items = []
+            for ent in entities:
+                kind = ent.get('kind', '')
+                name = ent.get('name', '')
+                start_line = ent.get('start_line', 0)
+                parent = ent.get('inherits_from') or ent.get('parent_scope')
+                
+                # 构建 description（与正则版本格式保持一致）
+                desc = ''
+                if kind == 'TC':
+                    p = ent.get('inherits_from')
+                    desc = 'Class %s inherits from %s' % (name, p) if p else 'Class %s' % name
+                elif kind == 'TR':
+                    desc = 'Record %s' % name
+                elif kind == 'TI':
+                    p = ent.get('inherits_from')
+                    desc = 'Interface %s extends %s' % (name, p) if p else 'Interface %s' % name
+                elif kind == 'TH':
+                    p = ent.get('parent_scope')
+                    desc = 'Helper %s for %s' % (name, p) if p else 'Helper %s' % name
+                elif kind == 'TE':
+                    desc = 'Enum %s' % name
+                elif kind == 'TS':
+                    desc = 'Set %s' % name
+                elif kind in ('FF', 'FP'):
+                    sig = ent.get('signature', '')
+                    desc = sig if sig else ('Function %s' % name if kind == 'FF' else 'Procedure %s' % name)
+                elif kind == 'CC':
+                    val = ent.get('value')
+                    desc = 'Const %s = %s' % (name, val) if val is not None else 'Const %s' % name
+                elif kind == 'CR':
+                    val = ent.get('value', '')
+                    desc = 'ResourceString %s = %s' % (name, val) if val else 'ResourceString %s' % name
+                elif kind == 'TY':
+                    desc = 'Type %s' % name
+                elif kind == 'MF':
+                    desc = 'Field %s' % name
+                elif kind == 'MP':
+                    desc = 'Property %s' % name
+                elif kind == 'GV':
+                    desc = 'Var %s' % name
+                elif kind == 'AT':
+                    desc = 'Array %s' % name
+                elif kind == 'PT':
+                    desc = 'Pointer %s' % name
+                elif kind == 'MM':
+                    desc = 'Method Pointer %s' % name
+                else:
+                    desc = '%s %s' % (kind, name)
+                
+                items.append({
+                    'type': kind,
+                    'name': name,
+                    'line': start_line,
+                    'base_class': parent,
+                    'description': desc,
+                })
+            
+            return (file_path_str, items, line_count, uses_list)
+        
+        except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+            logger.debug("daudit 调用失败 %s: %s", file_path_str, e)
+            return None
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+    
+    @staticmethod
+    def _parse_daudit_batch(file_paths: List[str]) -> Optional[List[Tuple[str, List[Dict], int, List[str]]]]:
+        """使用 daudit --mode kb --batch-output-dir 批量解析
+        
+        daudit 内部多线程处理全部文件，输出每个文件的独立 JSON。
+        对解析失败的文件使用 regex fallback。
+        
+        Returns:
+            [(file_path, items, line_count, uses_list), ...] 或 None（daudit 不可用）
+        """
+        daudit = SmartCacheKnowledgeBase._find_daudit()
+        if not daudit:
+            return None
+        
+        if not file_paths:
+            return []
+        
+        # 1. 写 batch-input JSON
+        batch_fd, batch_path = tempfile.mkstemp(suffix='_daofy_batch.json', prefix='daudit_')
+        os.close(batch_fd)
+        try:
+            with open(batch_path, 'w', encoding='utf-8') as f:
+                json.dump({'files': file_paths, 'options': {}}, f)
+            
+            # 2. 创建输出目录
+            out_dir = tempfile.mkdtemp(prefix='daudit_out_')
+            
+            # 3. 调用 daudit
+            cmd = [daudit, '--mode', 'kb', '--batch-input', batch_path,
+                   '--batch-output-dir', out_dir]
+            logger.info("  daudit batch: %d 个文件, 输出目录: %s" % (len(file_paths), out_dir))
+            
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=600,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            )
+            
+            if result.returncode not in (0, 1, 2):
+                logger.warning("daudit batch 退出码 %d: %s", result.returncode, result.stderr[:200])
+            
+            # 4. 读 _summary.json
+            summary_path = os.path.join(out_dir, '_summary.json')
+            mapping = []
+            if os.path.isfile(summary_path):
+                with open(summary_path, 'r', encoding='utf-8-sig') as f:
+                    summary = json.load(f)
+                mapping = summary.get('mapping', [])
+            else:
+                # _summary.json 不存在（daudit 可能 OOM），手动收集
+                for fname in sorted(os.listdir(out_dir)):
+                    if fname.endswith('.json') and fname != '_summary.json':
+                        fpath = os.path.join(out_dir, fname)
+                        try:
+                            with open(fpath, 'r', encoding='utf-8-sig') as f:
+                                data = json.load(f)
+                            src = data.get('file', '')
+                            if src:
+                                mapping.append({'src': src, 'out': fname})
+                        except Exception:
+                            pass
+            
+            # 5. 处理每个结果文件
+            src_to_path = {}  # source_path -> output_json_path
+            for entry in mapping:
+                src_path = entry['src']
+                if os.path.isabs(src_path) or src_path.startswith(('C:\\', 'D:\\')):
+                    # 是完整路径
+                    pass
+                # 匹配 file_paths 中的完整路径
+                for fp in file_paths:
+                    if fp.endswith(src_path) or fp == src_path:
+                        src_to_path[fp] = os.path.join(out_dir, entry['out'])
+                        break
+                else:
+                    src_to_path[src_path] = os.path.join(out_dir, entry['out'])
+            
+            # 6. 逐文件解析
+            results = []
+            failed = []
+            for fp in file_paths:
+                out_json = src_to_path.get(fp)
+                if not out_json or not os.path.isfile(out_json):
+                    failed.append(fp)
+                    continue
+                
+                try:
+                    with open(out_json, 'r', encoding='utf-8-sig') as f:
+                        file_data = json.load(f)
+                except Exception:
+                    failed.append(fp)
+                    continue
+                
+                if file_data.get('status') != 'ok':
+                    failed.append(fp)
+                    continue
+                
+                entities = file_data.get('entities', [])
+                uses_data = file_data.get('uses', {})
+                uses_list = []
+                uses_list.extend(uses_data.get('interface', []))
+                uses_list.extend(uses_data.get('implementation', []))
+                
+                # 行数
+                line_count = 0
+                try:
+                    with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
+                        line_count = f.read().count('\n') + 1
+                except Exception:
+                    pass
+                
+                items = []
+                for ent in entities:
+                    kind = ent.get('kind', '')
+                    name = ent.get('name', '')
+                    start_line = ent.get('start_line', 0)
+                    parent = ent.get('inherits_from') or ent.get('parent_scope')
+                    
+                    # 构建 description
+                    desc = ''
+                    if kind == 'TC':
+                        p = ent.get('inherits_from')
+                        desc = 'Class %s inherits from %s' % (name, p) if p else 'Class %s' % name
+                    elif kind == 'TR':
+                        desc = 'Record %s' % name
+                    elif kind == 'TI':
+                        p = ent.get('inherits_from')
+                        desc = 'Interface %s extends %s' % (name, p) if p else 'Interface %s' % name
+                    elif kind == 'TH':
+                        p = ent.get('parent_scope')
+                        desc = 'Helper %s for %s' % (name, p) if p else 'Helper %s' % name
+                    elif kind == 'TE':
+                        desc = 'Enum %s' % name
+                    elif kind == 'TS':
+                        desc = 'Set %s' % name
+                    elif kind in ('FF', 'FP'):
+                        sig = ent.get('signature', '')
+                        desc = sig if sig else ('Function %s' % name if kind == 'FF' else 'Procedure %s' % name)
+                    elif kind == 'CC':
+                        val = ent.get('value')
+                        desc = 'Const %s = %s' % (name, val) if val is not None else 'Const %s' % name
+                    elif kind == 'CR':
+                        val = ent.get('value', '')
+                        desc = 'ResourceString %s = %s' % (name, val) if val else 'ResourceString %s' % name
+                    elif kind == 'TY':
+                        desc = 'Type %s' % name
+                    elif kind == 'MF':
+                        desc = 'Field %s' % name
+                    elif kind == 'MP':
+                        desc = 'Property %s' % name
+                    elif kind == 'GV':
+                        desc = 'Var %s' % name
+                    elif kind == 'AT':
+                        desc = 'Array %s' % name
+                    elif kind == 'PT':
+                        desc = 'Pointer %s' % name
+                    elif kind == 'MM':
+                        desc = 'Method Pointer %s' % name
+                    else:
+                        desc = '%s %s' % (kind, name)
+                    
+                    items.append({
+                        'type': kind,
+                        'name': name,
+                        'line': start_line,
+                        'base_class': parent,
+                        'description': desc,
+                    })
+                
+                results.append((fp, items, line_count, uses_list))
+            
+            # 7. 失败文件用 regex fallback
+            if failed:
+                logger.info("  daudit %d 个文件失败，正则补扫..." % len(failed))
+                for fp in failed:
+                    try:
+                        fr = SmartCacheKnowledgeBase._regex_fallback(fp)
+                        results.append(fr)
+                    except Exception:
+                        results.append((fp, [], 0, []))
+            
+            logger.info("  daudit batch 完成: %d 成功, %d 失败" % (len(results) - len(failed), len(failed)))
+            return results
+        
+        except (subprocess.TimeoutExpired, OSError) as e:
+            logger.error("daudit batch 调用失败: %s", e)
+            return None
+        finally:
+            # 清理临时文件
+            try:
+                os.unlink(batch_path)
+            except OSError:
+                pass
+            try:
+                import shutil
+                shutil.rmtree(out_dir, ignore_errors=True)
+            except Exception:
+                pass
     
     def _rebuild_init(self, source_paths: List[Path], incremental: bool = False, build_start_time: float = None):
         """重建初始化阶段
@@ -731,22 +992,30 @@ class SmartCacheKnowledgeBase:
             file_path_to_id = {row[1]: row[0] for row in cursor.fetchall()}
             
             # 解析文件
-            logger.info("  并行解析文件...")
+            logger.info("  解析 %d 个文件..." % len(all_files_to_parse))
             
             if self.progress_callback:
                 self.progress_callback(10, "阶段1/2: 解析文件...")
             
-            n_workers = max(2, cpu_count() - 1)
-            file_chunksize = max(500, len(all_files_to_parse) // n_workers)
+            # 通道1: daudit batch 模式（内部多线程，一次处理全部）
+            parsed_results = None
+            if SmartCacheKnowledgeBase._find_daudit():
+                logger.info("  使用 daudit --mode kb batch-output-dir 解析...")
+                parsed_results = SmartCacheKnowledgeBase._parse_daudit_batch(
+                    all_files_to_parse)
             
-            logger.info(f"  使用 {n_workers} 进程并行解析 (chunksize={file_chunksize})...")
-            
-            with ProcessPoolExecutor(max_workers=n_workers) as executor:
-                parsed_results = list(executor.map(
-                    self._parse_delphi_file_static,
-                    all_files_to_parse,
-                    chunksize=file_chunksize
-                ))
+            # 通道2: daudit 不可用或失败 → 多进程正则
+            if parsed_results is None:
+                n_workers = max(2, cpu_count() - 1)
+                file_chunksize = max(500, len(all_files_to_parse) // n_workers)
+                logger.info("  使用 %d 进程正则解析 (chunksize=%d)..." % (n_workers, file_chunksize))
+                
+                with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                    parsed_results = list(executor.map(
+                        self._parse_delphi_file_static,
+                        all_files_to_parse,
+                        chunksize=file_chunksize
+                    ))
             
             if self.progress_callback:
                 self.progress_callback(55, f"解析完成: {len(all_files_to_parse)} 个文件，正在入库...")

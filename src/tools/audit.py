@@ -16,7 +16,9 @@ Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
 
 import json
 import logging
+import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -96,21 +98,25 @@ def _run_audit(paths: List[str], recursive: bool = False) -> Optional[Dict]:
     return None
 
 
-def _run_ast(source_dir: str, file_path: Optional[str] = None,
-             compact: bool = False) -> Optional[Dict]:
-    """运行 daudit --mode ast 进行 AST 语法解析
+def _run_ast(source_dir: str, file_path: Optional[str] = None) -> Optional[Dict]:
+    """运行 daudit --mode kb 进行 AST 实体提取
 
-    CLI: daudit --mode ast --format json [--compact] <file(s)>
-    注意 --mode ast 不支持 --recursive，需显式传文件列表。
+    CLI: daudit --mode kb --format json <file(s)>
+
+    kb 模式输出实体骨架信息（不含 code_block 等大字段），
+    使用临时文件接收 stdout 避免管道缓冲区限制。
 
     Args:
         source_dir: 源码目录（用于查找 .pas 文件）
         file_path: 单文件路径（优先于 source_dir）
-        compact: 是否使用 --compact 压缩输出
 
     Returns:
         data 段 dict ({files: [...]})，或 None
     """
+    daudit = _find_daudit()
+    if not daudit:
+        return None
+
     # 收集待解析文件
     pas_files: List[str] = []
     if file_path:
@@ -125,14 +131,43 @@ def _run_ast(source_dir: str, file_path: Optional[str] = None,
     if not pas_files:
         return None
 
-    cmd = ["--mode", "ast"]
-    if compact:
-        cmd.append("--compact")
+    cmd = [daudit, "--mode", "kb", "--format", "json"]
     cmd.extend(pas_files)
 
-    payload = _run_daudit(cmd)
-    if payload and payload.get("status") == "ok":
-        return payload.get("data")
+    # 使用临时文件接收 stdout（避免 pipe 缓冲区限制）
+    tmp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as tmp:
+            tmp_path = tmp.name
+
+        with open(tmp_path, 'wb') as f:
+            result = subprocess.run(
+                cmd, stdout=f, stderr=subprocess.PIPE,
+                timeout=300,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+            )
+
+        if result.returncode == 0 and os.path.getsize(tmp_path) > 0:
+            with open(tmp_path, 'r', encoding='utf-8') as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                # 信封格式: {"mode":"kb","status":"ok","data":{...},"summary":{...}}
+                data = payload.get("data") if "data" in payload else payload
+                logger.info("KB 解析完成: %d 个文件", len(pas_files))
+                return data
+
+        stderr = result.stderr.strip()[:200] if result.stderr else ""
+        logger.warning("KB 解析异常 (exit=%d): %s", result.returncode, stderr)
+
+    except (subprocess.TimeoutExpired, OSError, json.JSONDecodeError) as e:
+        logger.error("KB 解析调用失败: %s", e)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
     return None
 
 
@@ -522,10 +557,10 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
     """执行 Delphi 代码审计 / AST 语法解析
 
     参数:
-        source_dir: 源码目录路径（审计/ast 模式必需之一）
-        file_path:  单文件路径（ast 模式可选，优先于 source_dir）
-        mode:       运行模式，默认 "audit"。可选 "ast"（AST 语法解析）
-        severity:   最低严重级别，默认 "suggestion"（仅 audit 模式）
+        source_dir:   源码目录路径（审计/ast 模式必需之一）
+        file_path:    单文件路径（ast 模式可选，优先于 source_dir）
+        mode:         运行模式，默认 "audit"。可选 "ast"（AST 语法解析）
+        severity:     最低严重级别，默认 "suggestion"（仅 audit 模式）
         output_format: 输出格式，默认 "report"。可选 "json"
 
     返回:

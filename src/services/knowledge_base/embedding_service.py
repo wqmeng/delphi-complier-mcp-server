@@ -12,17 +12,25 @@ Embedding 服务 —— 为知识库提供真语义搜索
 import logging
 import os
 import site
-import numpy  # noqa: F401 - used in type annotations and via np alias
-import numpy as np
-from typing import List, Optional
-
-# 确保用户 site-packages 在路径中（pip install 默认安装到用户目录）
-try:
-    site.addsitedir(site.USER_SITE)
-except Exception as e:
-    logger.debug("忽略非致命异常: %s", str(e))
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# numpy 是可选依赖 —— 未安装时不影响知识库基本功能，仅语义搜索降级为反转索引
+np: Any = None  # type: ignore
+numpy: Any = None  # type: ignore
+try:
+    import numpy  # noqa: F401
+    import numpy as np
+except ImportError:
+    pass
+
+# 确保用户 site-packages 在路径中（pip install 默认安装到用户目录）
+if site.USER_SITE is not None:
+    try:
+        site.addsitedir(site.USER_SITE)
+    except Exception:
+        logger.debug("忽略非致命异常: site.addsitedir")
 
 # 全局单例
 _model = None
@@ -31,9 +39,10 @@ _model_name = "intfloat/multilingual-e5-small"
 
 def is_available() -> bool:
     """检查 embedding 依赖是否可用"""
+    if np is None:
+        return False
     try:
         import sentence_transformers  # noqa: F401
-        import numpy  # noqa: F401
         return True
     except ImportError:
         return False
@@ -113,7 +122,7 @@ def load_model():
     return None
 
 
-def encode_texts(texts: List[str], prefix: str = "query") -> Optional["numpy.ndarray"]:
+def encode_texts(texts: List[str], prefix: str = "query") -> Optional[Any]:
     """
     对文本列表进行编码，返回归一化的 embedding 数组
 
@@ -130,7 +139,6 @@ def encode_texts(texts: List[str], prefix: str = "query") -> Optional["numpy.nda
         return None
 
     try:
-        import numpy as np
         prefixed = [f"{prefix}: {t}" for t in texts]
         # normalize_embeddings=True 确保输出已归一化，dot = cosine
         embeddings = model.encode(prefixed, normalize_embeddings=True, show_progress_bar=False)
@@ -140,7 +148,7 @@ def encode_texts(texts: List[str], prefix: str = "query") -> Optional["numpy.nda
         return None
 
 
-def encode_single(text: str, prefix: str = "query") -> Optional["numpy.ndarray"]:
+def encode_single(text: str, prefix: str = "query") -> Optional[Any]:
     """编码单个文本"""
     result = encode_texts([text], prefix=prefix)
     if result is not None:
@@ -148,7 +156,7 @@ def encode_single(text: str, prefix: str = "query") -> Optional["numpy.ndarray"]
     return None
 
 
-def cosine_similarity(query_emb: "numpy.ndarray", db_embs: "numpy.ndarray") -> "numpy.ndarray":
+def cosine_similarity(query_emb: Any, db_embs: Any) -> Optional[Any]:
     """
     计算 query 与一批向量的余弦相似度
 
@@ -157,14 +165,18 @@ def cosine_similarity(query_emb: "numpy.ndarray", db_embs: "numpy.ndarray") -> "
         db_embs: (n, dim) 归一化向量矩阵
 
     Returns:
-        (n,) 相似度分数
+        (n,) 相似度分数，numpy 不可用时返回 None
     """
+    if np is None:
+        return None
     # 已归一化 → dot = cosine
     return np.dot(db_embs, query_emb)
 
 
-def blob_to_vector(blob: bytes) -> Optional["numpy.ndarray"]:
+def blob_to_vector(blob: bytes) -> Optional[Any]:
     """SQLite BLOB → numpy 向量"""
+    if np is None:
+        return None
     try:
         return np.frombuffer(blob, dtype=np.float32)
     except Exception:
@@ -183,7 +195,8 @@ def batch_encode_and_store(cursor, rows, prefix: str = "passage") -> int:
     Returns:
         成功编码并写入的数量
     """
-    import numpy as np
+    if np is None:
+        return 0
 
     if not rows:
         return 0
