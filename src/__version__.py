@@ -3,14 +3,14 @@
 
 版权所有 (C) 吉林省左右软件开发有限公司
 Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
-Update & Mod By Crystalxp (黑夜杀手 QQ:281309196)
+致谢: 感谢 Crystalxp (黑夜杀手 QQ:281309196) 的代码贡献，已合并入项目
 
-版本号: 2026.05.13
-发布日期: 2026-05-13
+版本号: 2026.05.23
+发布日期: 2026-05-24
 """
 
-__version__ = "2026.05.13"
-__release_date__ = "2026-05-13"
+__version__ = "2026.05.23"
+__release_date__ = "2026-05-24"
 __author__ = "吉林省左右软件开发有限公司"
 __copyright__ = "Copyright (C) 2026 吉林省左右软件开发有限公司 / Equilibrium Software Development Co., Ltd, Jilin"
 __license__ = "MIT"
