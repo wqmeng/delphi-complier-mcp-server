@@ -346,7 +346,8 @@ async def run_server():
                         "runtime_library": {"type": "string", "default": "static", "enum": ["static", "dynamic"], "description": "运行时库链接方式: static=静态链接, dynamic=动态链接"},
                         "timeout": {"type": "integer", "default": 600, "description": "编译超时秒数（默认600秒，即10分钟）"},
                         "auto_install": {"type": "boolean", "default": True, "description": "设计期包是否自动安装到IDE（仅.dpk有效）"},
-                        "dry_run": {"type": "boolean", "default": False, "description": "true=仅显示编译参数不实际编译（预览模式）"}
+                        "dry_run": {"type": "boolean", "default": False, "description": "true=仅显示编译参数不实际编译（预览模式）"},
+                        "run_verify": {"type": "boolean", "default": False, "description": "编译后启动 3 秒验证程序是否崩溃（自动结束进程）"}
                     },
                     "required": ["project_path"]
                 }
@@ -647,27 +648,28 @@ async def run_server():
             # ===== 代码审计工具（AST 引擎）⭐⭐ =====
             Tool(
                 name="run_audit",
-                description="【优先级 ⭐⭐】代码审计 / AST 语法解析 — 使用 AST 引擎执行 Delphi 源码静态分析\n"
+                description="【优先级 ⭐⭐】代码审计 / AST 语法解析 / Runtime 注册检查 — 使用 AST 引擎执行 Delphi 源码静态分析\n"
                             "【触发词】审计代码、审查代码、代码审核、review code、audit、安全检查、\n"
                             "           漏洞扫描、安全隐患、security review、性能分析、\n"
-                            "           语法解析、AST解析、解析源码\n"
-                            "支持两种模式：\n"
+                            "           语法解析、AST解析、解析源码、运行时检查、运行时注册\n"
+                            "支持三种模式：\n"
                             '  mode="audit"（默认）— 运行 50+ 条静态分析规则，审计代码质量\n'
                             '  mode="ast"        — AST 语法解析，输出实体结构信息\n'
-                            "自动检测项目目录下的 daudit.exe。不存在时自动降级为引导提示。\n"
+                            '  mode="runtime"    — 运行时注册检查，检测 uses 中是否遗漏必需单元（如 FireDAC.DApt）\n'
+                            "audit/ast 模式自动检测项目目录下的 daudit.exe；runtime 模式无需 daudit。\n"
                             "【协作链】run_audit → AI 解读报告 → 生成修复建议\n"
                             "【示例】\n"
                             '   run_audit(source_dir="C:\\\\Project\\\\src")                     # 默认 P0 审计\n'
                             '   run_audit(source_dir=".", rules="P0,P1")                      # 全部基础规则\n'
                             '   run_audit(mode="ast", source_dir="src")                        # AST 语法解析（目录）\n'
                             '   run_audit(mode="ast", file_path="Unit1.pas")                   # AST 语法解析（单文件）\n'
-                            '   run_audit(mode="ast", source_dir="src", output_format="json")  # AST 输出 JSON',
+                            '   run_audit(mode="runtime", source_dir="src")                    # 运行时注册检查',
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "source_dir": {"type": "string", "description": "源码目录路径（audit 模式必需；ast 模式可选）"},
                         "file_path": {"type": "string", "description": "单文件路径（ast 模式可选，优先于 source_dir）"},
-                        "mode": {"type": "string", "enum": ["audit", "ast"], "default": "audit", "description": "运行模式: audit=代码审计（默认）, ast=AST 语法解析"},
+                        "mode": {"type": "string", "enum": ["audit", "ast", "runtime"], "default": "audit", "description": "运行模式: audit=代码审计（默认）, ast=AST 语法解析, runtime=运行时注册检查"},
                         "rules": {"type": "string", "default": "P0", "description": "规则集: P0 / P0,P1 / 规则ID列表如 C001,R001（仅 audit 模式）"},
                         "severity": {"type": "string", "enum": ["suggestion", "warning", "critical"], "default": "suggestion", "description": "最低严重级别（仅 audit 模式）"},
                         "output_format": {"type": "string", "enum": ["report", "json"], "default": "report", "description": "输出格式: report=Markdown, json=原始JSON"},
@@ -755,8 +757,9 @@ async def run_server():
                             '   dproj_tool(action="info", project_path="MyApp.dproj")  # "查看项目配置"\n'
                             '   dproj_tool(action="set", project_path="MyApp.dproj", property_name="DCC_Define", value="DEBUG;TEST", config="Debug")  # "设置编译符号"\n'
                             '   dproj_tool(action="add_config", config_name="Staging", base_config="Debug")  # "添加Staging配置"\n'
-                            '   dproj_tool(action="add_source", project_path="MyApp.dproj", source_file="Unit1.pas")  # "添加源文件"\n'
-                            '   dproj_tool(action="remove_source", project_path="MyApp.dproj", source_file="OldUnit.pas")  # "删除源文件"',
+                             '   dproj_tool(action="add_source", project_path="MyApp.dproj", source_file="Unit1.pas")  # "添加源文件"\n'
+                             '   dproj_tool(action="create", project_path="App.dproj", main_source="App.dpr", form_units=["Unit1","Unit2"])  # "创建项目+Form桩代码"\n'
+                             '   dproj_tool(action="create", project_path="App.dproj", main_source="App.dpr", sources=["DataModule.pas"], form_units=["Unit1"])  # "创建项目+指定sources+Form桩代码"',
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -771,6 +774,7 @@ async def run_server():
                         "namespace": {"type": "string", "description": "[create] 命名空间列表（分号分隔）"},
                         "configs": {"type": "array", "items": {"type": "string"}, "description": "[create] 编译配置列表，默认 [\"Debug\", \"Release\"]"},
                         "sources": {"type": "array", "items": {"type": "string"}, "description": "[create] 初始源文件列表（DCCReference）"},
+                        "form_units": {"type": "array", "items": {"type": "string"}, "description": "[create] 同时生成 Form 单元桩代码（.pas + 空 Form，VCL→.dfm，FMX→.fmx），框架由 framework_type 决定，例如 [\"Unit1\", \"Main\"] → Form.Unit1.pas + Form.Main.pas，类 TForm1 + TMainForm，变量 Form1 + MainForm"},
                         # set 参数
                         "property_name": {"type": "string", "description": "[set] 属性名，如 DCC_Define、DCC_Optimize"},
                         "value": {"type": "string", "description": "[set] 属性值"},
@@ -1003,7 +1007,7 @@ async def run_server():
             project_path=arguments.get("project_path"),
             main_source=arguments.get("main_source"),
             project_guid=arguments.get("project_guid"),
-            project_version=arguments.get("project_version"),
+            project_version=arguments.get("project_version"),  # None → _handle_create 自动检测
             framework_type=arguments.get("framework_type", "VCL"),
             unit_search_paths=arguments.get("unit_search_paths"),
             namespace=arguments.get("namespace"),
@@ -1020,6 +1024,7 @@ async def run_server():
             debug_info=arguments.get("debug_info"),
             source_file=arguments.get("source_file"),
             main_source_flag=arguments.get("main_source_flag", False),
+            form_units=arguments.get("form_units"),
         )
 
     _TOOL_HANDLERS = {
