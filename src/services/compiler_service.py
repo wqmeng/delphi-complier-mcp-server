@@ -21,6 +21,7 @@ from ..models.compile_history import CompileHistoryEntry
 from .args_generator import ArgsGenerator
 from .process_manager import ProcessManager
 from .config_manager import ConfigManager
+from ..utils import get_console_encoding
 from ..utils.parser import OutputParser
 from ..utils.validator import Validator
 from ..utils.dproj_parser import DprojParser
@@ -362,8 +363,10 @@ class CompilerService:
         
         try:
             logger.warning("编译事件来自 .dproj 文件配置，请确保项目文件可信")
+            # 使用控制台编码（可能为 UTF-8 或 GBK），确保 cmd.exe 正确读取中文路径
+            batch_encoding = get_console_encoding()
             with tempfile.NamedTemporaryFile(
-                mode='w', suffix='.bat', delete=False, encoding='utf-8'
+                mode='w', suffix='.bat', delete=False, encoding=batch_encoding
             ) as bat_f:
                 bat_f.write('@echo off\n')
                 bat_f.write(event_cmd + '\n')
@@ -374,7 +377,7 @@ class CompilerService:
                     ['cmd.exe', '/c', bat_path],
                     cwd=project_dir,
                     capture_output=True,
-                    text=True,
+                    encoding=get_console_encoding(),
                     timeout=timeout,
                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0)
                 )
@@ -868,6 +871,7 @@ class CompilerService:
             # 4. 提取并执行编译事件
             platform = "Win64" if request.options.target_platform == TargetPlatform.WIN64 else "Win32"
             config = request.options.build_configuration or "Debug"
+            
             project_dir = str(Path(dproj_path).parent)
             project_path = str(Path(dproj_path).parent)
             project_filename = Path(dproj_path).name
@@ -997,19 +1001,20 @@ class CompilerService:
             
             # 6. 创建临时批处理文件来设置环境并执行 MSBuild
             import tempfile
-            if '"' in rsvars_path:
-                error_msg = "rsvars.bat 路径包含非法字符，已拒绝: %s" % rsvars_path
-                logger.error(error_msg)
-                return CompileResult(
-                    status=CompileStatus.FAILED,
-                    error_code="INVALID_PATH",
-                    error_message=error_msg,
-                    duration=int((time.time() - start_time) * 1000)
-                )
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False, encoding='utf-8') as f:
+            # 将参数中的路径用引号包裹（处理空格）
+            quoted_args = []
+            for arg in args:
+                if ' ' in arg:
+                    quoted_args.append('"%s"' % arg)
+                else:
+                    quoted_args.append(arg)
+            # 使用控制台编码（可能为 UTF-8 或 GBK），确保 cmd.exe 正确读取中文字符
+            batch_encoding = get_console_encoding()
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False,
+                                             encoding=batch_encoding) as f:
                 f.write('@echo off\n')
                 f.write('call "%s"\n' % rsvars_path)
-                f.write('msbuild %s\n' % ' '.join(args))
+                f.write('msbuild %s\n' % ' '.join(quoted_args))
                 batch_file = f.name
             
             logger.info("创建批处理文件: %s", batch_file)
@@ -1412,9 +1417,16 @@ class CompilerService:
 
     def _extract_output_file(self, output: str, output_path: Optional[str]) -> Optional[str]:
         """从输出中提取输出文件路径"""
-        # 简单实现: 如果指定了输出路径,返回该路径
-        # 实际应该从编译器输出中解析
-        return output_path
+        if output_path:
+            return output_path
+        # 尝试从 dcc32 输出行解析: "Output: C:\path\to\output.exe"
+        for line in output.splitlines():
+            if 'Output:' in line and '.exe' in line:
+                idx = line.index('Output:') + 7
+                path = line[idx:].strip().rstrip('.')
+                if os.path.exists(path):
+                    return path
+        return None
 
     def _save_history(self, project_path: str, status: str, duration: int, error_message: Optional[str]):
         """保存编译历史"""

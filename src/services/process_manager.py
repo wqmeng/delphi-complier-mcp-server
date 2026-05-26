@@ -7,6 +7,7 @@
 import asyncio
 import os
 from typing import Callable, Tuple, Optional
+from ..utils import get_console_encoding
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -14,6 +15,11 @@ logger = get_logger(__name__)
 
 class ProcessManager:
     """编译器进程管理器"""
+
+    def __init__(self):
+        """初始化进程管理器，检测控制台编码"""
+        self._encoding = get_console_encoding()
+        logger.debug(f"进程管理器初始化，控制台编码: {self._encoding}")
 
     def _get_delphi_env(self, compiler_path: str) -> dict:
         """
@@ -93,8 +99,8 @@ class ProcessManager:
                 )
 
                 return_code = process.returncode
-                stdout_str = stdout.decode('utf-8', errors='ignore')
-                stderr_str = stderr.decode('utf-8', errors='ignore')
+                stdout_str = stdout.decode(self._encoding, errors='ignore')
+                stderr_str = stderr.decode(self._encoding, errors='ignore')
 
                 logger.info(f"进程执行完成,返回码: {return_code}")
                 logger.debug(f"stdout 长度: {len(stdout_str)}, stderr 长度: {len(stderr_str)}")
@@ -173,7 +179,7 @@ class ProcessManager:
                     line = await stream.readline()
                     if not line:
                         break
-                    line_str = line.decode('utf-8', errors='ignore').rstrip()
+                    line_str = line.decode(self._encoding, errors='ignore').rstrip()
                     lines_list.append(line_str)
                     if callback:
                         callback(line_str)
