@@ -1,0 +1,33 @@
+{
+  "description": "运行时注册检查规则表 — 检测 uses 中是否缺少必需单元",
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "FDD001",
+      "name": "FireDAC DB-aware controls need FireDAC.DApt",
+      "severity": "error",
+      "triggers": ["TFDQuery", "TFDTable", "TFDMemTable", "TFDStoredProc", "TFDUpdateSQL"],
+      "dependencies": ["TDBEdit", "TDBGrid", "TDBMemo", "TDBNavigator", "TDBComboBox", "TDBLookupComboBox", "TDBLookupListBox", "TDBImage", "TDBListBox", "TDBCheckBox", "TDBRadioGroup", "TDBRichEdit", "TDBText", "TDBLabeledEdit"],
+      "require_unit": "FireDAC.DApt",
+      "message": "使用 FireDAC ({triggers}) + DB-aware 控件时需要 uses FireDAC.DApt，否则运行时报 'Object factory missing'"
+    },
+    {
+      "id": "TEE001",
+      "name": "TeeChart GDIPlus renderer may be needed",
+      "severity": "warning",
+      "triggers": ["TChart", "TDBChart", "TLineSeries", "TBarSeries", "TPieSeries", "TPointSeries", "TAreaSeries", "TFastLineSeries"],
+      "dependencies": [],
+      "require_unit": "VCLTee.TeeGDIPlus",
+      "message": "使用 TeeChart ({triggers}) 时建议添加 VCLTee.TeeGDIPlus 以获得 GDI+ 渲染支持，否则可能出现空白图表"
+    },
+    {
+      "id": "TEE002",
+      "name": "TeeChart extra series registration",
+      "severity": "warning",
+      "triggers": ["TChart", "TDBChart"],
+      "dependencies": ["TLineSeries", "TBarSeries", "TPieSeries", "TPointSeries"],
+      "require_unit": "VCLTee.TeeProcs",
+      "message": "使用 TeeChart 扩展系列类型时建议添加 VCLTee.TeeProcs 到 uses"
+    }
+  ]
+}

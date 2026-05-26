@@ -553,13 +553,181 @@ def _build_guide() -> str:
     )
 
 
+# ═══════════════════════════════════════════════════════════
+# Runtime 注册检查（模式 "runtime"）
+# ═══════════════════════════════════════════════════════════
+
+_RULES_PATH = Path(__file__).parent.parent / "rules" / "runtime_registry.json"
+
+
+def _load_runtime_rules() -> List[Dict]:
+    """加载运行时注册检查规则"""
+    if not _RULES_PATH.exists():
+        return []
+    try:
+        with open(_RULES_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("rules", [])
+    except Exception as e:
+        logger.warning("加载运行时规则失败: %s", e)
+        return []
+
+
+def _find_pas_dfm_files(source_dir: str) -> tuple:
+    """扫描目录下的 .pas 和 .dfm 文件"""
+    src = Path(source_dir)
+    pas_files = list(src.rglob("*.pas"))
+    dfm_files = list(src.rglob("*.dfm"))
+    return pas_files, dfm_files
+
+
+def _extract_classes_from_dfm(filepath: Path) -> set:
+    """从 DFM 文件提取组件类名 (object Xxx: TYyy)"""
+    classes = set()
+    try:
+        text = filepath.read_text(encoding="utf-8-sig")
+        for m in re.finditer(r'object\s+\w+\s*:\s*(T\w+)', text):
+            classes.add(m.group(1))
+    except Exception:
+        pass
+    return classes
+
+
+def _extract_uses_set(filepath: Path) -> set:
+    """从 PAS 文件提取所有 uses 中的单元名"""
+    units = set()
+    try:
+        text = filepath.read_text(encoding="utf-8-sig")
+        # 移除字符串和注释
+        text = re.sub(r"'(?:[^']*)'", '', text)
+        text = re.sub(r'\{[^}]*\}', '', text)
+        text = re.sub(r'//[^\n]*', '', text)
+        # 匹配 uses ... ; 段
+        for m in re.finditer(
+            r'\buses\b\s*(.*?)\s*;',
+            text, re.DOTALL
+        ):
+            section = m.group(1)
+            for part in section.split(','):
+                part = part.strip()
+                if part and not part[0].isupper():
+                    continue
+                units.add(part)
+    except Exception:
+        pass
+    return units
+
+
+def _check_runtime_rules(source_dir: str) -> List[Dict]:
+    """执行运行时注册规则检查"""
+    rules = _load_runtime_rules()
+    if not rules:
+        return [{
+            "id": "N/A",
+            "severity": "warning",
+            "message": "未找到运行时规则文件或规则为空",
+        }]
+
+    pas_files, dfm_files = _find_pas_dfm_files(source_dir)
+    if not pas_files and not dfm_files:
+        return [{
+            "id": "N/A",
+            "severity": "info",
+            "message": f"在 {source_dir} 中未找到 .pas 或 .dfm 文件",
+        }]
+
+    # 收集项目中全部类名（从 DFM 最可靠）
+    project_classes: set = set()
+    all_uses: set = set()
+
+    for f in dfm_files:
+        project_classes |= _extract_classes_from_dfm(f)
+    for f in pas_files:
+        all_uses |= _extract_uses_set(f)
+
+    findings: List[Dict] = []
+    for rule in rules:
+        triggers = rule.get("triggers", [])
+        dependencies = rule.get("dependencies", [])
+        require_unit = rule.get("require_unit", "")
+
+        # 检查是否有触发器类
+        has_trigger = any(t in project_classes for t in triggers)
+        if not has_trigger:
+            continue
+
+        # 如果定义了依赖类，检查是否有命中
+        if dependencies:
+            has_dep = any(d in project_classes for d in dependencies)
+            if not has_dep:
+                continue
+
+        # 检查 require_unit 是否在 uses 中
+        unit_found = False
+        for u in all_uses:
+            if u == require_unit or u.endswith('.' + require_unit):
+                unit_found = True
+                break
+
+        if not unit_found:
+            findings.append({
+                "id": rule["id"],
+                "severity": rule.get("severity", "warning"),
+                "trigger_classes": [t for t in triggers if t in project_classes],
+                "dependencies": [d for d in dependencies if d in project_classes],
+                "require_unit": require_unit,
+                "message": rule.get("message", ""),
+            })
+
+    return findings
+
+
+def _format_runtime_report(findings: List[Dict]) -> str:
+    """格式化运行时注册检查报告"""
+    if not findings:
+        return "## ✅ 运行时注册检查通过\n\n未发现缺失的运行时注册单元。\n"
+
+    errors = [f for f in findings if f["severity"] == "error"]
+    warnings = [f for f in findings if f["severity"] == "warning"]
+
+    lines = ["## 🔍 运行时注册检查结果\n"]
+    lines.append(f"| 级别 | 规则 | 数量 |")
+    lines.append(f"|------|------|------|")
+    lines.append(f"| 🔴 错误 | {len(errors)} 项 |" if errors else "| 🔴 错误 | 0 |")
+    lines.append(f"| 🟡 警告 | {len(warnings)} 项 |" if warnings else "| 🟡 警告 | 0 |")
+    lines.append("")
+
+    if not errors and not warnings:
+        lines.append("检查通过，未发现问题。\n")
+        return "\n".join(lines)
+
+    for f in findings:
+        icon = "🔴" if f["severity"] == "error" else "🟡"
+        lines.append(f"### {icon} [{f['id']}] {f['severity'].upper()}")
+        lines.append("")
+        msg = f["message"]
+        if f.get("trigger_classes"):
+            msg = msg.replace("{triggers}", ", ".join(f["trigger_classes"]))
+        if f.get("dependencies"):
+            msg = msg.replace("{dependencies}", ", ".join(f["dependencies"]))
+        lines.append(f"**{msg}**")
+        lines.append("")
+        lines.append(f"- 触发类: `{'`, `'.join(f.get('trigger_classes', []))}`")
+        if f.get("dependencies"):
+            lines.append(f"- 依赖类: `{'`, `'.join(f['dependencies'])}`")
+        lines.append(f"- 建议添加: `{f.get('require_unit', '')}` 到 uses 子句")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
-    """执行 Delphi 代码审计 / AST 语法解析
+    """执行 Delphi 代码审计 / AST 语法解析 / Runtime 注册检查
 
     参数:
-        source_dir:   源码目录路径（审计/ast 模式必需之一）
+        source_dir:   源码目录路径（审计/ast/runtime 模式必需之一）
         file_path:    单文件路径（ast 模式可选，优先于 source_dir）
-        mode:         运行模式，默认 "audit"。可选 "ast"（AST 语法解析）
+        mode:         运行模式，默认 "audit"。可选 "ast"（AST 语法解析）、"runtime"（运行时注册检查）
         severity:     最低严重级别，默认 "suggestion"（仅 audit 模式）
         output_format: 输出格式，默认 "report"。可选 "json"
 
@@ -605,6 +773,21 @@ async def run_audit(arguments: Dict[str, Any]) -> CallToolResult:
                 )],
                 isError=True,
             )
+
+    # ── Runtime 注册检查模式（不需要 daudit）──
+    if mode == "runtime":
+        if not source_dir:
+            return CallToolResult(
+                content=[TextContent(
+                    type="text",
+                    text="# 参数错误\n\nruntime 模式需要 `source_dir` 参数。\n\n"
+                         '示例: `run_audit(mode="runtime", source_dir="C:\\\\Project\\\\src")`'
+                )],
+                isError=True,
+            )
+        findings = _check_runtime_rules(source_dir)
+        text = _format_runtime_report(findings)
+        return CallToolResult(content=[TextContent(type="text", text=text)])
 
     # 检查 daudit 是否可用
     if not _find_daudit():
