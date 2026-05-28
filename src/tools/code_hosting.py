@@ -198,10 +198,14 @@ ISSUE_LABELS = {
 
 
 # ============================================================
-# HTTP 请求
+# HTTP 请求（带指数退避重试）
 # ============================================================
 
-def _request(base_url, token, method, path, body=None, params=None, platform="gitea", basic_auth=None):
+def _request(base_url, token, method, path, body=None, params=None, platform="gitea", basic_auth=None, _retries=3):
+    """发送 HTTP 请求，支持指数退避重试（5xx 和网络错误）。
+
+    注意：_retries 是内部参数，外部调用者不应使用。
+    """
     url = f"{base_url.rstrip('/')}{path}"
     if params:
         clean = {k: v for k, v in params.items() if v is not None}
@@ -227,17 +231,34 @@ def _request(base_url, token, method, path, body=None, params=None, platform="gi
     data = json.dumps(body).encode("utf-8") if body else None
     req = Request(url, data=data, headers=headers, method=method)
 
-    try:
-        with urlopen(req, timeout=30) as resp:
-            raw = resp.read().decode("utf-8")
-            if resp.status == 204:
-                return {"success": True}
-            return json.loads(raw) if raw else {"success": True}
-    except HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        raise RuntimeError(f"API {e.code}: {detail[:300]}")
-    except URLError as e:
-        raise RuntimeError(f"无法连接 {base_url}: {e}")
+    last_exception = None
+    for attempt in range(_retries):
+        try:
+            with urlopen(req, timeout=30) as resp:
+                raw = resp.read().decode("utf-8")
+                if resp.status == 204:
+                    return {"success": True}
+                return json.loads(raw) if raw else {"success": True}
+        except HTTPError as e:
+            last_exception = e
+            detail = e.read().decode("utf-8", errors="replace") if e.fp else ""
+            # 5xx 错误可重试，4xx 不重试
+            if e.code >= 500 and attempt < _retries - 1:
+                wait = 2 ** attempt
+                logger.warning("API %d 错误 (第 %d/%d 次)，%ds 后重试", e.code, attempt + 1, _retries, wait)
+                time.sleep(wait)
+                continue
+            # 脱敏：错误详情中可能包含 token 信息
+            safe_detail = detail[:300]
+            raise RuntimeError(f"API {e.code}: {safe_detail}")
+        except URLError as e:
+            last_exception = e
+            if attempt < _retries - 1:
+                wait = 2 ** attempt
+                logger.warning("网络错误 (第 %d/%d 次)，%ds 后重试: %s", attempt + 1, _retries, wait, e)
+                time.sleep(wait)
+                continue
+            raise RuntimeError(f"无法连接 {base_url}: {e}")
 
 
 # ============================================================
@@ -446,7 +467,8 @@ def _act_close_issue(platform, **kw):
     base_url, token = kw["base_url"], kw["token"]
     owner, repo = _split_repo(kw["repo"])
     num = kw["issue_number"]
-    comment = kw.get("comment", "")
+    # 兼容 comment_body 别名（旧版测试/客户端可能使用）
+    comment = kw.get("comment", kw.get("comment_body", ""))
 
     if comment:
         cpath = _repo_path(platform, "add_comment", owner, repo, index=num)
@@ -492,10 +514,14 @@ def _act_list_issues(platform, **kw):
     lp = _repo_path(platform, "list_issues", owner, repo)
     # 分页参数名因平台而异：gitea=limit, 其他=per_page
     page_size_key = "limit" if platform == "gitea" else "per_page"
-    result = _request(base_url, token, "GET", lp,
-                      params={"state": state, "page": str(kw.get("page", 1)),
-                              page_size_key: str(kw.get("limit", 20))},
-                      platform=platform)
+    # GitLab/GitCode 不支持 state=all，不传 state 参数则默认返回所有
+    params_state = state if not (platform in ("gitlab", "gitcode") and state == "all") else None
+    params = {}
+    if params_state:
+        params["state"] = params_state
+    params["page"] = str(kw.get("page", 1))
+    params[page_size_key] = str(kw.get("limit", 20))
+    result = _request(base_url, token, "GET", lp, params=params, platform=platform)
 
     if not isinstance(result, list) or not result:
         return _ok(f"📋 暂无工单 ({platform}, {state})")
@@ -630,12 +656,8 @@ def _act_git_clone(platform=None, **kw):
         # 仅当 netloc 包含 github.com 时才替换
         if "github.com" in parsed.netloc.lower():
             mirror_netloc = mirror.rstrip("/").replace("https://", "").replace("http://", "")
-            parsed = parsed._replace(netloc=mirror_netloc)
+            parsed = parsed._replace(netloc=mirror_netloc, scheme="https")
             url = urlunparse(parsed)
-        else:
-            # 兼容旧行为：github.com 在路径中的退化情况
-            url = url.replace("github.com", mirror.rstrip("/").replace("https://", ""))
-        url = url.replace("http://", "https://")
 
     target_dir = os.path.join(work_dir, url.split("/")[-1].replace(".git", ""))
 

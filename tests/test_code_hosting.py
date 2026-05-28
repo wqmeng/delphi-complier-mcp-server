@@ -405,7 +405,7 @@ class TestApiActions:
             token="abc",
             repo="owner/repo",
             issue_number=42,
-            comment_body="Fixed in abc123",
+            comment="Fixed in abc123",
         )
         assert r["status"] == "ok"
         assert "已关闭" in r["message"]

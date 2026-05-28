@@ -995,7 +995,14 @@ async def run_server():
         return await _get_coding_rules(project_path=arguments.get("project_path"), section=arguments.get("section"))
 
     async def _handle_code_hosting(arguments: dict) -> Any:
-        return code_hosting(**arguments)
+        try:
+            if "action" not in arguments:
+                return {"status": "failed", "message": "❌ 缺少必需参数: action"}
+            # 使用 asyncio.to_thread 避免同步 HTTP 阻塞事件循环
+            return await asyncio.to_thread(code_hosting, **arguments)
+        except Exception as e:
+            logger.error(f"code_hosting 执行失败: {e}", exc_info=True)
+            return {"status": "failed", "message": f"❌ code_hosting 执行失败: {e}"}
 
     async def _handle_run_audit(arguments: dict) -> Any:
         return await _run_audit(arguments)
