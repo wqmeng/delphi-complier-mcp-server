@@ -28,6 +28,7 @@ BASIC_TESTS = [
     ("test_coding_rules.py", "编码规则工具测试"),
     ("test_code_hosting.py", "代码托管平台工具测试"),
     ("test_pasfmt.py", "pasfmt 格式化工具测试"),
+    ("test_install_logic.py", "安装脚本逻辑验证测试"),
 ]
 
 # 扩展测试（需要 Delphi 编译器或特定依赖）

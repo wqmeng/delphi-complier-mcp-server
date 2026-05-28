@@ -151,13 +151,17 @@ def write_json(path: str, data: dict) -> None:
         f.write("\n")
 
 
+def _mcp_node_key(config_type: str) -> str:
+    """OpenCode 使用 'mcp' 键，其他 Agent 使用 'mcpServers' 键"""
+    return "mcp" if config_type == "OpenCode" else "mcpServers"
+
+
 def is_mcp_configured(config_path: str, server_name: str, config_type: str) -> bool:
     if not os.path.exists(config_path):
         return False
     try:
         data = read_json(config_path)
-        node_key = "mcp" if config_type == "OpenCode" else "mcpServers"
-        node = data.get(node_key, {})
+        node = data.get(_mcp_node_key(config_type), {})
         return server_name in node
     except Exception:
         return False
@@ -176,7 +180,7 @@ def add_mcp_config(config_path: str, server_name: str, mcp_config: dict, config_
         data = read_json(config_path)
     else:
         data = {}
-    node_key = "mcp" if config_type == "OpenCode" else "mcpServers"
+    node_key = _mcp_node_key(config_type)
     if node_key not in data:
         data[node_key] = {}
     data[node_key][server_name] = mcp_config
@@ -187,7 +191,7 @@ def remove_mcp_config(config_path: str, server_name: str, config_type: str) -> b
     if not os.path.exists(config_path):
         return False
     data = read_json(config_path)
-    node_key = "mcp" if config_type == "OpenCode" else "mcpServers"
+    node_key = _mcp_node_key(config_type)
     node = data.get(node_key, {})
     if server_name not in node:
         return False
@@ -369,7 +373,8 @@ AGENT_DEFINITIONS = {
         "modes": ["global", "project"],
         "doc_url": "https://mintlify.com/opencode-ai/opencode/core-concepts/configuration",
         "config_path": lambda: (
-            p if os.path.exists(p := os.path.join(_userprofile(), ".config", "opencode", "opencode.json"))
+            p if os.path.exists(p := os.path.join(_userprofile(), ".config", "opencode", "opencode.jsonc"))
+            else p if os.path.exists(p := os.path.join(_userprofile(), ".config", "opencode", "opencode.json"))
             else os.path.join(_userprofile(), ".opencode.json")
         ),
         "project_config_relpath": ".opencode.json",
@@ -500,7 +505,7 @@ def detect_agents() -> list[dict]:
         if os.path.exists(config_path):
             try:
                 data = read_json(config_path)
-                node_key = "mcp" if defn.get("config_type") == "OpenCode" else "mcpServers"
+                node_key = _mcp_node_key(defn["config_type"])
                 node = data.get(node_key, {})
                 was_configured = MCP_SERVER_NAME in node or LEGACY_SERVER_NAME in node
             except Exception:
@@ -528,54 +533,46 @@ def detect_agents() -> list[dict]:
 
 def get_mcp_config(python_exe: str, config_type: str, project_dir: str = "",
                    use_pip: bool = False) -> dict:
-    if use_pip:
-        # pip 安装模式：直接使用 daofy CLI 命令
-        if config_type == "OpenCode":
-            return {
-                "type": "local",
-                "command": ["daofy"],
-                "environment": {
-                    "PYTHONIOENCODING": "utf-8",
-                    "PYTHONUNBUFFERED": "1",
-                    "PYTHONUTF8": "1",
-                },
-            }
-        else:
-            return {
-                "command": "daofy",
-                "env": {
-                    "PYTHONUNBUFFERED": "1",
-                    "PYTHONIOENCODING": "utf-8",
-                    "PYTHONUTF8": "1",
-                },
-            }
+    """生成 MCP Server 配置字典。
 
-    # 源码安装模式：通过 python 解释器执行 src/server.py
+    OpenCode 使用专用格式（mcp 键 / type: local / command 数组 / environment），
+    其他 Standard Agent 使用统一格式（mcpServers 键 / command 字符串 + args / env）。
+    """
     script_dir = str(get_script_dir())
     server_script = os.path.join(script_dir, "src", "server.py")
     cwd = project_dir if project_dir and os.path.isdir(project_dir) else script_dir
 
     if config_type == "OpenCode":
-        return {
-            "type": "local",
-            "command": [python_exe, server_script],
+        # OpenCode 格式：type: local, command: [数组], enabled: bool, environment: {}
+        base = {
+            "command": ["daofy"] if use_pip else [python_exe, server_script],
+            "enabled": True,
             "environment": {
-                "PYTHONIOENCODING": "utf-8",
-                "PYTHONUNBUFFERED": "1",
-                "PYTHONUTF8": "1",
-            },
-        }
-    else:
-        return {
-            "command": python_exe,
-            "args": [server_script],
-            "cwd": cwd,
-            "env": {
                 "PYTHONUNBUFFERED": "1",
                 "PYTHONIOENCODING": "utf-8",
                 "PYTHONUTF8": "1",
             },
         }
+        # OpenCode 的 command 是数组，没有单独的 args 和 cwd
+        # type 字段 Optional，local 是默认值
+        return base
+
+    # Standard 格式（Claude / Cursor / Windsurf 等）
+    base = {
+        "command": "daofy" if use_pip else python_exe,
+        "env": {
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        },
+    }
+
+    if not use_pip:
+        # 源码安装模式：通过 python 解释器执行 src/server.py
+        base["args"] = [server_script]
+        base["cwd"] = cwd
+
+    return base
 
 
 # ============================================================
@@ -812,6 +809,13 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
     # 项目级 Agent 始终需要用户输入项目目录
     need_path = [a for a in selected if a["_implied_mode"] == "project" and not project_dir]
     if need_path:
+        # 非交互模式（--agent 指定或非 TTY）下直接报错退出
+        if agent_filter != "All" or not sys.stdin.isatty():
+            error("项目级 Agent 需要 --project-dir 参数指定项目目录")
+            for a in need_path:
+                rel = _get_project_relative_config_path(a["name"], a)
+                error(f"  {a['name']} 的配置相对路径: {rel}")
+            sys.exit(1)
         default_dir = str(get_script_dir())
         info("")
         info("以下 Agent 需要指定项目目录：")
@@ -1047,6 +1051,12 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
     # 为项目级 Agent 补充路径检测（选中后才提示）
     for a in selected:
         if a["_implied_mode"] == "project" and not project_dir:
+            # 非交互模式下直接报错退出
+            if agent_filter != "All" or not sys.stdin.isatty():
+                error("项目级 Agent 需要 --project-dir 参数指定项目目录")
+                rel = _get_project_relative_config_path(a["name"], a)
+                error(f"  {a['name']} 的配置相对路径: {rel}")
+                sys.exit(1)
             info("")
             rel = _get_project_relative_config_path(a["name"], a)
             info(f"{a['name']} 使用项目级 MCP 配置（{rel}），请输入项目目录")
@@ -1217,10 +1227,11 @@ def _download_file(url: str, dest: str) -> bool:
             try:
                 if attempt > 1:
                     info(f"重试下载(第{attempt}次): {dl_url}")
-                # urlretrieve 无默认超时，设 socket 超时避免卡死
-                socket.setdefaulttimeout(DOWNLOAD_TIMEOUT)
-                urllib.request.urlretrieve(dl_url, dest)
-                socket.setdefaulttimeout(None)
+                # 使用 urlopen 替代 urlretrieve，支持 timeout 参数
+                req = urllib.request.Request(dl_url, headers={"User-Agent": "daofy-installer"})
+                with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp:
+                    with open(dest, "wb") as f:
+                        shutil.copyfileobj(resp, f)
                 return True
             except urllib.error.HTTPError as e:
                 last_err = e
@@ -1324,6 +1335,10 @@ def ensure_server_files() -> bool:
 
 def main() -> None:
     """安装/卸载脚本入口函数，解析命令行参数并执行对应操作。"""
+    if sys.platform != "win32":
+        error("此脚本仅支持 Windows 系统")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="Daofy for Delphi 安装/卸载脚本")
     parser.add_argument("--uninstall", action="store_true", help="卸载模式")
     parser.add_argument("--agent", default="All",
