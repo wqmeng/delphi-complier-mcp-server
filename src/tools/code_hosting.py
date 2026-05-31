@@ -316,7 +316,7 @@ def _reg(name):
 
 
 def _err(msg):
-    return {"message": f"❌ {msg}", "status": "failed"}
+    return {"message": msg, "status": "failed"}
 
 
 def _ok(msg):
@@ -370,12 +370,7 @@ def _act_create_token(platform, **kw):
                       basic_auth=(username, password))
     token_val = result.get("sha1") or result.get("token", "")
     masked = "%s...%s" % (token_val[:8], token_val[-4:]) if len(token_val) > 12 else "***"
-    d = _ok(
-        "Token 创建成功\n"
-        "  平台: %s | 名称: %s\n"
-        "  值(脱敏): %s\n"
-        "  ⚠ 完整 token 已在返回值 token 字段中，请妥善保管" % (platform, result.get('name', name), masked)
-    )
+    d = _ok("token created | platform: %s | name: %s | masked: %s" % (platform, result.get('name', name), masked))
     d["token"] = token_val
     return d
 
@@ -404,11 +399,7 @@ def _act_init_labels(platform, **kw):
             _request(base_url, token, "POST", cp, body=label, platform=platform)
             created += 1
 
-    return _ok(
-        f"✅ 标签初始化完成\n"
-        f"  新增: {created} | 跳过(已有): {skipped} | 合计: {created + skipped}\n"
-        f"  分组: 优先级(4) 审阅(4) 状态(5) 类型(5)"
-    )
+    return _ok(f"labels initialized | created: {created} | skipped: {skipped} | total: {created + skipped}")
 
 
 # ============================================================
@@ -450,13 +441,7 @@ def _act_create_issue(platform, **kw):
     num = result.get("number") or result.get("iid", "")
     html = result.get("html_url", "")
     st = result.get("state", "")
-    return _ok(
-        f"✅ 工单已创建\n"
-        f"  编号: #{num} | 状态: {st}\n"
-        f"  标题: {title}\n"
-        f"  标签: {', '.join(label_names) if label_names else '(无)'}\n"
-        f"  地址: {html}"
-    )
+    return _ok(f"issue #{num} created | state: {st} | title: {title} | labels: {', '.join(label_names) if label_names else 'none'} | url: {html}")
 
 
 # ============================================================
@@ -478,12 +463,7 @@ def _act_close_issue(platform, **kw):
     ep = _repo_path(platform, "edit_issue", owner, repo, index=num)
     result = _request(base_url, token, "PATCH", ep, body={"state": "closed"}, platform=platform)
     html = result.get("html_url", "")
-    return _ok(
-        f"✅ 工单 #{num} 已关闭\n"
-        f"  地址: {html}"
-        + (f"\n  关闭说明: {comment[:80]}..." if len(comment) > 80 else
-           f"\n  关闭说明: {comment}" if comment else "")
-    )
+    return _ok(f"issue #{num} closed | url: {html}" + (f" | comment: {comment[:80]}" if comment else ""))
 
 
 # ============================================================
@@ -499,7 +479,7 @@ def _act_add_comment(platform, **kw):
 
     cp = _repo_path(platform, "add_comment", owner, repo, index=num)
     result = _request(base_url, token, "POST", cp, body={"body": text}, platform=platform)
-    return _ok(f"✅ 评论已添加 (ID: {result.get('id', '')})  工单: #{num}")
+    return _ok(f"comment added (id: {result.get('id', '')}) | issue: #{num}")
 
 
 # ============================================================
@@ -525,15 +505,15 @@ def _act_list_issues(platform, **kw):
     result = _request(base_url, token, "GET", lp, params=params, platform=platform)
 
     if not isinstance(result, list) or not result:
-        return _ok(f"📋 暂无工单 ({platform}, {state})")
+        return _ok(f"no issues ({platform}, {state})")
 
     items = []
     for i in result:
         n = i.get("number") or i.get("iid", "")
         ls = [lb.get("name", lb.get("title", "")) for lb in i.get("labels") or []]
-        items.append(f"  #{n} [{i.get('state','')}] {i.get('title','')}  {', '.join(ls)}")
+        items.append(f"#{n} [{i.get('state','')}] {i.get('title','')}{' ' + ','.join(ls) if ls else ''}")
 
-    return _ok(f"📋 共 {len(items)} 个工单 ({platform}, {state}):\n" + "\n".join(items))
+    return _ok(f"{len(items)} issues ({platform}, {state}): " + "; ".join(items))
 
 
 # ============================================================
@@ -656,31 +636,16 @@ def _git_run(work_dir, *args, timeout=300, env=None):
 
 
 def _submit_git_task(name: str, fn, **kw) -> tuple:
-    """通过 AsyncTaskManager 提交后台 git 任务。
-
-    支持 MCP 推送通知: 调用方传入 _on_complete 回调，
-    任务完成时自动推送 TaskStatusNotification 到 MCP 客户端。
-
-    Returns:
-        (task_id, message_dict)
-    """
+    """通过 AsyncTaskManager 提交后台 git 任务。"""
     if get_task_manager is None:
-        return "", _err("异步任务管理器不可用")
-    # 提取 MCP 推送回调（由 server.py 注入），不传给任务函数
+        return "", _err("async task manager not available")
     on_complete = kw.pop('_on_complete', None)
-    # submit_task 会给 fn 注入 _progress_callback, _cancellation_check, _task_id
     task_id = get_task_manager().submit_task(
         name, fn,
         on_complete=on_complete,
         **kw,
     )
-    msg = (
-        f"🔄 Git 任务已提交\n"
-        f"  任务ID: {task_id}\n"
-        f"  操作: {name}\n"
-        f"  完成时自动推送通知到 MCP（AI Agent 需通过 async_task 查询）"
-    )
-    return task_id, _ok(msg)
+    return task_id, _ok(f"task {task_id} | action: {name}")
 
 
 # ============================================================
@@ -688,12 +653,56 @@ def _submit_git_task(name: str, fn, **kw) -> tuple:
 # ============================================================
 
 
+def _compact_git_status(raw: str) -> str:
+    """将 git status 原始输出压缩为一行摘要。"""
+    lines = raw.strip().split('\n')
+    branch = "?"
+    sync = ""
+    for line in lines:
+        if line.startswith("On branch "):
+            branch = line[10:]
+        elif line.startswith("Your branch is "):
+            sync = line[14:]
+
+    # 收集变更文件：去掉 git 提示行，只留文件路径行
+    staged, unstaged, untracked = [], [], []
+    section = None
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "Changes to be committed:":
+            section = "staged"
+        elif stripped == "Changes not staged for commit:":
+            section = "unstaged"
+        elif stripped == "Untracked files:":
+            section = "untracked"
+        elif stripped.startswith("(") or stripped.startswith("no changes"):
+            continue
+        elif stripped.startswith("modified:") or stripped.startswith("new file:") or stripped.startswith("deleted:"):
+            fname = stripped.split(":", 1)[1].strip()
+            (staged if section == "staged" else unstaged).append(fname)
+        elif section == "untracked" and not stripped.startswith("("):
+            untracked.append(stripped)
+
+    parts = [branch]
+    if sync:
+        parts.append(sync)
+    if not staged and not unstaged and not untracked:
+        parts.append("clean")
+    if staged:
+        parts.append(f"staged({len(staged)}): {' '.join(staged)}")
+    if unstaged:
+        parts.append(f"modified({len(unstaged)}): {' '.join(unstaged)}")
+    if untracked:
+        parts.append(f"untracked({len(untracked)}): {' '.join(untracked)}")
+    return " | ".join(parts)
+
+
 @_reg("git_status")
 def _act_git_status(platform=None, **kw):
     """查看仓库状态（同步，瞬间完成）。"""
     work_dir = kw.get("dir", ".")
-    out = _git_run(work_dir, "status", timeout=30)
-    return _ok(f"📋 Git 状态:\n{out}")
+    raw = _git_run(work_dir, "status", timeout=30)
+    return _ok(_compact_git_status(raw))
 
 
 @_reg("git_add")
@@ -702,9 +711,9 @@ def _act_git_add(platform=None, **kw):
     work_dir = kw.get("dir", ".")
     files = kw.get("files", [])
     if not files:
-        return _err("请指定要暂存的文件列表 (files 参数)")
+        return _err("specify files via 'files' parameter")
     _git_run(work_dir, "add", *files, timeout=30)
-    return _ok(f"✅ 已暂存: {', '.join(files)}")
+    return _ok(f"staged: {' '.join(files)}")
 
 
 @_reg("git_commit")
@@ -713,13 +722,13 @@ def _act_git_commit(platform=None, **kw):
     work_dir = kw.get("dir", ".")
     msg = kw.get("message", "")
     if not msg:
-        return _err("请指定提交信息 (message 参数)")
+        return _err("specify message via 'message' parameter")
     _git_run(work_dir, "commit", "-m", msg, timeout=30)
     try:
         h = _git_run(work_dir, "rev-parse", "HEAD", timeout=10)
-        return _ok(f"✅ 提交成功\n  Hash: {h[:12]}\n  信息: {msg}")
+        return _ok(f"committed {h[:12]}: {msg}")
     except RuntimeError:
-        return _ok(f"✅ 提交成功\n  信息: {msg}")
+        return _ok(f"committed: {msg}")
 
 
 # ============================================================
@@ -761,26 +770,15 @@ def _act_git_clone(platform=None, **kw):
         args.append(url)
         args.append(target_dir)
         _git_run(work_dir, *args)
-        return _ok(f"✅ 仓库已克隆到 {target_dir}\n  地址: {url}")
+        return _ok(f"cloned to {target_dir}")
 
     task_id, status = _submit_git_task("git_clone", _do_clone, **kw)
-    return _ok(
-        f"🔄 克隆任务已启动\n"
-        f"  任务ID: {task_id}\n"
-        f"  地址: {url}\n"
-        f"  目标: {target_dir}\n"
-        f"  完成时自动推送通知到 MCP（AI Agent 需通过 async_task 查询）"
-    )
+    return _ok(f"clone task {task_id} | url: {url} | target: {target_dir}")
 
 
 @_reg("git_push")
 def _act_git_push(platform=None, **kw):
-    """推送到远程（异步，单次尝试，超时 120 秒）。
-
-    推送方式取决于用户的 Git 配置（SSH/HTTPS代理/VPN），工具不做假设。
-    提交后台任务，完成后自动推送 TaskStatusNotification 到 MCP 客户端。
-    如果推送失败，建议使用 git_push_retry 后台自动重试。
-    """
+    """推送到远程（异步，单次尝试）。"""
     work_dir = kw.get("dir", ".")
     remote = kw.get("remote", "origin")
     branch = kw.get("branch", "")
@@ -793,7 +791,7 @@ def _act_git_push(platform=None, **kw):
         if branch:
             args.append(branch)
         _git_run(work_dir, *args, timeout=120)
-        return _ok(f"✅ 已推送到 {remote}{'/' + branch if branch else ''}")
+        return _ok(f"pushed to {remote}{'/' + branch if branch else ''}")
 
     tid, resp = _submit_git_task("git_push", _do_push, **kw)
     return resp
@@ -829,50 +827,29 @@ def _act_git_push_retry(platform=None, **kw):
                 _git_run(work_dir, *args, timeout=120)
 
                 if progress_cb:
-                    progress_cb(
-                        100,
-                        f"✅ 第{attempt}次重试成功，已推送到 {remote}"
-                        f"{'/' + branch if branch else ''}"
-                    )
-                return _ok(
-                    f"✅ 已推送到 {remote}{'/' + branch if branch else ''}"
-                    f"（第{attempt}次重试成功）"
-                )
+                    progress_cb(100, f"pushed to {remote} (attempt {attempt})")
+                return _ok(f"pushed to {remote}{'/' + branch if branch else ''} (attempt {attempt})")
 
             except RuntimeError as e:
                 last_error = e
-                logger.warning("推送失败(第%s/%s次): %s", attempt, max_retries, e)
+                logger.warning("push failed (attempt %s/%s): %s", attempt, max_retries, e)
 
                 if progress_cb:
                     pct = (attempt / max_retries) * 100
                     if attempt < max_retries:
-                        # 时间信息：下次重试时间 + 估计总耗时
                         eta_total = (interval * max_retries) // 60
-                        progress_cb(
-                            pct,
-                            f"⏳ 第{attempt}次重试失败: {str(e)[:100]} | "
-                            f"等待{interval}秒后第{attempt+1}次重试 "
-                            f"（总约{eta_total}分钟）"
-                        )
+                        progress_cb(pct, f"attempt {attempt} failed: {str(e)[:80]} | retry in {interval}s | eta ~{eta_total}min")
                     else:
-                        progress_cb(pct, f"❌ 已达最大重试次数（{max_retries}次），推送最终失败")
+                        progress_cb(pct, f"max retries ({max_retries}) reached, push failed")
 
                 if attempt < max_retries:
                     time.sleep(interval)
 
         eta_total = (interval * max_retries) // 60
-        raise RuntimeError(
-            f"推送失败，已重试 {max_retries} 次（约 {eta_total} 分钟）: {last_error}"
-        )
+        raise RuntimeError(f"push failed after {max_retries} retries (~{eta_total}min): {last_error}")
 
     tid, resp = _submit_git_task("git_push_retry", _do_retry_push, **kw)
 
     eta_total = (interval * max_retries) // 60
-    resp_message = (
-        f"🔄 后台自动重试已启动\n"
-        f"  任务ID: {tid}\n"
-        f"  重试间隔: {interval}秒 | 最大次数: {max_retries}次\n"
-        f"  预计总耗时: 约 {eta_total} 分钟\n"
-        f"  每次重试结果自动推送通知到 MCP（AI Agent 需通过 async_task 查询）"
-    )
+    resp_message = f"auto-retry push task {tid} | interval: {interval}s | max: {max_retries} | eta: ~{eta_total}min"
     return _ok(resp_message)
