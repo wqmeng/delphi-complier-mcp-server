@@ -49,16 +49,24 @@ class CompileResult:
             strip_log: 是否去除编译器版权横幅（Embarcadero / Copyright 行）
         """
         log = self._strip_compiler_header(self.log) if strip_log else self.log
-        result = {
+        result: Dict[str, Any] = {
             "status": self.status.value,
-            "error_code": self.error_code,
-            "error_message": self.error_message,
-            "output_file": self.output_file,
-            "warnings": [w.to_dict() for w in self.warnings],
-            "errors": [e.to_dict() for e in self.errors],
             "duration": self.duration,
-            "log": log,
         }
+        # 失败/超时时包含错误信息，成功时过滤掉毫无意义的 None/[]
+        if self.status != CompileStatus.SUCCESS:
+            if self.error_code:
+                result["error_code"] = self.error_code
+            if self.error_message:
+                result["error_message"] = self.error_message
+            if self.output_file:
+                result["output_file"] = self.output_file
+        if self.errors:
+            result["errors"] = [e.to_dict() for e in self.errors]
+        if self.warnings:
+            result["warnings"] = [w.to_dict() for w in self.warnings]
+        if log:
+            result["log"] = log
         return result
 
     @staticmethod
