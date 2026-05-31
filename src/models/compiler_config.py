@@ -38,12 +38,14 @@ class ConfigFile:
     """配置文件结构"""
     compilers: List[CompilerConfig] = field(default_factory=list)
     default_compiler: Optional[str] = None
+    show_timing: bool = False  # 工具返回中是否包含 timing 字段
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为字典"""
         return {
             "compilers": [c.to_dict() for c in self.compilers],
-            "default_compiler": self.default_compiler
+            "default_compiler": self.default_compiler,
+            "show_timing": self.show_timing,
         }
 
     @classmethod
@@ -52,7 +54,8 @@ class ConfigFile:
         compilers = [CompilerConfig.from_dict(c) for c in data.get('compilers', [])]
         return cls(
             compilers=compilers,
-            default_compiler=data.get('default_compiler')
+            default_compiler=data.get('default_compiler'),
+            show_timing=data.get('show_timing', False),
         )
 
     def get_compiler(self, name: str) -> Optional[CompilerConfig]:

@@ -828,16 +828,15 @@ async def run_server():
             _log_args = {k: v for k, v in arguments.items() if k != '_on_complete'}
             log_api_call(logger, name, _log_args, result)
 
-            # 统一返回格式: 所有返回类型 → CallToolResult + 结构化 timing
             import json as _json
-            _timing_obj = {
-                'duration': round(_duration * 1000, 1),
-                'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
-                'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
-            }
+            _show_timing = config_manager.get_show_timing()
             if isinstance(result, dict):
-                # Dict 返回: 直接注入 timing 字段
-                result['timing'] = _timing_obj
+                if _show_timing:
+                    result['timing'] = {
+                        'duration': round(_duration * 1000, 1),
+                        'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                        'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                    }
                 is_error = (result.get('status') == 'failed'
                             or result.get('success') is False
                             or (result.get('error') is not None and result.get('error') != ''))
@@ -850,8 +849,13 @@ async def run_server():
                 response = {
                     'success': not isinstance(result, CallToolResult) or not getattr(result, 'isError', False),
                     'data': str(result) if not isinstance(result, (str, bytes)) else result,
-                    'timing': _timing_obj,
                 }
+                if _show_timing:
+                    response['timing'] = {
+                        'duration': round(_duration * 1000, 1),
+                        'startTime': _call_start_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                        'endTime': _call_end_dt.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3],
+                    }
                 if isinstance(result, CallToolResult):
                     response['isError'] = getattr(result, 'isError', False)
                 try:

@@ -298,6 +298,10 @@ class ConfigManager:
         """获取所有编译器配置"""
         return self.config.compilers
 
+    def get_show_timing(self) -> bool:
+        """工具返回中是否包含 timing 字段"""
+        return self.config.show_timing
+
     def add_history_entry(self, entry: CompileHistoryEntry):
         """
         添加编译历史记录
