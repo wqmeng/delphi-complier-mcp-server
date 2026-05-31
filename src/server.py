@@ -58,6 +58,10 @@ else:
     from src.services.knowledge_base import DelphiKnowledgeBaseService
     from src.services.knowledge_base.thirdparty_knowledge_base import ThirdPartyKnowledgeBase
     from src.tools.project import handle_project as _handle_project, set_compiler_service as _set_compile_svc
+    # project 模块统一管理编译器服务，保留别名供初始化用
+    from src.tools.compile_project import set_compiler_service as sp1
+    from src.tools.compile_file import set_compiler_service as sp2
+    from src.tools.get_args import set_compiler_service as sp3
     from src.tools.config import set_config_manager, search_compilers
     from src.tools.environment import check_environment, set_config_manager as scm, set_thirdparty_kb_service as stks
     from src.tools.knowledge_base import (
@@ -480,23 +484,6 @@ async def run_server():
                 }
             ),
 
-            # ===== 代码审计工具（AST 引擎）⭐⭐ =====
-            Tool(
-                name="run_audit",
-                description=TOOL_SHORT_DESC["run_audit"],
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "base_dir": {"type": "string", "description": "审计基准目录 — 作为审计/AST解析/runtime检查时查找关联项目及源码的根路径"},
-                        "file_path": {"type": "string", "description": "单文件路径（ast 模式可选，优先于 base_dir）"},
-                        "mode": {"type": "string", "enum": ["audit", "ast", "runtime"], "default": "audit", "description": "运行模式: audit=代码审计（默认）, ast=AST 语法解析, runtime=运行时注册检查"},
-                        "rules": {"type": "string", "default": "P0", "description": "规则集: P0 / P0,P1 / 规则ID列表如 C001,R001（仅 audit 模式）"},
-                        "severity": {"type": "string", "enum": ["suggestion", "warning", "critical"], "default": "suggestion", "description": "最低严重级别（仅 audit 模式）"},
-                        "output_format": {"type": "string", "enum": ["report", "json"], "default": "report", "description": "输出格式: report=Markdown, json=原始JSON"},
-                    }
-                }
-            ),
-
             # ===== 代码托管平台统一工具 =====
             Tool(
                 name="code_hosting",
@@ -693,7 +680,8 @@ async def run_server():
         return await file_tool.handle_file_tool(arguments)
 
     async def _handle_manage_component(arguments: dict) -> Any:
-        return await manage_component_mod.manage_component(
+        # manage_component_mod 是函数（被 __init__.py re-export 了），直接调用
+        return await manage_component_mod(
             action=arguments.get("action", "create"),
             target_dfm=arguments.get("target_dfm"),
             target_pas=arguments.get("target_pas"),
