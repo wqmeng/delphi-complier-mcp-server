@@ -54,7 +54,7 @@ def _ok(msg: str, data: Any = None) -> dict:
 
 
 def _err(msg: str) -> dict:
-    return {"status": "failed", "message": f"❌ {msg}"}
+    return {"status": "failed", "message": msg}
 
 
 def _fmt_experience(exp: dict) -> str:
@@ -64,16 +64,16 @@ def _fmt_experience(exp: dict) -> str:
     sim = exp.get("similarity")
     lines = [
         f"ID: {exp['id']}",
-        f"问题: {exp['problem']}",
-        f"解决: {exp['solution']}",
+        f"problem: {exp['problem']}",
+        f"solution: {exp['solution']}",
     ]
     if tags:
-        lines.append(f"标签: {', '.join(tags)}")
+        lines.append(f"tags: {', '.join(tags)}")
     if tools:
-        lines.append(f"用到的工具: {', '.join(tools)}")
+        lines.append(f"tools: {', '.join(tools)}")
     if sim is not None:
-        lines.append(f"匹配度: {sim:.2%}")
-    lines.append(f"复用次数: {exp.get('hit_count', 0)}")
+        lines.append(f"match: {sim:.2%}")
+    lines.append(f"used: {exp.get('hit_count', 0)}x")
     return "\n".join(lines)
 
 
@@ -98,7 +98,7 @@ def _act_save(svc, **kw):
         tags=tags,
     )
     return _ok(
-        f"✅ 经验已保存\n  ID: {result['id']}\n  问题: {problem[:80]}",
+        f"saved\n  ID: {result['id']}\n  problem: {problem[:80]}",
         data=result,
     )
 
@@ -113,16 +113,16 @@ def _act_search(svc, **kw):
 
     results = svc.search(query=query, top_k=top_k, tags=tags)
     if not results:
-        return _ok(f"📭 未找到相关经验 (query: {query})", data=[])
+        return _ok(f"no results (query: {query})", data=[])
 
-    lines = [f"📋 找到 {len(results)} 条相关经验:"]
+    lines = [f"{len(results)} results:"]
     for exp in results:
         sim = exp.get("similarity", 0)
-        sim_str = f" [匹配度: {sim:.2%}]" if sim else ""
+        sim_str = f" [match:{sim:.2%}]" if sim else ""
         lines.append("")
-        lines.append(f"▶ {exp['problem']}{sim_str}")
+        lines.append(f"{exp['problem']}{sim_str}")
         lines.append(f"  ID: {exp['id']}")
-        lines.append(f"  解决: {exp['solution'][:200]}")
+        lines.append(f"  solution: {exp['solution'][:200]}")
         if exp.get("tags"):
             lines.append(f"  标签: {', '.join(exp['tags'])}")
 
@@ -138,7 +138,7 @@ def _act_get(svc, **kw):
     if result is None:
         return _err(f"经验不存在: {exp_id}")
 
-    return _ok(f"📘 经验详情:\n{_fmt_experience(result)}", data=result)
+    return _ok(f"detail:\n{_fmt_experience(result)}", data=result)
 
 
 def _act_list(svc, **kw):
@@ -148,12 +148,12 @@ def _act_list(svc, **kw):
 
     results = svc.list(tags=tags, sort_by=sort_by, limit=limit)
     if not results:
-        return _ok("📭 暂无经验记录", data=[])
+        return _ok("no records", data=[])
 
-    lines = [f"📋 共 {len(results)} 条经验:"]
+    lines = [f"{len(results)} records:"]
     for exp in results:
         tags_str = f" [{', '.join(exp.get('tags', []))}]" if exp.get("tags") else ""
-        lines.append(f"  • {exp['problem'][:60]} — 复用{exp.get('hit_count', 1)}次{tags_str}")
+        lines.append(f"  - {exp['problem'][:60]} - used {exp.get('hit_count', 1)}x{tags_str}")
 
     return _ok("\n".join(lines), data=results)
 
@@ -174,7 +174,7 @@ def _act_update(svc, **kw):
     if result is None:
         return _err(f"经验不存在: {exp_id}")
 
-    return _ok(f"✅ 经验已更新: {exp_id}", data=result)
+    return _ok(f"updated: {exp_id}", data=result)
 
 
 def _act_delete(svc, **kw):
@@ -186,4 +186,4 @@ def _act_delete(svc, **kw):
     if not ok:
         return _err(f"经验不存在: {exp_id}")
 
-    return _ok(f"🗑️ 经验已删除: {exp_id}")
+    return _ok(f"deleted: {exp_id}")

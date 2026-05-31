@@ -568,7 +568,7 @@ async def compile_project(
                         cwd=Path(exe_path).parent,
                         creationflags=getattr(_subprocess, 'CREATE_NEW_CONSOLE', 0),
                     )
-                    launch_msg = f"\n\n🚀 已启动: {Path(exe_path).name} (PID: {proc.pid})"
+                    launch_msg = f"\n\nlaunched: {Path(exe_path).name} (PID: {proc.pid})"
                     if run_params:
                         launch_msg += f"\n参数: {run_params}"
                     result_text += launch_msg
@@ -577,7 +577,7 @@ async def compile_project(
                     logger.warning(f"编译后启动: 未找到输出文件 {exe_path}")
             except Exception as e:
                 logger.warning(f"编译后启动失败: {e}")
-                result_text += f"\n⚠️ 自动启动失败: {e}"
+                result_text += f"\nauto-launch failed: {e}"
 
         # 编译成功后，如需运行验证（注入 StackTrace 单元，编译，运行后检查 exception.log）
         if run_verify and result.status.value == "success":
@@ -592,7 +592,7 @@ async def compile_project(
                 ))
                 if not Path(exe_path).exists():
                     logger.warning("运行验证: 未找到输出文件 %s", exe_path)
-                    verify_msg = "\n\n⚠️ 运行验证: 未找到输出文件"
+                    verify_msg = "\n\nverify: output file not found"
                 else:
                     # 1. 备份并注入 StackTrace 单元到 .dproj
                     backup_path = _inject_verify_units(project_path)
@@ -601,9 +601,9 @@ async def compile_project(
                     verify_result = await _compiler_service.compile_project(request)
 
                     if verify_result.status.value != "success":
-                        err_detail = verify_result.log or verify_result.error_message or "(无日志)"
+                        err_detail = verify_result.log or verify_result.error_message or "(no log)"
                         logger.warning("注入 StackTrace 后编译失败: %s", err_detail[:500])
-                        verify_msg = "\n\n⚠️ 运行验证: 注入单元后编译失败\n%s" % err_detail[:1000]
+                        verify_msg = "\n\nverify: injected compile failed\n%s" % err_detail[:1000]
                     else:
                         # 3. 运行验证 exe（无管道，读 exception.log）
                         verify_exe = str(_compute_verify_exe_path(
@@ -612,7 +612,7 @@ async def compile_project(
                             build_configuration or "Debug"
                         ))
                         if not Path(verify_exe).exists():
-                            verify_msg = f"\n\n⚠️ 运行验证: 重新编译后未找到输出文件: {verify_exe}"
+                            verify_msg = f"\n\nverify: output not found after recompile: {verify_exe}"
                         else:
                             exe_dir = Path(verify_exe).parent
                             log_path = exe_dir / 'exception.log'
@@ -639,16 +639,16 @@ async def compile_project(
                                 try:
                                     enc = detect_encoding(str(log_path))
                                     log_content = log_path.read_text(encoding=enc, errors='replace')
-                                    verify_msg = f"\n\n❌ 运行验证失败 - 检测到异常:\n{log_content}"
+                                    verify_msg = f"\n\nverify failed - exception detected:\n{log_content}"
                                     logger.warning("运行时异常: %s", log_content[:200])
                                 except Exception as read_err:
-                                    verify_msg = f"\n\n❌ 运行验证失败 - 检测到异常\n日志文件: {log_path}\n(读取日志失败: {read_err})"
+                                    verify_msg = f"\n\nverify failed - exception detected\nlog: {log_path}\n(read error: {read_err})"
                             else:
-                                verify_msg = f"\n\n✅ 运行验证通过: 启动后无异常"
+                                verify_msg = f"\n\nverify passed: no crash on launch"
                                 logger.info("运行验证通过")
             except Exception as e:
                 logger.warning("运行验证异常: %s", e, exc_info=True)
-                verify_msg = f"\n\n⚠️ 运行验证异常: {e}"
+                verify_msg = f"\n\nverify exception: {e}"
             finally:
                 # 5. 恢复原始 .dproj
                 if backup_path:
@@ -656,7 +656,7 @@ async def compile_project(
                         _restore_dproj(project_path, backup_path)
                     except Exception as e:
                         logger.error("恢复 .dproj 失败: %s", e)
-                        verify_msg += f"\n\n⚠️ 恢复 .dproj 失败: {e}"
+                        verify_msg += f"\n\nrestore .dproj failed: {e}"
 
             result_text += verify_msg
 
@@ -751,7 +751,7 @@ async def _compile_dpk_package(
         if _has_install_package:
             version = _get_delphi_version()
             install_success = _register_packages_to_ide([output_file], version)
-            install_result = "✅ 已自动安装到 IDE" if install_success else "⚠️ 自动安装失败，请手动安装"
+            install_result = "installed to IDE" if install_success else "auto-install failed, manual install required"
         else:
             install_result = f"请手动安装: {output_file}"
         

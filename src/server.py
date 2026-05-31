@@ -153,20 +153,20 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             if isinstance(result, dict):
                 results = result.get('results') or result.get('data') or []
                 if isinstance(results, list) and len(results) > 0:
-                    return ("✨ 提示：找到目标后，可用 "
-                            'delphi_file(action="read", file_path="...") 读取完整源码定义')
+                    return ("hint: use "
+                            'delphi_file(action="read", file_path="...") to read full source')
         elif action == "stats":
-            return ("✨ 提示：如果知识库数据过期，"
-                    "可用 delphi_kb(action='build', kb_type='project') 重建")
+            return ("hint: if KB data is stale, "
+                    "use delphi_kb(action='build', kb_type='project') to rebuild")
 
     elif name == "get_coding_rules":
         # 仅在 section=None（默认模式）时提示
         section = arguments.get("section")
         if section is None or section == "":
-            return ("✨ 提示：使用 section 参数按需获取对应章节：\n"
-                    '   get_coding_rules(section="writing")  — 写代码前看编码规则\n'
-                    '   get_coding_rules(section="review")   — 编译后看审核表\n'
-                    '   get_coding_rules(section="safety")   — 安全敏感操作')
+            return ("hint: use section param for specific chapters:\n"
+                    '   get_coding_rules(section="writing")  - before writing\n'
+                    '   get_coding_rules(section="review")   - after compile, before review\n'
+                    '   get_coding_rules(section="safety")   - security-sensitive ops')
 
     elif name == "check_environment":
         action = arguments.get("action", "check")
@@ -174,12 +174,12 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             if isinstance(result, dict):
                 compilers = result.get('compilers') or result.get('data')
                 if compilers and len(compilers) > 0:
-                    return ("✨ 提示：环境已就绪，"
-                            "可用 project(action='compile') 开始编译验证")
+                    return ("hint: environment ready, "
+                            "use project(action='compile') to verify")
                 else:
-                    return ("✨ 提示：未检测到编译器，"
-                            "请检查 Delphi 是否已安装，"
-                            "或用 check_environment(action='detect', search_path=...) 指定自定义路径")
+                    return ("hint: no compiler detected, "
+                            "check Delphi installation, "
+                            "or use check_environment(action='detect', search_path=...)")
 
     elif name == "package":
         action = arguments.get("action", "")
@@ -195,8 +195,8 @@ def _get_smart_hint(name: str, result: Any, arguments: dict) -> Optional[str]:
             else:
                 is_error = False
             if not is_error:
-                return ("✨ 提示：安装完成，"
-                        "可用 package(action='list') 验证组件已注册到 IDE")
+                return ("hint: install done, "
+                        "use package(action='list') to verify IDE registration")
 
     return None
 
@@ -713,12 +713,12 @@ async def run_server():
     async def _handle_code_hosting(arguments: dict) -> Any:
         try:
             if "action" not in arguments:
-                return {"status": "failed", "message": "❌ 缺少必需参数: action"}
+                return {"status": "failed", "message": "missing required parameter: action"}
             # 使用 asyncio.to_thread 避免同步 HTTP 阻塞事件循环
             return await asyncio.to_thread(code_hosting, **arguments)
         except Exception as e:
             logger.error(f"code_hosting 执行失败: {e}", exc_info=True)
-            return {"status": "failed", "message": f"❌ code_hosting 执行失败: {e}"}
+            return {"status": "failed", "message": f"code_hosting failed: {e}"}
 
     async def _handle_tool_help(arguments: dict) -> Any:
         return get_tool_help(tool_name=arguments.get("tool_name", ""))
