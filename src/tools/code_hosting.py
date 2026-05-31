@@ -676,7 +676,7 @@ def _submit_git_task(name: str, fn, **kw) -> tuple:
         f"🔄 Git 任务已提交\n"
         f"  任务ID: {task_id}\n"
         f"  操作: {name}\n"
-        f"  完成时自动推送通知到 MCP (无需轮询)"
+        f"  完成时自动推送通知到 MCP（AI Agent 需通过 async_task 查询）"
     )
     return task_id, _ok(msg)
 
@@ -767,7 +767,7 @@ def _act_git_clone(platform=None, **kw):
         f"  任务ID: {task_id}\n"
         f"  地址: {url}\n"
         f"  目标: {target_dir}\n"
-        f"  完成时自动推送通知到 MCP (无需轮询)"
+        f"  完成时自动推送通知到 MCP（AI Agent 需通过 async_task 查询）"
     )
 
 
@@ -871,6 +871,6 @@ def _act_git_push_retry(platform=None, **kw):
         f"  任务ID: {tid}\n"
         f"  重试间隔: {interval}秒 | 最大次数: {max_retries}次\n"
         f"  预计总耗时: 约 {eta_total} 分钟\n"
-        f"  每次重试结果自动推送通知到 MCP (无需轮询)"
+        f"  每次重试结果自动推送通知到 MCP（AI Agent 需通过 async_task 查询）"
     )
     return _ok(resp_message)

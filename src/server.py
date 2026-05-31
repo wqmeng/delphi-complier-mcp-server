@@ -570,8 +570,8 @@ async def run_server():
                             '  action="cancel" 取消运行中的任务\n'
                             "【MCP 推送通知】\n"
                             "  code_hosting git 任务（git_clone/git_push/git_push_retry）\n"
-                            "  完成时会自动推送 TaskStatusNotification 到 MCP 客户端，\n"
-                            "  监听 notifications/tasks/status 即可，无需轮询 async_task\n"
+                            "  完成时自动推送 TaskStatusNotification 到 MCP 客户端\n"
+                            "  （AI Agent 仍需通过 async_task 工具查询结果）\n"
                             "【示例】\n"
                             '   async_task(action="status", task_id="...")  # "查看任务进度"\n'
                             '   async_task(action="list")                   # "列出所有任务"',
@@ -706,7 +706,7 @@ async def run_server():
                             "  --- 异步操作（后台执行，自动推送通知） ---\n"
                             "  git_clone | git_push | git_push_retry\n"
 "  完成时自动推送 TaskStatusNotification 到 MCP 客户端\n"
-                              "  无需轮询 async_task，监听 notifications/tasks/status 即可",
+                              "  （AI Agent 需通过 async_task 工具查询结果）",
                 inputSchema={
                     "type": "object",
                     "properties": {
