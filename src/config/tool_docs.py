@@ -464,14 +464,8 @@ TOOL_SHORT_DESC: dict = {
     "get_coding_rules": (
         "获取 Delphi 编码规则。修改 .pas 代码前必须先调用此工具。"
     ),
-    "run_audit": (
-        "Delphi 源码骨架解析(AST)/代码审计/runtime 注册检查。"
-    ),
     "code_hosting": (
         "代码托管平台操作(Gitea/GitHub/GitLab/Gitee/GitCode) + Git 本地操作(git_status/add/commit/push/clone)。"
-    ),
-    "dproj_tool": (
-        ".dproj 项目文件管理: 创建/查看/修改工程配置。"
     ),
     "tool_help": (
         "获取任意工具的完整帮助文档(参数说明/示例/触发词/协作链)。"

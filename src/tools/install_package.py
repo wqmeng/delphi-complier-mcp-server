@@ -554,3 +554,43 @@ async def list_installed_packages() -> CallToolResult:
         output += f"读取注册表失败: {e}\n"
     
     return CallToolResult(content=[{"type": "text", "text": output}])
+
+
+async def handle_package(**kwargs) -> dict:
+    """统一的 package 工具入口，通过 action 分发。
+
+    Args:
+        action: "install" 或 "list"
+        其他参数见对应函数。
+
+    Returns:
+        dict: {"status": "ok"/"failed", "message": ...}
+    """
+    action = kwargs.get("action", "install")
+    try:
+        if action == "install":
+            result = await install_package(
+                package_path=kwargs.get("package_path", ""),
+                target_platform=kwargs.get("target_platform", "win32"),
+                build_configuration=kwargs.get("build_configuration", "Debug"),
+                timeout=kwargs.get("timeout", 300),
+                install=kwargs.get("install", True),
+            )
+            # CallToolResult → dict
+            if isinstance(result, CallToolResult):
+                text = result.content[0].text if result.content else ""
+                return {"status": "failed" if result.isError else "ok", "message": text}
+            return {"status": "ok", "message": str(result)}
+
+        elif action == "list":
+            result = await list_installed_packages()
+            if isinstance(result, CallToolResult):
+                text = result.content[0].text if result.content else ""
+                return {"status": "ok", "message": text}
+            return {"status": "ok", "message": str(result)}
+
+        else:
+            return {"status": "failed", "message": f"未知 action: {action}，可用: install/list"}
+    except Exception as e:
+        logger.exception("package 执行失败")
+        return {"status": "failed", "message": str(e)}
