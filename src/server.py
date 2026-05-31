@@ -1135,8 +1135,9 @@ async def run_server():
                     if isinstance(msg, str):
                         result['message'] = msg + "\n\n" + hint
 
-            # P3: API 调用日志
-            log_api_call(logger, name, arguments, result)
+            # P3: API 调用日志（排除注入的 _on_complete 回调，防止 json.dumps 序列化函数报错）
+            _log_args = {k: v for k, v in arguments.items() if k != '_on_complete'}
+            log_api_call(logger, name, _log_args, result)
 
             # 统一返回格式: 所有返回类型 → CallToolResult + 结构化 timing
             import json as _json

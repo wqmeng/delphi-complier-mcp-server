@@ -376,7 +376,11 @@ def log_api_call(logger: logging.Logger, tool_name: str, arguments: dict, result
         else:
             safe_args[k] = v
 
-    logger.debug(">>> API 调用: %s | 参数: %s", tool_name, json.dumps(safe_args, ensure_ascii=False))
+    try:
+        args_text = json.dumps(safe_args, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        args_text = str(safe_args)
+    logger.debug(">>> API 调用: %s | 参数: %s", tool_name, args_text)
 
     # 记录返回值 (截断避免日志过大)
     result_str = str(result)
