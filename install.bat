@@ -305,3 +305,5 @@ echo:
 echo [SUCCESS] Daofy installed successfully!
 pause
 exit /b 0
+
+

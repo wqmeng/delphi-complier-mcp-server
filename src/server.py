@@ -568,6 +568,10 @@ async def run_server():
                             '  action="result" 获取任务结果\n'
                             '  action="list"   列出所有任务\n'
                             '  action="cancel" 取消运行中的任务\n'
+                            "【MCP 推送通知】\n"
+                            "  code_hosting git 任务（git_clone/git_push/git_push_retry）\n"
+                            "  完成时会自动推送 TaskStatusNotification 到 MCP 客户端，\n"
+                            "  监听 notifications/tasks/status 即可，无需轮询 async_task\n"
                             "【示例】\n"
                             '   async_task(action="status", task_id="...")  # "查看任务进度"\n'
                             '   async_task(action="list")                   # "列出所有任务"',
@@ -699,10 +703,10 @@ async def run_server():
                             "  add_comment | list_issues\n"
                             "  --- 同步操作 ---\n"
                             "  git_status | git_add | git_commit\n"
-                            "  --- 异步操作（后台执行，返回 task_id） ---\n"
+                            "  --- 异步操作（后台执行，自动推送通知） ---\n"
                             "  git_clone | git_push | git_push_retry\n"
-                            "  --- 查询异步任务状态 ---\n"
-                            '  async_task(action="status", task_id="...")',
+"  完成时自动推送 TaskStatusNotification 到 MCP 客户端\n"
+                              "  无需轮询 async_task，监听 notifications/tasks/status 即可",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -1053,6 +1057,7 @@ async def run_server():
         """调用工具（由 _TOOL_HANDLERS dispatch）"""
         import time as _time
         from datetime import datetime as _datetime
+        import asyncio as _asyncio
 
         _call_start = _time.monotonic()
         _call_start_dt = _datetime.now()
@@ -1063,6 +1068,53 @@ async def run_server():
         try:
             handler = _TOOL_HANDLERS.get(name)
             if handler:
+                # ── MCP 推送通知注入 ──
+                # 对于 code_hosting 等支持异步任务的工具，注入 _on_complete 回调
+                # 任务完成时自动推送 TaskStatusNotification 到 MCP 客户端，无需轮询
+                try:
+                    from mcp.types import (
+                        TaskStatusNotification, TaskStatusNotificationParams,
+                    )
+                    _session = server.request_context.session
+                    _loop = _asyncio.get_running_loop()
+
+                    def _make_on_complete(session, loop):
+                        def _on_complete(task_info):
+                            """后台任务完成回调 — 推送 TaskStatusNotification"""
+                            # 映射 local TaskStatus → MCP Literal 状态值
+                            status_map = {
+                                'COMPLETED': 'completed',
+                                'FAILED': 'failed',
+                                'CANCELLED': 'cancelled',
+                            }
+                            ts = task_info.status.name  # e.g. 'COMPLETED'
+                            mcp_status = status_map.get(ts, 'completed')
+                            # 确保 datetime 类型
+                            created = task_info.created_at
+                            updated = task_info.completed_at or _datetime.now()
+
+                            notif = TaskStatusNotification(
+                                params=TaskStatusNotificationParams(
+                                    taskId=task_info.task_id,
+                                    status=mcp_status,
+                                    statusMessage=task_info.message[:500] if task_info.message else None,
+                                    createdAt=created,
+                                    lastUpdatedAt=updated,
+                                    ttl=3600000,  # 1 hour retention
+                                )
+                            )
+                            # 从后台线程调度到 asyncio 事件循环
+                            asyncio.run_coroutine_threadsafe(
+                                session.send_notification(notif),
+                                loop
+                            )
+                        return _on_complete
+
+                    arguments['_on_complete'] = _make_on_complete(_session, _loop)
+                except (LookupError, AttributeError, ImportError) as _ctx_err:
+                    logger.debug(f"无法注入 MCP 推送回调: {_ctx_err}")
+                    # 非 MCP 环境（如测试）或无 request_context 时静默跳过
+
                 result = await handler(arguments)
             else:
                 raise ValueError(f"未知工具: {name}")

@@ -656,18 +656,27 @@ def _git_run(work_dir, *args, timeout=300, env=None):
 def _submit_git_task(name: str, fn, **kw) -> tuple:
     """通过 AsyncTaskManager 提交后台 git 任务。
 
+    支持 MCP 推送通知: 调用方传入 _on_complete 回调，
+    任务完成时自动推送 TaskStatusNotification 到 MCP 客户端。
+
     Returns:
         (task_id, message_dict)
     """
     if get_task_manager is None:
         return "", _err("异步任务管理器不可用")
+    # 提取 MCP 推送回调（由 server.py 注入），不传给任务函数
+    on_complete = kw.pop('_on_complete', None)
     # submit_task 会给 fn 注入 _progress_callback, _cancellation_check, _task_id
-    task_id = get_task_manager().submit_task(name, fn, **kw)
+    task_id = get_task_manager().submit_task(
+        name, fn,
+        on_complete=on_complete,
+        **kw,
+    )
     msg = (
         f"🔄 Git 任务已提交\n"
         f"  任务ID: {task_id}\n"
         f"  操作: {name}\n"
-        f"  查询: async_task(action='status', task_id='{task_id}')"
+        f"  完成时自动推送通知到 MCP (无需轮询)"
     )
     return task_id, _ok(msg)
 
@@ -724,7 +733,7 @@ def _act_git_clone(platform=None, **kw):
       设置 mirror="https://hub.fastgit.xyz"
       会自动将 repo_url 中的 github.com 替换为镜像地址。
 
-    返回 task_id，通过 async_task 查询进度。
+    提交后台任务，完成后自动推送 TaskStatusNotification 到 MCP 客户端。
     """
     url = kw["repo_url"]
     work_dir = kw.get("dir", ".")
@@ -752,13 +761,13 @@ def _act_git_clone(platform=None, **kw):
         _git_run(work_dir, *args)
         return _ok(f"✅ 仓库已克隆到 {target_dir}\n  地址: {url}")
 
-    task_id, status = _submit_git_task("git_clone", _do_clone)
+    task_id, status = _submit_git_task("git_clone", _do_clone, **kw)
     return _ok(
         f"🔄 克隆任务已启动\n"
         f"  任务ID: {task_id}\n"
         f"  地址: {url}\n"
         f"  目标: {target_dir}\n"
-        f"  查询: async_task(action='status', task_id='{task_id}')"
+        f"  完成时自动推送通知到 MCP (无需轮询)"
     )
 
 
@@ -767,7 +776,7 @@ def _act_git_push(platform=None, **kw):
     """推送到远程（异步，单次尝试，超时 120 秒）。
 
     推送方式取决于用户的 Git 配置（SSH/HTTPS代理/VPN），工具不做假设。
-    返回 task_id，通过 async_task 查询进度。
+    提交后台任务，完成后自动推送 TaskStatusNotification 到 MCP 客户端。
     如果推送失败，建议使用 git_push_retry 后台自动重试。
     """
     work_dir = kw.get("dir", ".")
@@ -784,7 +793,7 @@ def _act_git_push(platform=None, **kw):
         _git_run(work_dir, *args, timeout=120)
         return _ok(f"✅ 已推送到 {remote}{'/' + branch if branch else ''}")
 
-    tid, resp = _submit_git_task("git_push", _do_push)
+    tid, resp = _submit_git_task("git_push", _do_push, **kw)
     return resp
 
 
@@ -793,8 +802,7 @@ def _act_git_push_retry(platform=None, **kw):
     """后台自动重试推送，直到成功或达到最大次数。
 
     每 N 秒重试一次（默认 300 秒=5分钟），最多 M 次（默认 12 次=1小时）。
-    不阻塞对话，通过 async_task 查询进度和结果。
-    建议至少 30 分钟后查询状态，给重试留出时间窗口。
+    提交后台任务，每步结果自动推送 TaskStatusNotification 到 MCP 客户端。
     """
     work_dir = kw.get("dir", ".")
     remote = kw.get("remote", "origin")
@@ -855,16 +863,14 @@ def _act_git_push_retry(platform=None, **kw):
             f"推送失败，已重试 {max_retries} 次（约 {eta_total} 分钟）: {last_error}"
         )
 
-    tid, resp = _submit_git_task("git_push_retry", _do_retry_push)
+    tid, resp = _submit_git_task("git_push_retry", _do_retry_push, **kw)
 
     eta_total = (interval * max_retries) // 60
     resp_message = (
         f"🔄 后台自动重试已启动\n"
         f"  任务ID: {tid}\n"
         f"  重试间隔: {interval}秒 | 最大次数: {max_retries}次\n"
-        f"  预计总耗时: 约 {eta_total} 分钟\n\n"
-        f"💡 建议 {eta_total // 3} 分钟后再查询状态:\n"
-        f"  async_task(action='status', task_id='{tid}')   — 查看进度\n"
-        f"  async_task(action='result', task_id='{tid}')   — 获取结果"
+        f"  预计总耗时: 约 {eta_total} 分钟\n"
+        f"  每次重试结果自动推送通知到 MCP (无需轮询)"
     )
     return _ok(resp_message)

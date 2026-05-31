@@ -93,6 +93,7 @@ class AsyncTaskManager:
     def submit_task(self, name: str, func: Callable, *args,
                     progress_callback: Optional[Callable] = None,
                     dedup_key: Optional[str] = None,
+                    on_complete: Optional[Callable[..., None]] = None,
                     **kwargs) -> str:
         """
         提交后台任务
@@ -203,12 +204,24 @@ class AsyncTaskManager:
 
                 logger.info(f"任务 {task_id} ({name}) 完成")
 
+                # 触发完成回调（用于 MCP 推送通知）
+                if on_complete:
+                    try:
+                        on_complete(task_info)
+                    except Exception as cb_err:
+                        logger.error(f"任务 {task_id} 完成回调失败: {cb_err}")
+
             except CancelledError as e:
                 logger.info(f"任务 {task_id} ({name}) 已取消")
                 with self._lock:
                     task_info.status = TaskStatus.CANCELLED
                     task_info.completed_at = datetime.now()
                     task_info.message = str(e)
+                if on_complete:
+                    try:
+                        on_complete(task_info)
+                    except Exception as cb_err:
+                        logger.error(f"任务 {task_id} 取消回调失败: {cb_err}")
 
             except Exception as e:
                 logger.error(f"任务 {task_id} ({name}) 失败: {e}", exc_info=True)
@@ -217,6 +230,11 @@ class AsyncTaskManager:
                     task_info.completed_at = datetime.now()
                     task_info.error = str(e)
                     task_info.message = f"任务失败: {str(e)}"
+                if on_complete:
+                    try:
+                        on_complete(task_info)
+                    except Exception as cb_err:
+                        logger.error(f"任务 {task_id} 失败回调失败: {cb_err}")
 
             finally:
                 # 清理线程引用

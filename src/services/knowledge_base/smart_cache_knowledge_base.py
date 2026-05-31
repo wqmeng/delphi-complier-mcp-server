@@ -560,7 +560,7 @@ class SmartCacheKnowledgeBase:
             finfo = payload.get('data', {}).get('files', [{}])[0]
             
             # daudit 自身解析失败 -> fallback
-            if finfo.get('status') != 'ok':
+            if finfo.get('status') != 'ok' or finfo.get('errors'):
                 return None
             
             entities = finfo.get('entities', [])
@@ -738,7 +738,7 @@ class SmartCacheKnowledgeBase:
                     failed.append(fp)
                     continue
                 
-                if file_data.get('status') != 'ok':
+                if file_data.get('status') != 'ok' or file_data.get('errors'):
                     failed.append(fp)
                     continue
                 
