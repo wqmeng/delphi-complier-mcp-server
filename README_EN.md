@@ -325,7 +325,14 @@ MIT License - See [LICENSE](LICENSE) file.
 
 ## Version History
 
-### v2026.05.14 (Latest)
+### v2026.06.01 (Latest)
+
+- `delphi_file` partial write line number fix: 0-indexed documentation correction, offset returned after each write
+- `delphi_file(action="uses")` now also returns offset info
+- `AGENTS.md`: new partial write rules section (0-indexed semantics + consecutive edit offset algorithm)
+- Full test suite: 684 passed, 6 skipped
+
+### v2026.05.14
 
 - New `manage_component` tool: DFM component CRUD/create + PAS auto-sync (replaces `generate_component_dfm`)
 - `delphi_file` renamed & enhanced: DFM binary auto-conversion, backup management, search positioning (formerly `file_tool`, legacy name still works)
@@ -333,12 +340,6 @@ MIT License - See [LICENSE](LICENSE) file.
 - Server restructuring: MCP tool registration and invocation logic separation
 - New tests: file_tool, create_component_dfm, mcp_client, pasfmt
 - New `code_hosting` tool: unified Gitea/GitHub/GitLab operations
-
-### v2026.05.13
-
-- Regex overhaul: constructor/destructor/class function support
-- Search enhancement: function matches FF+FP, unit name fallback, top_k default 200
-- Performance fix: nested parenthesis regex from 219s → 0.002s
 
 Full history: See [CHANGELOG.md](CHANGELOG.md)
 

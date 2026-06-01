@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.06.01] - 2026-06-01
+
+### Fixed
+
+- **`delphi_file` 部分写入行号偏差根因消除**：`handle_write()` 文档字符串原本误写为"1-indexed 闭区间"，与实际 0-indexed Python 切片行为矛盾。现修正为"0-indexed 左闭右开"，消除 AI Agent 理解偏差。
+- **部分写入返回偏移量信息**：每次 `delphi_file(action="write", start_line=..., end_line=...)` 后，输出中附带 `偏移量: +N（删X行, 插Y行）` 和 `后续编辑: 行号 ≥ E 的新行号 = 原行号 + N`，AI Agent 可据此累加计算后续行号，无需重新读取文件。
+- **`uses` action 同步返回偏移量**：`delphi_file(action="uses")` 现在也返回 `替换范围` 和 `偏移量`，避免 uses 操作后行号错位。
+
+### Changed
+
+- **`AGENTS.md` 新增「部分写入规则」章节**：文档化 0-indexed 语义、连续编辑的行号偏移算法（每次 write 返回 s/e/offset，Agent 依次累加）、uses 偏移说明；推荐全文替换替代多次部分写入、用 `uses` action 替代手动 uses 行号计算。
+- **`tool_docs.py` `delphi_file` 文档补充**：write/read action 描述中添加 0-indexed 和偏移量说明。
+
 ## [2026.05.30] - 2026-05-30
 
 ### Changed

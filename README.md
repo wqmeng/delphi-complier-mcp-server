@@ -363,19 +363,20 @@ Copyright (c) 2026 Equilibrium Software Development Co., Ltd, Jilin
 
 ## 版本历史
 
-### v2026.05.14 (最新)
+### v2026.06.01 (最新)
+
+- `delphi_file` 部分写入行号修正：0-indexed 文档纠偏，写入后返回偏移量+后续行号调整公式
+- `delphi_file(action="uses")` 同步返回偏移量信息
+- `AGENTS.md` 新增部分写入规则章节：0-indexed 语义 + 连续编辑偏移算法
+- 全量测试 684 passed, 6 skipped
+
+### v2026.05.14
 
 - 新增 `manage_component` 工具：DFM 组件增/删/改/生成 + PAS 自动同步（替代原 `generate_component_dfm`）
 - `delphi_file` 重命名+增强：DFM 二进制自动转换、备份管理、搜索定位（原名 `file_tool`，旧名仍兼容）
 - `get_coding_rules` 增强：支持按章节分段获取，节省 token
 - 新增 `code_hosting` 工具：统一 Gitea/GitHub/GitLab 操作
 - 工作流从 6 步扩展为 7 步（①环境检查→②查KB→③写代码→④格式化→⑤编译→⑥审计→⑦清理）
-
-### v2026.05.13
-
-- 正则表达式大修：覆盖 constructor/destructor/class function 等语法
-- 搜索增强：function 同时匹配 FF+FP，单元名自动回退到文件路径，top_k 默认 200
-- 性能修复：嵌套括号正则从 219s → 0.002s
 
 完整版本历史详见 [CHANGELOG.md](CHANGELOG.md)
 
