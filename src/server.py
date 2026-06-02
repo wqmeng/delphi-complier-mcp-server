@@ -347,6 +347,7 @@ async def run_server():
                         "function_name": {"type": "string", "description": "[仅 action=read, search_type=function] 函数/过程名，如 'Create'"},
                         "start_line": {"type": "integer", "default": 0, "description": "起始行号（从0开始，左闭右开区间）。action=read 时分段读取；action=write 时配合 end_line 做部分写入"},
                         "limit": {"type": "integer", "default": 2000, "description": "[仅 action=read] 最大返回行数。当文件超长时分段读取"},
+                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[仅 action=read] 是否在输出中显示行号前缀（如 '     1: unit Unit1;'），默认 false"},
                         "end_line": {"type": "integer", "description": "结束行号（不包含该行，左闭右开区间），不传则到文件末尾。action=read 时配合 start_line 分段；action=write 时配合 start_line 做部分写入"},
                         "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[仅 action=read, search_type=class/function] 搜索范围"},
                         "project_path": {"type": "string", "description": "[仅 action=read, search_type=class/function] 项目文件路径，用于在项目知识库中查找 .pas"},
@@ -643,12 +644,15 @@ async def run_server():
             else:
                 task_params = {"version": version, "rebuild": rebuild, "incremental": incremental}
             return await async_tools.start_async_task({"task_type": task_type, "task_params": task_params,
-                                                        "show_progress": arguments.get("show_progress", True)})
+                                                         "show_progress": arguments.get("show_progress", True),
+                                                         "_on_complete": arguments.get("_on_complete")})
         elif action == "build_embedding":
             pp = _resolve_project_path(arguments.get("project_path"))
             if not pp:
                 return {"error": "未检测到项目路径"}
-            return await async_tools.start_async_task({"task_type": "build_embedding", "task_params": {"project_path": pp}, "show_progress": True})
+            return await async_tools.start_async_task({"task_type": "build_embedding", "task_params": {"project_path": pp},
+                                                        "show_progress": True,
+                                                        "_on_complete": arguments.get("_on_complete")})
         elif action == "scan":
             return await doc_tools.scan_documents(arguments) if kb_type == "document" else {"error": "action=scan 仅支持 kb_type=document"}
         elif action == "web":
@@ -847,10 +851,28 @@ async def run_server():
                 except (TypeError, ValueError):
                     text = str(result)
             else:
-                # 非 dict 返回 (如 string): 包装为结构化 JSON
+                # 非 dict 返回 (如 CallToolResult): 提取 TextContent 文本而非 str(整个对象)
+                if isinstance(result, CallToolResult):
+                    extracted = None
+                    if result.content and len(result.content) > 0:
+                        ct = result.content[0]
+                        if hasattr(ct, 'text'):
+                            extracted = ct.text
+                    if extracted is not None:
+                        try:
+                            data = _json.loads(extracted)
+                        except (_json.JSONDecodeError, TypeError):
+                            data = extracted
+                    else:
+                        data = str(result)
+                elif isinstance(result, (str, bytes)):
+                    data = result
+                else:
+                    data = str(result)
+
                 response = {
                     'success': not isinstance(result, CallToolResult) or not getattr(result, 'isError', False),
-                    'data': str(result) if not isinstance(result, (str, bytes)) else result,
+                    'data': data,
                 }
                 if _show_timing:
                     response['timing'] = {

@@ -4,6 +4,7 @@
 提供命令行参数生成功能
 """
 
+import json
 from typing import Optional, List, Dict, Any
 from mcp.types import CallToolResult, TextContent
 from ..models.compile_request import ProjectCompileRequest, CompileOptions, TargetPlatform, OutputType, RuntimeLibrary
@@ -106,7 +107,7 @@ async def get_compiler_args(
 
         # 返回结果
         return CallToolResult(
-            content=[{"type": "text", "text": str(result.to_dict())}],
+            content=[{"type": "text", "text": json.dumps(result.to_dict(), ensure_ascii=False, default=str)}],
             isError=False
         )
 

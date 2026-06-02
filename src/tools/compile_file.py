@@ -4,6 +4,7 @@
 提供 Delphi 单文件编译功能
 """
 
+import json
 import os
 from typing import Optional, List, Dict, Any
 from mcp.types import CallToolResult
@@ -162,7 +163,7 @@ async def compile_file(
         result = await _compiler_service.compile_file(request)
 
         return CallToolResult(
-            content=[{"type": "text", "text": str(result.to_dict())}],
+            content=[{"type": "text", "text": json.dumps(result.to_dict(), ensure_ascii=False, default=str)}],
             isError=result.status.value != "success"
         )
 

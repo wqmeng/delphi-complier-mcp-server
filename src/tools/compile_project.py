@@ -14,6 +14,7 @@ from ..utils.dproj_parser import DprojParser
 from ..utils.logger import get_logger
 from ..utils.dproj_parser import resolve_target_platform_from_dproj
 from ..utils.file_backup import detect_encoding
+import json
 import os
 import shlex
 import subprocess as _subprocess
@@ -547,7 +548,7 @@ async def compile_project(
             for f in result.output_files:
                 output_files_info += f"  {f}\n"
             result_dict["_output_files_details"] = output_files_info.strip()
-        result_text = str(result_dict)
+        result_text = json.dumps(result_dict, ensure_ascii=False, default=str)
 
         # 编译成功后，如需启动程序
         if run_after_compile and result.status.value == "success":
