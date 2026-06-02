@@ -94,6 +94,24 @@ def _act_save(svc, **kw):
     context = kw.get("context")
     tags = kw.get("tags")
 
+    # 保存前搜索相似经验，提醒 AI 泛化
+    try:
+        similar = svc.search(query=problem, top_k=3)
+        high_match = [s for s in similar if s.get("similarity", 0) > 0.7]
+        if high_match:
+            lines = ["⚠️ 发现高相似度经验，建议用 merge/update 合并而非另存："]
+            for s in high_match:
+                lines.append(f"  [{s['similarity']:.0%}] {s['id']} {s['problem'][:60]}")
+            lines.append("如需确认后合并，取消本次 save，改用:")
+            lines.append(f"  experience(action=merge, ids=[\"...\", \"{high_match[0]['id']}\"])")
+            lines.append(f"  或 experience(action=update, id=\"{high_match[0]['id']}\", ...)")
+            lines.append("如仍需新保存，设置 force=true 跳过此检查")
+            _force = kw.get("force", False)
+            if not _force:
+                return _ok("\n".join(lines), data={"similar": [s["id"] for s in high_match]})
+    except Exception:
+        pass  # 搜索失败不阻塞保存
+
     result = svc.save(
         problem=problem,
         solution=solution,
