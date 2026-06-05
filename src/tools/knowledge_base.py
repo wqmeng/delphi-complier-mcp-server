@@ -289,372 +289,537 @@ def _normalize_query(query: str) -> str:
 
 
 async def search_knowledge(arguments: Any) -> CallToolResult:
-    """统一搜索知识库"""
+    """统一搜索知识库（thin orchestrator: 路由 + 调度）"""
     kb_type = arguments.get("kb_type", "all")
     search_type = arguments.get("search_type", "all")
     query = _normalize_query(arguments.get("query", ""))
     top_k = min(arguments.get("top_k", 200), 500)
-    
+
+    # 空 query: 返回知识库状态 + 使用指引
     if not query:
-        # 空 query: 返回知识库状态 + 使用指引，而非简单报错
-        kb_type = arguments.get("kb_type", "all")
-        guide = (
-            "Delphi 知识库搜索\n"
-            "═══════════════════════════════════════\n"
-            "使用示例:\n"
-            '  delphi_kb(query="TStringList")            — 搜索类\n'
-            '  delphi_kb(query="Create", search_type="function") — 搜索函数\n'
-            '  delphi_kb(query="TForm", kb_type="delphi")  — 指定知识库\n'
-            '  delphi_kb(query="TfrmMain", kb_type="project") — 搜索项目代码\n'
-            '  delphi_kb(search_type="reference", query="TfrmMain") — 查找引用\n'
-            '\n'
-            f"知识库范围: {kb_type}\n"
-            f"search_type: {search_type}\n"
-            f"先调用 delphi_kb(action=stats, kb_type={kb_type}) 查看各 KB 文件数\n"
-        )
-        # 尝试获取统计信息补充到提示中
-        try:
-            guide = _append_stats_guide(guide, kb_type)
-        except Exception as e:
-            logger.debug("获取统计信息失败: %s", str(e))
-        return CallToolResult(content=[{"type": "text", "text": guide}])
-    
-    results = {}
+        return CallToolResult(content=[{"type": "text", "text": _empty_query_guide(kb_type, search_type)}])
+
+    # 路由: 根据 kb_type 决定要搜索的 KB 列表
+    results: dict = {}
     kb_types = [kb_type] if kb_type != "all" else ["delphi", "project", "thirdparty"]
-    
-    
-    # vocabularies.type 使用 Delphi 双字母编码（与 Delphi KB 一致）
-    _SEARCH_TYPE_TO_KIND = {
-        'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
-        'set': ['TS'], 'helper': ['TH'],
-        'type': ['TY', 'AT', 'PT'], 'function': ['FF', 'FP'], 'procedure': ['FP'], 'operator': ['OP'],
-        'const': ['CC'], 'resourcestring': ['CR'], 'variable': ['GV'],
-        'property': ['MP'], 'field': ['MF'], 'method': ['MM'], 'event': ['ME'],
-        'unit': ['UI'], 'string': ['KS'], 'dfm': ['DF'], 'attribute': ['AB'],
-    }
+    project_path = _resolve_project_path(arguments.get("project_path"))
 
-    def _filter_by_search_type(symbols, st):
-        if st in _SEARCH_TYPE_TO_KIND:
-            allowed_kinds = _SEARCH_TYPE_TO_KIND[st]
-            return [s for s in symbols if s.get('kind_code', '') in allowed_kinds]
-        return symbols
-
+    # 主搜索循环: 每个 KB 独立处理 reference / symbols+semantic
     for kb in kb_types:
         try:
-            # 引用查询：使用 search_usages 搜索哪些文件引用了该符号
             if search_type == "reference":
-                if kb == "delphi" and _delphi_kb_service:
-                    refs = _delphi_kb_service.search_by_name(query)
-                    if refs:
-                        results[f"{kb}_symbols"] = refs
-                elif kb == "project":
-                    project_path = _resolve_project_path(arguments.get("project_path"))
-                    if project_path:
-                        try:
-                            # 从 .dproj 读取命名空间前缀，用于解析省略前缀的单元引用
-                            # 未配置时使用 Delphi 2010+ 默认前缀
-                            from ..utils.dproj_parser import DprojParser
-                            try:
-                                parser = DprojParser(project_path)
-                                ns_prefixes = parser.get_namespace()
-                            except Exception:
-                                ns_prefixes = None
-
-                            if not ns_prefixes:
-                                # Delphi 2010+ 默认命名空间前缀
-                                ns_prefixes = [
-                                    'Winapi', 'System.Win', 'Data.Win', 'Datasnap.Win',
-                                    'Web.Win', 'Soap.Win', 'Xml.Win', 'System', 'Xml',
-                                    'Data', 'Datasnap', 'Web', 'Soap', 'Vcl',
-                                    'Vcl.Imaging', 'Vcl.Touch', 'Vcl.Samples', 'Vcl.Shell',
-                                ]
-
-                            pkb = _get_or_create_pkb(project_path)
-                            pkb.load_knowledge_bases()
-                            # 搜索前检查源码是否有变更（不阻塞重建，仅报告状态）
-                            if not pkb.check_and_update_project_kb():
-                                results["project_warning"] = (
-                                    "项目源码已变更，知识库数据可能不是最新。\n"
-                                    "请执行 delphi_kb(action='build', kb_type='project', "
-                                    f"project_path='{project_path}') 重建。"
-                                )
-                            if pkb.project_kb is None:
-                                results["project_error"] = (
-                                    f"项目知识库未构建。请先执行：\n"
-                                    f"  delphi_kb(action='build', kb_type='project', project_path='{project_path}')\n"
-                                    f"构建完成后再搜索。"
-                                )
-                            else:
-                                refs = pkb.project_kb.search_usages(query, namespace_prefixes=ns_prefixes)
-                                if refs:
-                                    results["project_references"] = refs
-                        except Exception as e:
-                            results["project_error"] = str(e)
-                    else:
-                        results["project_error"] = "未检测到项目路径"
-                elif kb == "thirdparty" and _thirdparty_kb_service:
-                    if _thirdparty_kb_service.kb_instance is None:
-                        _thirdparty_kb_service.load_knowledge_base()
-                    if _thirdparty_kb_service.kb_instance:
-                        refs = _thirdparty_kb_service.kb_instance.search_usages(query)
-                        if refs:
-                            results["thirdparty_references"] = refs
-                continue  # 引用查询已处理，跳过下面的符号搜索
-
-            if kb == "delphi" and _delphi_kb_service:
-                # 名称搜索（精确/通配匹配）
-                symbol_results = _delphi_kb_service.search_by_name(query)
-                filtered_by_type = _filter_by_search_type(symbol_results, search_type)
-                total_before_cut = len(filtered_by_type)
-                filtered = filtered_by_type[:top_k]
-                if filtered:
-                    results[f"{kb}_symbols"] = filtered
-                    results[f"{kb}_symbols_total"] = total_before_cut
-                # 语义搜索（补充语义匹配结果）
-                if search_type in ("semantic", "all"):
-                    try:
-                        semantic_classes = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
-                        if semantic_classes:
-                            results[f"{kb}_semantic_classes"] = semantic_classes
-                    except Exception as e:
-                        logger.debug("忽略非致命异常: %s", str(e))
-                    try:
-                        semantic_functions = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
-                        if semantic_functions:
-                            results[f"{kb}_semantic_functions"] = semantic_functions
-                    except Exception as e:
-                        logger.debug("忽略非致命异常: %s", str(e))
-
-            elif kb == "project":
-                # 项目知识库搜索：使用 ProjectKnowledgeBase 独立查询
-                project_path = _resolve_project_path(arguments.get("project_path"))
-                if not project_path:
-                    results["project_error"] = "请提供 project_path 参数（当前目录未自动检测到 .dproj 文件）"
-                else:
-                    try:
-                        pkb = _get_or_create_pkb(project_path)
-                        pkb.load_knowledge_bases()
-                        # 搜索前检查源码是否有变更，有则自动启动异步重建（防重入）
-                        if not pkb.check_and_update_project_kb():
-                            try:
-                                from ..services.knowledge_base.async_task_manager import get_task_manager
-                                from ..services.knowledge_base.project_knowledge_base import (
-                                    ProjectKnowledgeBase as _PKB,
-                                )
-
-                                _tm = get_task_manager()
-                                _rebuild_path = project_path
-                                _dedup_key = f"project_rebuild:{_rebuild_path}"
-
-                                def _rebuild_project_task(**kwargs):
-                                    _pp = kwargs.get("project_path")
-                                    _pc = kwargs.get("_progress_callback")
-                                    _p = _PKB(_pp, progress_callback=_pc)
-                                    _p.build_project_knowledge_base(rebuild=False)
-                                    _p.close()
-                                    return True
-
-                                _task_id = _tm.submit_task(
-                                    f"重建项目知识库 ({Path(_rebuild_path).stem})",
-                                    _rebuild_project_task,
-                                    dedup_key=_dedup_key,
-                                    project_path=_rebuild_path,
-                                )
-                                results["project_async_task_id"] = _task_id
-                                logger.info(f"检测到项目源码变更，启动异步重建 task_id={_task_id}")
-                            except Exception as e:
-                                logger.warning(f"启动异步重建失败: {e}")
-                                results["project_warning"] = (
-                                    "项目源码已变更，知识库数据可能不是最新。\n"
-                                    "请执行 delphi_kb(action='build', kb_type='project', "
-                                    f"project_path='{project_path}') 手动重建。"
-                                )
-                        # 如果知识库未构建，返回提示而非自动构建
-                        if pkb.project_kb is None:
-                            results["project_error"] = (
-                                f"项目知识库未构建。请先执行：\n"
-                                f"  delphi_kb(action='build', kb_type='project', project_path='{project_path}')\n"
-                                f"构建完成后再搜索。"
-                            )
-                            continue
-                        
-                        # 名称搜索（search_by_name 返回与 Delphi KB 相同格式）
-                        project_results = pkb.project_kb.search_by_name(query)
-                        filtered_by_type = _filter_by_search_type(project_results, search_type)
-                        total_before_cut = len(filtered_by_type)
-                        filtered = filtered_by_type[:top_k]
-                        if filtered:
-                            results["project_symbols"] = filtered
-                            results["project_symbols_total"] = total_before_cut
-                        # 语义搜索（直接使用 tuple 格式兼容已有输出逻辑）
-                        if search_type in ("semantic", "all"):
-                            try:
-                                sc = pkb.project_kb.semantic_search_classes(query, top_k=top_k)
-                                if sc:
-                                    results["project_semantic_classes"] = sc
-                            except Exception as e:
-                                logger.debug("忽略非致命异常: %s", str(e))
-                            try:
-                                sf = pkb.project_kb.semantic_search_functions(query, top_k=top_k)
-                                if sf:
-                                    results["project_semantic_functions"] = sf
-                            except Exception as e:
-                                logger.debug("忽略非致命异常: %s", str(e))
-                    except Exception as e:
-                        results["project_error"] = str(e)
-
-            elif kb == "thirdparty" and _thirdparty_kb_service:
-                # 确保知识库已加载
-                if _thirdparty_kb_service.kb_instance is None:
-                    _thirdparty_kb_service.load_knowledge_base()
-                if _thirdparty_kb_service.kb_instance:
-                    # 名称搜索：直接从底层 kb_instance 获取完整匹配结果
-                    symbol_results = _thirdparty_kb_service.kb_instance.search_by_name(query)
-                    filtered_by_type = _filter_by_search_type(symbol_results, search_type)
-                    total_before_cut = len(filtered_by_type)
-                    filtered = filtered_by_type[:top_k]
-                    if filtered:
-                        results["thirdparty_symbols"] = filtered
-                        results["thirdparty_symbols_total"] = total_before_cut
-                    # 语义搜索
-                    if search_type in ("semantic", "all"):
-                        try:
-                            semantic_classes = _thirdparty_kb_service.semantic_search_classes(query, top_k=top_k)
-                            if semantic_classes:
-                                results["thirdparty_semantic_classes"] = semantic_classes
-                        except Exception as e:
-                            logger.debug("忽略非致命异常: %s", str(e))
-                        try:
-                            semantic_functions = _thirdparty_kb_service.semantic_search_functions(query, top_k=top_k)
-                            if semantic_functions:
-                                results["thirdparty_semantic_functions"] = semantic_functions
-                        except Exception as e:
-                            logger.debug("忽略非致命异常: %s", str(e))
-
+                _search_references(kb, query, project_path, results)
+            else:
+                _search_symbols(kb, query, search_type, top_k, project_path, results)
         except Exception as e:
             results[f"{kb}_error"] = str(e)
 
-    # ── 文档知识库搜索（kb_type="all" 时也搜索文档 KB）──
-    _is_multiword = bool(_split_multikeywords(query) and len(_split_multikeywords(query)) > 1)
-    if kb_type == "all":
-        try:
-            doc_results = _search_document_kb(query, top_k)
-            if doc_results:
-                results["document"] = doc_results
-                results["document_is_multiword"] = _is_multiword
-        except Exception as e:
-            logger.debug("文档知识库搜索失败: %s", str(e))
+    # 文档知识库 (仅 kb_type="all")
+    _maybe_search_document(kb_type, query, top_k, results)
 
-    # ── Multi-keyword fallback ──
-    # 如果原始查询未命中，且 query 有明显多关键词特征，则自动拆分并逐一搜索后聚合。
-    # AI Agent 经常把多个关键词拼为一个长 query（如 "Delphi class field ..."）。
-    keywords = [query]
-    _initial_has_data = any(
-        v for k, v in results.items()
-        if not k.endswith('_error') and not k.endswith('_warning') and not k == 'project_async_task_id'
-    )
-    if not _initial_has_data:
+    # 多关键词 fallback: 原始 query 未命中时自动拆分后逐一搜索并去重聚合
+    keywords: list = [query]
+    if not _has_meaningful_results(results):
         _kw_split = _split_multikeywords(query)
         if len(_kw_split) > 1:
             keywords = _kw_split
-            seen_dedup: set = set()
-            for kw in keywords:
-                for kb in kb_types:
-                    try:
-                        if search_type == "reference":
-                            if kb == "delphi" and _delphi_kb_service:
-                                refs = _delphi_kb_service.search_by_name(kw)
-                                for r in refs:
-                                    dk = (r.get('name', ''), r.get('line', 0),
-                                          r.get('file', {}).get('full_path', ''))
-                                    if dk not in seen_dedup:
-                                        seen_dedup.add(dk)
-                                        results.setdefault(f"{kb}_symbols", []).append(r)
-                            elif kb == "project":
-                                pp = _resolve_project_path(arguments.get("project_path"))
-                                if pp:
-                                    try:
-                                        pkb = _get_or_create_pkb(pp)
-                                        pkb.load_knowledge_bases()
-                                        if pkb.project_kb:
-                                            refs = pkb.project_kb.search_usages(kw)
-                                            for r in refs:
-                                                dk = (r.get('file', {}).get('full_path', ''),
-                                                      str(r.get('imported_by', [])))
-                                                if dk not in seen_dedup:
-                                                    seen_dedup.add(dk)
-                                                    results.setdefault("project_references", []).append(r)
-                                    except Exception:
-                                        pass
-                            elif kb == "thirdparty" and _thirdparty_kb_service:
-                                if _thirdparty_kb_service.kb_instance is None:
-                                    _thirdparty_kb_service.load_knowledge_base()
-                                if _thirdparty_kb_service.kb_instance:
-                                    refs = _thirdparty_kb_service.kb_instance.search_usages(kw)
-                                    for r in refs:
-                                        dk = (r.get('file', {}).get('full_path', ''),
-                                              str(r.get('imported_by', [])))
-                                        if dk not in seen_dedup:
-                                            seen_dedup.add(dk)
-                                            results.setdefault("thirdparty_references", []).append(r)
-                        else:
-                            if kb == "delphi" and _delphi_kb_service:
-                                refs = _delphi_kb_service.search_by_name(kw)
-                                filtered = _filter_by_search_type(refs, search_type)
-                                for r in filtered:
-                                    dk = (r.get('name', ''), r.get('line', 0),
-                                          r.get('file', {}).get('full_path', ''))
-                                    if dk not in seen_dedup:
-                                        seen_dedup.add(dk)
-                                        results.setdefault(f"{kb}_symbols", []).append(r)
-                            elif kb == "project":
-                                pp = _resolve_project_path(arguments.get("project_path"))
-                                if pp:
-                                    try:
-                                        pkb = _get_or_create_pkb(pp)
-                                        pkb.load_knowledge_bases()
-                                        if pkb.project_kb:
-                                            refs = pkb.project_kb.search_by_name(kw)
-                                            filtered = _filter_by_search_type(refs, search_type)
-                                            for r in filtered:
-                                                dk = (r.get('name', ''), r.get('line', 0),
-                                                      r.get('file', {}).get('full_path', ''))
-                                                if dk not in seen_dedup:
-                                                    seen_dedup.add(dk)
-                                                    results.setdefault(f"{kb}_symbols", []).append(r)
-                                    except Exception:
-                                        pass
-                            elif kb == "thirdparty" and _thirdparty_kb_service:
-                                if _thirdparty_kb_service.kb_instance is None:
-                                    _thirdparty_kb_service.load_knowledge_base()
-                                if _thirdparty_kb_service.kb_instance:
-                                    refs = _thirdparty_kb_service.kb_instance.search_by_name(kw)
-                                    filtered = _filter_by_search_type(refs, search_type)
-                                    for r in filtered:
-                                        dk = (r.get('name', ''), r.get('line', 0),
-                                              r.get('file', {}).get('full_path', ''))
-                                        if dk not in seen_dedup:
-                                            seen_dedup.add(dk)
-                                            results.setdefault(f"{kb}_symbols", []).append(r)
-                    except Exception:
-                        continue
-                # 对每个拆分关键词也搜索文档知识库（全文搜索比符号匹配更相关）
-                try:
-                    kw_doc_results = _search_document_kb(kw, top_k // len(keywords) + 1)
-                    if kw_doc_results:
-                        seen_urls: set = set()
-                        for d in kw_doc_results:
-                            du = d.get('url') or d.get('path', '')
-                            if du and du not in seen_urls:
-                                seen_urls.add(du)
-                                results.setdefault("document", []).append(d)
-                except Exception:
-                    continue
+            _multi_keyword_search(keywords, kb_types, search_type, project_path, top_k, results)
 
-    has_multikeyword_results = any(
-        v for k, v in results.items()
-        if not k.endswith('_error') and not k.endswith('_warning') and not k == 'project_async_task_id'
+    # 格式化输出
+    output = _format_search_output(query, kb_type, search_type, results, top_k, keywords)
+    return CallToolResult(content=[{"type": "text", "text": output}])
+
+
+# ──────────────────────────────────────────────────────────────────
+# 常量 + 纯函数（重构自原嵌套函数 / 内联常量）
+# ──────────────────────────────────────────────────────────────────
+
+_SEARCH_TYPE_TO_KIND: dict = {
+    'class': ['TC'], 'record': ['TR'], 'interface': ['TI'], 'enum': ['TE'],
+    'set': ['TS'], 'helper': ['TH'],
+    'type': ['TY', 'AT', 'PT'], 'function': ['FF', 'FP'], 'procedure': ['FP'], 'operator': ['OP'],
+    'const': ['CC'], 'resourcestring': ['CR'], 'variable': ['GV'],
+    'property': ['MP'], 'field': ['MF'], 'method': ['MM'], 'event': ['ME'],
+    'unit': ['UI'], 'string': ['KS'], 'dfm': ['DF'], 'attribute': ['AB'],
+}
+
+_KIND_DESC: dict = {
+    'TC': '类', 'TR': '记录', 'TI': '接口', 'TH': 'Helper', 'TE': '枚举', 'TS': '集合',
+    'TY': '类型别名', 'AT': '数组', 'PT': '指针', 'FF': '函数', 'FP': '过程', 'OP': '运算符重载',
+    'CC': '常量', 'CR': '资源字符串', 'GV': '全局变量',
+    'MP': '属性', 'MF': '字段', 'MM': '方法', 'ME': '事件',
+    'UI': '单元', 'KS': '字符串', 'DF': 'DFM属性', 'AB': '自定义属性',
+}
+
+
+def _filter_by_search_type(symbols: list, st: str) -> list:
+    """按 search_type 过滤符号列表 (依据 kind_code)"""
+    if st in _SEARCH_TYPE_TO_KIND:
+        allowed_kinds = _SEARCH_TYPE_TO_KIND[st]
+        return [s for s in symbols if s.get('kind_code', '') in allowed_kinds]
+    return symbols
+
+
+def _trunc_hint(items: list, results: dict, total_key, top_k: int) -> str:
+    """如果结果被 top_k 截断，返回提示信息"""
+    total = len(items)
+    if total_key and total_key in results:
+        total = results[total_key]
+    if total > top_k:
+        return f"  (提示: 共 {total} 条结果，top_k={top_k}，{total - top_k} 条未显示，可增大 top_k 获取全部)\n"
+    return ''
+
+
+def _format_symbol(r: dict) -> str:
+    """格式化单个符号的输出 (含 AST 增强字段)"""
+    kind_code = r.get('kind_code', '')
+    type_desc = _KIND_DESC.get(kind_code) or r.get('kind') or r.get('type_name', kind_code) or ''
+    # 文件路径：兼容两种 KB 返回格式
+    file_info = r.get('file')
+    if isinstance(file_info, dict):
+        file_path = file_info.get('full_path') or file_info.get('path', 'N/A')
+    else:
+        file_path = r.get('full_path') or r.get('relative_path', 'N/A')
+
+    name = r.get('name', 'N/A')
+    line = r.get('line', 'N/A')
+
+    # AST 增强字段
+    extra = []
+    sig = r.get('signature', '') or r.get('kind', '')
+    if sig and sig not in ('', name):
+        extra.append(f"签名: {sig}")
+    inherits = r.get('inherits_from') or r.get('base_class', '')
+    if inherits:
+        extra.append(f"继承: {inherits}")
+    visibility = r.get('visibility', '')
+    if visibility and visibility != 'published':
+        extra.append(f"可见性: {visibility}")
+    modifiers = r.get('modifiers')
+    if modifiers and isinstance(modifiers, str) and modifiers != '[]':
+        extra.append(f"修饰: {modifiers}")
+    source = r.get('source', '')
+    if source == 'ast':
+        extra.append("(AST)")
+
+    result = f"  - {name} ({type_desc})\n    文件: {file_path}\n    行号: {line}\n"
+    if extra:
+        result += f"    {' | '.join(extra)}\n"
+    return result
+
+
+def _format_document_results(doc_list: list, limit: int) -> str:
+    """格式化文档知识库搜索结果"""
+    if not doc_list:
+        return ''
+    out = f"文档知识库 ({len(doc_list)}):\n"
+    for i, doc in enumerate(doc_list[:limit], 1):
+        doc_id = doc.get('id', '?')
+        title = doc.get('title', 'N/A')
+        out += f"  {i}. [ID:{doc_id}] {title}\n"
+        ct = doc.get('content_type', '')
+        if ct:
+            out += f"     类型: {ct}\n"
+        url = doc.get('url')
+        path = doc.get('path', '')
+        if url:
+            out += f"     URL: {url}\n"
+        elif path:
+            out += f"     路径: {path}\n"
+        sz = doc.get('size', 0)
+        if sz:
+            out += f"     大小: {sz} 字节\n"
+        content = doc.get('content', '')
+        if content:
+            preview = content[:150].replace('\n', ' ')
+            out += f"     预览: {preview}...\n"
+    hint = _trunc_hint(doc_list, {}, None, limit)
+    if hint:
+        out += hint
+    out += "\n"
+    return out
+
+
+# ──────────────────────────────────────────────────────────────────
+# 搜索子路径（重构自原 search_knowledge 内联代码）
+# ──────────────────────────────────────────────────────────────────
+
+def _empty_query_guide(kb_type: str, search_type: str) -> str:
+    """空 query 时返回知识库状态 + 使用指引"""
+    guide = (
+        "Delphi 知识库搜索\n"
+        "═══════════════════════════════════════\n"
+        "使用示例:\n"
+        '  delphi_kb(query="TStringList")            — 搜索类\n'
+        '  delphi_kb(query="Create", search_type="function") — 搜索函数\n'
+        '  delphi_kb(query="TForm", kb_type="delphi")  — 指定知识库\n'
+        '  delphi_kb(query="TfrmMain", kb_type="project") — 搜索项目代码\n'
+        '  delphi_kb(search_type="reference", query="TfrmMain") — 查找引用\n'
+        '\n'
+        f"知识库范围: {kb_type}\n"
+        f"search_type: {search_type}\n"
+        f"先调用 delphi_kb(action=stats, kb_type={kb_type}) 查看各 KB 文件数\n"
     )
+    try:
+        guide = _append_stats_guide(guide, kb_type)
+    except Exception as e:
+        logger.debug("获取统计信息失败: %s", str(e))
+    return guide
+
+
+def _has_meaningful_results(results: dict) -> bool:
+    """检查 results 中是否有有效数据（排除 _error / _warning / async_task_id 标记）"""
+    return any(
+        v for k, v in results.items()
+        if not k.endswith('_error') and not k.endswith('_warning') and k != 'project_async_task_id'
+    )
+
+
+def _search_references(kb: str, query: str, project_path: Optional[str], results: dict) -> None:
+    """单个 KB 的引用查询 (search_type=='reference')
+
+    - delphi: 委托给 _delphi_kb_service.search_by_name
+    - project: 解析 dproj 命名空间前缀，调用 project_kb.search_usages
+    - thirdparty: 委托给 _thirdparty_kb_service.kb_instance.search_usages
+    """
+    if kb == "delphi" and _delphi_kb_service:
+        refs = _delphi_kb_service.search_by_name(query)
+        if refs:
+            results["delphi_symbols"] = refs
+        return
+
+    if kb == "project":
+        if not project_path:
+            results["project_error"] = "未检测到项目路径"
+            return
+        try:
+            from ..utils.dproj_parser import DprojParser
+            try:
+                parser = DprojParser(project_path)
+                ns_prefixes = parser.get_namespace()
+            except Exception:
+                ns_prefixes = None
+
+            if not ns_prefixes:
+                # Delphi 2010+ 默认命名空间前缀
+                ns_prefixes = [
+                    'Winapi', 'System.Win', 'Data.Win', 'Datasnap.Win',
+                    'Web.Win', 'Soap.Win', 'Xml.Win', 'System', 'Xml',
+                    'Data', 'Datasnap', 'Web', 'Soap', 'Vcl',
+                    'Vcl.Imaging', 'Vcl.Touch', 'Vcl.Samples', 'Vcl.Shell',
+                ]
+
+            pkb = _get_or_create_pkb(project_path)
+            pkb.load_knowledge_bases()
+            if not pkb.check_and_update_project_kb():
+                results["project_warning"] = (
+                    "项目源码已变更，知识库数据可能不是最新。\n"
+                    "请执行 delphi_kb(action='build', kb_type='project', "
+                    f"project_path='{project_path}') 重建。"
+                )
+            if pkb.project_kb is None:
+                results["project_error"] = (
+                    f"项目知识库未构建。请先执行：\n"
+                    f"  delphi_kb(action='build', kb_type='project', project_path='{project_path}')\n"
+                    f"构建完成后再搜索。"
+                )
+            else:
+                refs = pkb.project_kb.search_usages(query, namespace_prefixes=ns_prefixes)
+                if refs:
+                    results["project_references"] = refs
+        except Exception as e:
+            results["project_error"] = str(e)
+        return
+
+    if kb == "thirdparty" and _thirdparty_kb_service:
+        if _thirdparty_kb_service.kb_instance is None:
+            _thirdparty_kb_service.load_knowledge_base()
+        if _thirdparty_kb_service.kb_instance:
+            refs = _thirdparty_kb_service.kb_instance.search_usages(query)
+            if refs:
+                results["thirdparty_references"] = refs
+
+
+def _search_symbols(
+    kb: str,
+    query: str,
+    search_type: str,
+    top_k: int,
+    project_path: Optional[str],
+    results: dict,
+) -> None:
+    """单个 KB 的符号 + 语义查询 (search_type in {class, function, all, semantic, ...})"""
+    if kb == "delphi" and _delphi_kb_service:
+        # 名称搜索（精确/通配匹配）
+        symbol_results = _delphi_kb_service.search_by_name(query)
+        filtered_by_type = _filter_by_search_type(symbol_results, search_type)
+        total_before_cut = len(filtered_by_type)
+        filtered = filtered_by_type[:top_k]
+        if filtered:
+            results["delphi_symbols"] = filtered
+            results["delphi_symbols_total"] = total_before_cut
+        # 语义搜索（补充语义匹配结果）
+        if search_type in ("semantic", "all"):
+            try:
+                semantic_classes = _delphi_kb_service.semantic_search_classes(query, top_k=top_k)
+                if semantic_classes:
+                    results["delphi_semantic_classes"] = semantic_classes
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
+            try:
+                semantic_functions = _delphi_kb_service.semantic_search_functions(query, top_k=top_k)
+                if semantic_functions:
+                    results["delphi_semantic_functions"] = semantic_functions
+            except Exception as e:
+                logger.debug("忽略非致命异常: %s", str(e))
+        return
+
+    if kb == "project":
+        if not project_path:
+            results["project_error"] = "请提供 project_path 参数（当前目录未自动检测到 .dproj 文件）"
+            return
+        try:
+            pkb = _get_or_create_pkb(project_path)
+            pkb.load_knowledge_bases()
+            # 搜索前检查源码是否有变更，有则自动启动异步重建（防重入）
+            if not pkb.check_and_update_project_kb():
+                _start_async_project_rebuild(project_path, results)
+            if pkb.project_kb is None:
+                results["project_error"] = (
+                    f"项目知识库未构建。请先执行：\n"
+                    f"  delphi_kb(action='build', kb_type='project', project_path='{project_path}')\n"
+                    f"构建完成后再搜索。"
+                )
+                return
+
+            # 名称搜索（search_by_name 返回与 Delphi KB 相同格式）
+            project_results = pkb.project_kb.search_by_name(query)
+            filtered_by_type = _filter_by_search_type(project_results, search_type)
+            total_before_cut = len(filtered_by_type)
+            filtered = filtered_by_type[:top_k]
+            if filtered:
+                results["project_symbols"] = filtered
+                results["project_symbols_total"] = total_before_cut
+            # 语义搜索
+            if search_type in ("semantic", "all"):
+                _try_semantic_search(pkb.project_kb, "project", query, top_k, results)
+        except Exception as e:
+            results["project_error"] = str(e)
+        return
+
+    if kb == "thirdparty" and _thirdparty_kb_service:
+        # 确保知识库已加载
+        if _thirdparty_kb_service.kb_instance is None:
+            _thirdparty_kb_service.load_knowledge_base()
+        if _thirdparty_kb_service.kb_instance:
+            # 名称搜索：直接从底层 kb_instance 获取完整匹配结果
+            symbol_results = _thirdparty_kb_service.kb_instance.search_by_name(query)
+            filtered_by_type = _filter_by_search_type(symbol_results, search_type)
+            total_before_cut = len(filtered_by_type)
+            filtered = filtered_by_type[:top_k]
+            if filtered:
+                results["thirdparty_symbols"] = filtered
+                results["thirdparty_symbols_total"] = total_before_cut
+            # 语义搜索
+            if search_type in ("semantic", "all"):
+                _try_semantic_search(_thirdparty_kb_service.kb_instance, "thirdparty", query, top_k, results)
+
+
+def _try_semantic_search(kb_service, kb: str, query: str, top_k: int, results: dict) -> None:
+    """对 project / thirdparty 知识库执行语义搜索 (classes + functions)，失败时静默"""
+    try:
+        sc = kb_service.semantic_search_classes(query, top_k=top_k)
+        if sc:
+            results[f"{kb}_semantic_classes"] = sc
+    except Exception as e:
+        logger.debug("忽略非致命异常: %s", str(e))
+    try:
+        sf = kb_service.semantic_search_functions(query, top_k=top_k)
+        if sf:
+            results[f"{kb}_semantic_functions"] = sf
+    except Exception as e:
+        logger.debug("忽略非致命异常: %s", str(e))
+
+
+def _start_async_project_rebuild(project_path: str, results: dict) -> None:
+    """项目源码变更时，启动异步重建任务（防重入通过 dedup_key）"""
+    try:
+        from ..services.knowledge_base.async_task_manager import get_task_manager
+        from ..services.knowledge_base.project_knowledge_base import (
+            ProjectKnowledgeBase as _PKB,
+        )
+
+        _tm = get_task_manager()
+        _rebuild_path = project_path
+        _dedup_key = f"project_rebuild:{_rebuild_path}"
+
+        def _rebuild_project_task(**kwargs):
+            _pp = kwargs.get("project_path")
+            _pc = kwargs.get("_progress_callback")
+            _p = _PKB(_pp, progress_callback=_pc)
+            _p.build_project_knowledge_base(rebuild=False)
+            _p.close()
+            return True
+
+        _task_id = _tm.submit_task(
+            f"重建项目知识库 ({Path(_rebuild_path).stem})",
+            _rebuild_project_task,
+            dedup_key=_dedup_key,
+            project_path=_rebuild_path,
+        )
+        results["project_async_task_id"] = _task_id
+        logger.info(f"检测到项目源码变更，启动异步重建 task_id={_task_id}")
+    except Exception as e:
+        logger.warning(f"启动异步重建失败: {e}")
+        results["project_warning"] = (
+            "项目源码已变更，知识库数据可能不是最新。\n"
+            "请执行 delphi_kb(action='build', kb_type='project', "
+            f"project_path='{project_path}') 手动重建。"
+        )
+
+
+def _maybe_search_document(kb_type: str, query: str, top_k: int, results: dict) -> None:
+    """文档知识库搜索 (仅 kb_type='all' 时)"""
+    if kb_type != "all":
+        return
+    _is_multiword = bool(_split_multikeywords(query) and len(_split_multikeywords(query)) > 1)
+    try:
+        doc_results = _search_document_kb(query, top_k)
+        if doc_results:
+            results["document"] = doc_results
+            results["document_is_multiword"] = _is_multiword
+    except Exception as e:
+        logger.debug("文档知识库搜索失败: %s", str(e))
+
+
+def _multi_keyword_search(
+    keywords: list,
+    kb_types: list,
+    search_type: str,
+    project_path: Optional[str],
+    top_k: int,
+    results: dict,
+) -> None:
+    """多关键词拆分后逐个搜索并按 (name, line, path) 或 (path, imported_by) 去重聚合"""
+    seen_dedup: set = set()
+    for kw in keywords:
+        for kb in kb_types:
+            try:
+                if search_type == "reference":
+                    _multi_kw_ref_one_kb(kb, kw, project_path, seen_dedup, results)
+                else:
+                    _multi_kw_sym_one_kb(kb, kw, search_type, project_path, seen_dedup, results)
+            except Exception:
+                continue
+        # 对每个拆分关键词也搜索文档知识库（全文搜索比符号匹配更相关）
+        try:
+            kw_doc_results = _search_document_kb(kw, top_k // len(keywords) + 1)
+            if kw_doc_results:
+                seen_urls: set = set()
+                for d in kw_doc_results:
+                    du = d.get('url') or d.get('path', '')
+                    if du and du not in seen_urls:
+                        seen_urls.add(du)
+                        results.setdefault("document", []).append(d)
+        except Exception:
+            continue
+
+
+def _multi_kw_ref_one_kb(
+    kb: str, kw: str, project_path: Optional[str], seen_dedup: set, results: dict
+) -> None:
+    """多关键词搜索: 单个 KB 的引用分支"""
+    if kb == "delphi" and _delphi_kb_service:
+        refs = _delphi_kb_service.search_by_name(kw)
+        for r in refs:
+            dk = (r.get('name', ''), r.get('line', 0),
+                  r.get('file', {}).get('full_path', ''))
+            if dk not in seen_dedup:
+                seen_dedup.add(dk)
+                results.setdefault("delphi_symbols", []).append(r)
+    elif kb == "project" and project_path:
+        try:
+            pkb = _get_or_create_pkb(project_path)
+            pkb.load_knowledge_bases()
+            if pkb.project_kb:
+                refs = pkb.project_kb.search_usages(kw)
+                for r in refs:
+                    dk = (r.get('file', {}).get('full_path', ''),
+                          str(r.get('imported_by', [])))
+                    if dk not in seen_dedup:
+                        seen_dedup.add(dk)
+                        results.setdefault("project_references", []).append(r)
+        except Exception as e:
+            logger.debug("搜索项目引用失败: %s", e)
+    elif kb == "thirdparty" and _thirdparty_kb_service:
+        if _thirdparty_kb_service.kb_instance is None:
+            _thirdparty_kb_service.load_knowledge_base()
+        if _thirdparty_kb_service.kb_instance:
+            refs = _thirdparty_kb_service.kb_instance.search_usages(kw)
+            for r in refs:
+                dk = (r.get('file', {}).get('full_path', ''),
+                      str(r.get('imported_by', [])))
+                if dk not in seen_dedup:
+                    seen_dedup.add(dk)
+                    results.setdefault("thirdparty_references", []).append(r)
+
+
+def _multi_kw_sym_one_kb(
+    kb: str, kw: str, search_type: str, project_path: Optional[str], seen_dedup: set, results: dict
+) -> None:
+    """多关键词搜索: 单个 KB 的符号分支"""
+    if kb == "delphi" and _delphi_kb_service:
+        refs = _delphi_kb_service.search_by_name(kw)
+        filtered = _filter_by_search_type(refs, search_type)
+        for r in filtered:
+            dk = (r.get('name', ''), r.get('line', 0),
+                  r.get('file', {}).get('full_path', ''))
+            if dk not in seen_dedup:
+                seen_dedup.add(dk)
+                results.setdefault("delphi_symbols", []).append(r)
+    elif kb == "project" and project_path:
+        try:
+            pkb = _get_or_create_pkb(project_path)
+            pkb.load_knowledge_bases()
+            if pkb.project_kb:
+                refs = pkb.project_kb.search_by_name(kw)
+                filtered = _filter_by_search_type(refs, search_type)
+                for r in filtered:
+                    dk = (r.get('name', ''), r.get('line', 0),
+                          r.get('file', {}).get('full_path', ''))
+                    if dk not in seen_dedup:
+                        seen_dedup.add(dk)
+                        results.setdefault("project_symbols", []).append(r)
+        except Exception as e:
+            logger.debug("搜索三方库失败: %s", e)
+    elif kb == "thirdparty" and _thirdparty_kb_service:
+        if _thirdparty_kb_service.kb_instance is None:
+            _thirdparty_kb_service.load_knowledge_base()
+        if _thirdparty_kb_service.kb_instance:
+            refs = _thirdparty_kb_service.kb_instance.search_by_name(kw)
+            filtered = _filter_by_search_type(refs, search_type)
+            for r in filtered:
+                dk = (r.get('name', ''), r.get('line', 0),
+                      r.get('file', {}).get('full_path', ''))
+                if dk not in seen_dedup:
+                    seen_dedup.add(dk)
+                    results.setdefault("thirdparty_symbols", []).append(r)
+
+
+# ──────────────────────────────────────────────────────────────────
+# 输出格式化
+# ──────────────────────────────────────────────────────────────────
+
+def _format_search_output(
+    query: str,
+    kb_type: str,
+    search_type: str,
+    results: dict,
+    top_k: int,
+    keywords: list,
+) -> str:
+    """格式化搜索结果为人类可读的多段输出"""
+    has_multikeyword_results = _has_meaningful_results(results)
     output = (
         f"搜索 '{query}'"
         f" ({'自动拆分关键词' if keywords and len(keywords) > 1 else '类型: ' + search_type}"
@@ -665,178 +830,37 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         output += f"> {', '.join(keywords)}\n\n"
     _is_document_first = results.get("document_is_multiword", False) or (keywords and len(keywords) > 1)
     has_results = False
-    # 多词查询：文档知识库优先展示（全文搜索更相关）
+    # 多词查询: 文档 KB 优先展示（全文搜索更相关）
     if "document" in results and _is_document_first:
-        doc_fmt = _format_document_results(results["document"])
+        doc_fmt = _format_document_results(results["document"], top_k)
         if doc_fmt:
             output += doc_fmt
             has_results = True
-    
-    _KIND_DESC = {
-        'TC': '类', 'TR': '记录', 'TI': '接口', 'TH': 'Helper', 'TE': '枚举', 'TS': '集合',
-        'TY': '类型别名', 'AT': '数组', 'PT': '指针', 'FF': '函数', 'FP': '过程', 'OP': '运算符重载',
-        'CC': '常量', 'CR': '资源字符串', 'GV': '全局变量',
-        'MP': '属性', 'MF': '字段', 'MM': '方法', 'ME': '事件',
-        'UI': '单元', 'KS': '字符串', 'DF': 'DFM属性', 'AB': '自定义属性',
-    }
 
-    def _trunc_hint(items, total_key=None):
-        """如果结果被 top_k 截断，返回提示信息"""
-        total = len(items)
-        if total_key and total_key in results:
-            total = results[total_key]
-        if total > top_k:
-            return f"  (提示: 共 {total} 条结果，top_k={top_k}，{total - top_k} 条未显示，可增大 top_k 获取全部)\n"
-        return ''
+    # Delphi 符号（6 个子段）
+    for key, label, style in [
+        ("delphi_symbols", "Delphi 符号", "detailed"),
+        ("delphi_all", "Delphi 所有符号", "all"),
+        ("delphi_classes", "Delphi 类", "simple"),
+        ("delphi_functions", "Delphi 函数/过程", "simple"),
+        ("delphi_semantic_classes", "Delphi 类(语义搜索)", "semantic"),
+        ("delphi_semantic_functions", "Delphi 函数/过程(语义搜索)", "semantic"),
+    ]:
+        if key in results and results[key]:
+            output += _format_one_section(key, label, results[key], results, top_k, style)
+            has_results = True
 
-    def _format_document_results(doc_list: list, limit: int = top_k) -> str:
-        """格式化文档知识库搜索结果"""
-        if not doc_list:
-            return ''
-        out = f"文档知识库 ({len(doc_list)}):\n"
-        for i, doc in enumerate(doc_list[:limit], 1):
-            doc_id = doc.get('id', '?')
-            title = doc.get('title', 'N/A')
-            out += f"  {i}. [ID:{doc_id}] {title}\n"
-            ct = doc.get('content_type', '')
-            if ct:
-                out += f"     类型: {ct}\n"
-            url = doc.get('url')
-            path = doc.get('path', '')
-            if url:
-                out += f"     URL: {url}\n"
-            elif path:
-                out += f"     路径: {path}\n"
-            sz = doc.get('size', 0)
-            if sz:
-                out += f"     大小: {sz} 字节\n"
-            content = doc.get('content', '')
-            if content:
-                preview = content[:150].replace('\n', ' ')
-                out += f"     预览: {preview}...\n"
-        hint = _trunc_hint(doc_list)
-        if hint:
-            out += hint
-        out += "\n"
-        return out
-
-    def _format_symbol(r):
-        # 类型描述：兼容 SQLiteVector 格式（kind_code）和 SmartCache 格式（type_name）
-        kind_code = r.get('kind_code', '')
-        type_desc = _KIND_DESC.get(kind_code) or r.get('kind') or r.get('type_name', kind_code) or ''
-        # 文件路径：兼容两种 KB 返回格式
-        file_info = r.get('file')
-        if isinstance(file_info, dict):
-            file_path = file_info.get('full_path') or file_info.get('path', 'N/A')
-        else:
-            file_path = r.get('full_path') or r.get('relative_path', 'N/A')
-        
-        name = r.get('name', 'N/A')
-        line = r.get('line', 'N/A')
-        definition = r.get('definition', '')
-        
-        # AST 增强字段
-        extra = []
-        sig = r.get('signature', '') or r.get('kind', '')
-        if sig and sig not in ('', name):
-            extra.append(f"签名: {sig}")
-        inherits = r.get('inherits_from') or r.get('base_class', '')
-        if inherits:
-            extra.append(f"继承: {inherits}")
-        visibility = r.get('visibility', '')
-        if visibility and visibility != 'published':
-            extra.append(f"可见性: {visibility}")
-        modifiers = r.get('modifiers')
-        if modifiers and isinstance(modifiers, str) and modifiers != '[]':
-            extra.append(f"修饰: {modifiers}")
-        source = r.get('source', '')
-        if source == 'ast':
-            extra.append("(AST)")
-        
-        result = f"  - {name} ({type_desc})\n    文件: {file_path}\n    行号: {line}\n"
-        if extra:
-            result += f"    {' | '.join(extra)}\n"
-        return result
-
-    # 显示符号搜索结果
-    if "delphi_symbols" in results and results["delphi_symbols"]:
-        output += f"Delphi 符号 ({len(results['delphi_symbols'])}):\n"
-        for r in results["delphi_symbols"][:top_k]:
-            output += _format_symbol(r)
-            if r.get('definition'):
-                output += f"    定义: {r.get('definition')}\n"
-        output += _trunc_hint(results['delphi_symbols'], 'delphi_symbols_total')
-        output += "\n"
-        has_results = True
-    
-    # 显示所有类型搜索结果
-    if "delphi_all" in results and results["delphi_all"]:
-        output += f"Delphi 所有符号 ({len(results['delphi_all'])}):\n"
-        for r in results["delphi_all"][:top_k]:
-            kind_code = r.get('kind_code', '')
-            type_desc = _KIND_DESC.get(kind_code, r.get('kind', kind_code))
-            output += f"  - {r.get('name', 'N/A')} ({type_desc})\n"
-        output += _trunc_hint(results['delphi_all'])
-        output += "\n"
-        has_results = True
-    
-    if "delphi_classes" in results and results["delphi_classes"]:
-        output += f"Delphi 类 ({len(results['delphi_classes'])}):\n"
-        for r in results["delphi_classes"][:top_k]:
-            output += f"  - {r.get('name', 'N/A')}\n"
-        output += _trunc_hint(results['delphi_classes'])
-        output += "\n"
-        has_results = True
-    
-    if "delphi_functions" in results and results["delphi_functions"]:
-        output += f"Delphi 函数/过程 ({len(results['delphi_functions'])}):\n"
-        for r in results["delphi_functions"][:top_k]:
-            output += f"  - {r.get('name', 'N/A')}\n"
-        output += _trunc_hint(results['delphi_functions'])
-        output += "\n"
-        has_results = True
-    
-    if "delphi_semantic_classes" in results and results["delphi_semantic_classes"]:
-        output += f"Delphi 类(语义搜索) ({len(results['delphi_semantic_classes'])}):\n"
-        for name, sim in results["delphi_semantic_classes"][:top_k]:
-            output += f"  - {name} (相似度: {sim:.2f})\n"
-        output += _trunc_hint(results['delphi_semantic_classes'])
-        output += "\n"
-        has_results = True
-    
-    if "delphi_semantic_functions" in results and results["delphi_semantic_functions"]:
-        output += f"Delphi 函数/过程(语义搜索) ({len(results['delphi_semantic_functions'])}):\n"
-        for name, sim in results["delphi_semantic_functions"][:top_k]:
-            output += f"  - {name} (相似度: {sim:.2f})\n"
-        output += _trunc_hint(results['delphi_semantic_functions'])
-        output += "\n"
-        has_results = True
-    
-    # 项目知识库搜索结果
+    # project + thirdparty 符号 + 语义
     for kb, label in [("project", "项目"), ("thirdparty", "三方库")]:
-        if f"{kb}_symbols" in results and results[f"{kb}_symbols"]:
-            output += f"{label} 符号 ({len(results[f'{kb}_symbols'])}):\n"
-            for r in results[f"{kb}_symbols"][:top_k]:
-                output += _format_symbol(r)
-                if r.get('definition'):
-                    output += f"    定义: {r.get('definition')}\n"
-            output += _trunc_hint(results[f'{kb}_symbols'], f'{kb}_symbols_total')
-            output += "\n"
-            has_results = True
-        if f"{kb}_semantic_classes" in results and results[f"{kb}_semantic_classes"]:
-            output += f"{label} 类(语义搜索) ({len(results[f'{kb}_semantic_classes'])}):\n"
-            for name, sim in results[f"{kb}_semantic_classes"][:top_k]:
-                output += f"  - {name} (相似度: {sim:.2f})\n"
-            output += _trunc_hint(results[f'{kb}_semantic_classes'])
-            output += "\n"
-            has_results = True
-        if f"{kb}_semantic_functions" in results and results[f"{kb}_semantic_functions"]:
-            output += f"{label} 函数/过程(语义搜索) ({len(results[f'{kb}_semantic_functions'])}):\n"
-            for name, sim in results[f"{kb}_semantic_functions"][:top_k]:
-                output += f"  - {name} (相似度: {sim:.2f})\n"
-            output += _trunc_hint(results[f'{kb}_semantic_functions'])
-            output += "\n"
-            has_results = True
+        for suffix, sublabel, style in [
+            ("symbols", "符号", "detailed"),
+            ("semantic_classes", "类(语义搜索)", "semantic"),
+            ("semantic_functions", "函数/过程(语义搜索)", "semantic"),
+        ]:
+            key = f"{kb}_{suffix}"
+            if key in results and results[key]:
+                output += _format_one_section(key, f"{label} {sublabel}", results[key], results, top_k, style)
+                has_results = True
 
     # 引用查询结果
     for ref_key, label in [("project_references", "项目引用"), ("thirdparty_references", "三方库引用")]:
@@ -849,11 +873,11 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
                 output += f"  - {fi.get('full_path', '?')}\n"
                 if imported:
                     output += f"    引用单元: {', '.join(imported[:5])}\n"
-            output += _trunc_hint(refs)
+            output += _trunc_hint(refs, results, None, top_k)
             output += "\n"
             has_results = True
 
-    # 显示异步重建任务信息
+    # 异步重建任务信息
     if "project_async_task_id" in results:
         output += (
             f"【后台重建】检测到项目源码变更，已自动启动异步重建。\n"
@@ -862,30 +886,61 @@ async def search_knowledge(arguments: Any) -> CallToolResult:
         )
         has_results = True
 
-    # 显示提示信息（如果有）
-    for warn_key in ["project_warning"]:
-        if warn_key in results and results[warn_key]:
-            output += f"【提示】{results[warn_key]}\n\n"
-            has_results = True
+    # 提示信息
+    if "project_warning" in results and results["project_warning"]:
+        output += f"【提示】{results['project_warning']}\n\n"
+        has_results = True
 
-    # 单词查询：文档知识库结果靠后展示
+    # 单词查询: 文档 KB 靠后展示
     if "document" in results and not _is_document_first:
-        doc_fmt = _format_document_results(results["document"])
+        doc_fmt = _format_document_results(results["document"], top_k)
         if doc_fmt:
             output += doc_fmt
             has_results = True
 
-    # 显示错误信息（如果有）
-    for err_key in ["project_error", "thirdparty_error", "delphi_error"]:
+    # 错误信息
+    for err_key, label in [("project_error", "项目"), ("thirdparty_error", "三方库"), ("delphi_error", "Delphi")]:
         if err_key in results and results[err_key]:
-            label = {"project_error": "项目", "thirdparty_error": "三方库", "delphi_error": "Delphi"}.get(err_key, err_key)
             output += f"【{label}】错误: {results[err_key]}\n\n"
             has_results = True
 
     if not has_results:
         output += "未找到相关内容\n"
+    return output
 
-    return CallToolResult(content=[{"type": "text", "text": output}])
+
+def _format_one_section(
+    key: str, label: str, items: list, results: dict, top_k: int, style: str
+) -> str:
+    """格式化单个结果段
+
+    style:
+    - 'detailed': 使用 _format_symbol(r) + definition (delphi/project/thirdparty symbols)
+    - 'all': 使用 kind_code → _KIND_DESC + name (delphi_all)
+    - 'simple': 使用 just name (delphi_classes, delphi_functions)
+    - 'semantic': 使用 (name, sim) tuple format (semantic_*)
+    """
+    out = f"{label} ({len(items)}):\n"
+    if style == "semantic":
+        for name, sim in items[:top_k]:
+            out += f"  - {name} (相似度: {sim:.2f})\n"
+    elif style == "detailed":
+        for r in items[:top_k]:
+            out += _format_symbol(r)
+            if r.get('definition'):
+                out += f"    定义: {r.get('definition')}\n"
+    elif style == "all":
+        for r in items[:top_k]:
+            kind_code = r.get('kind_code', '')
+            type_desc = _KIND_DESC.get(kind_code, r.get('kind', kind_code))
+            out += f"  - {r.get('name', 'N/A')} ({type_desc})\n"
+    elif style == "simple":
+        for r in items[:top_k]:
+            out += f"  - {r.get('name', 'N/A')}\n"
+    total_key = f"{key}_total" if f"{key}_total" in results else None
+    out += _trunc_hint(items, results, total_key, top_k)
+    out += "\n"
+    return out
 
 
 async def build_unified_knowledge_base(arguments: Any) -> CallToolResult:
