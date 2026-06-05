@@ -30,13 +30,35 @@ class ConfigManager:
         初始化配置管理器
 
         Args:
-            config_path: 编译器配置文件路径，默认相对于项目根目录 config/compilers.json
-            history_path: 编译历史文件路径，默认相对于项目根目录 config/history.json
+            config_path: 编译器配置文件路径，默认从 src/config/ 或项目根 config/ 自动查找
+                （两个候选位置都支持，按存在性自动选择并输出提示）
+            history_path: 编译历史文件路径，默认与 config_path 同目录下的 history.json
         """
         if config_path is None:
-            # 相对于本文件位置计算项目根目录，避免 CWD 依赖
-            _default_root = Path(__file__).parent.parent
-            config_path = str(_default_root / "config" / "compilers.json")
+            # 自愈路径: AGENTS.md 文档与历史部署位置不一致
+            # 候选: (1) src/config/compilers.json  (2) <项目根>/config/compilers.json
+            # 选择第一个存在的, 都不存在时回退到 (1) 以便后续 _auto_detect_compilers 写入
+            _default_root = Path(__file__).parent.parent  # src/
+            _candidates = [
+                _default_root / "config" / "compilers.json",           # src/config/  (历史内置)
+                _default_root.parent / "config" / "compilers.json",    # 项目根 config/ (AGENTS.md 描述)
+            ]
+            config_path = str(_candidates[0])  # 默认: src/config/
+            for _candidate in _candidates:
+                if _candidate.exists():
+                    config_path = str(_candidate)
+                    if _candidate != _candidates[0]:
+                        # 仅在切换到非默认位置时输出提示（首次启动/迁移后）
+                        logger.info(
+                            "compilers.json 默认路径 (%s) 不存在,已自愈切换到: %s",
+                            _candidates[0], config_path,
+                        )
+                    break
+            else:
+                logger.debug(
+                    "compilers.json 候选路径均不存在,将使用默认位置: %s（_auto_detect_compilers 将创建）",
+                    config_path,
+                )
         if history_path is None:
             if config_path is None:
                 _default_root = Path(__file__).parent.parent
