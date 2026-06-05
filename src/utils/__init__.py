@@ -4,9 +4,12 @@
 包含编码检测、路径处理等通用工具函数
 """
 
-import locale
 import ctypes
+import locale
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 def get_console_encoding() -> str:
@@ -26,6 +29,6 @@ def get_console_encoding() -> str:
         cp = ctypes.windll.kernel32.GetConsoleOutputCP()
         if cp > 0:
             return f'cp{cp}'
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("获取控制台编码失败（回退到 ANSI 编码）: %s", e)
     return locale.getpreferredencoding()

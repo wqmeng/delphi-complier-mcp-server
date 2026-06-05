@@ -341,8 +341,8 @@ def _extract_classes_from_dfm(filepath: Path) -> set:
         text = filepath.read_text(encoding="utf-8-sig")
         for m in re.finditer(r'object\s+\w+\s*:\s*(T\w+)', text):
             classes.add(m.group(1))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("提取 DFM 类名失败 %s: %s", filepath, e)
     return classes
 
 
@@ -366,8 +366,8 @@ def _extract_uses_set(filepath: Path) -> set:
                 if part and not part[0].isupper():
                     continue
                 units.add(part)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("提取 uses 列表失败 %s: %s", filepath, e)
     return units
 
 

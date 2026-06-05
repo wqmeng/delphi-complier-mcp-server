@@ -229,8 +229,8 @@ async def read_source_file(arguments: Any) -> CallToolResult:
             ansi = locale.getpreferredencoding()
             if ansi.lower() not in (e.lower() for e in encodings_to_try):
                 encodings_to_try.append(ansi)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("获取 ANSI 编码失败（不影响主流程）: %s", e)
 
         encoding_used = 'utf-8'
         all_lines = None

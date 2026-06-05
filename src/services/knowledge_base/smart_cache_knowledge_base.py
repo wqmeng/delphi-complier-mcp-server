@@ -591,8 +591,8 @@ class SmartCacheKnowledgeBase:
                             src = data.get('file', '')
                             if src:
                                 mapping.append({'src': src, 'out': fname})
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug("解析 daudit 映射文件 %s 失败: %s", fpath, e)
             
             # 处理每个结果文件
             results = []
@@ -625,8 +625,8 @@ class SmartCacheKnowledgeBase:
                 try:
                     with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
                         line_count = f.read().count('\n') + 1
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("读取文件行数失败 %s: %s", fp, e)
                 
                 items = []
                 for ent in entities:
@@ -708,11 +708,11 @@ class SmartCacheKnowledgeBase:
                 os.unlink(batch_path)
             except OSError:
                 pass
-            try:
-                import shutil
-                shutil.rmtree(out_dir, ignore_errors=True)
-            except Exception:
-                pass
+                try:
+                    import shutil
+                    shutil.rmtree(out_dir, ignore_errors=True)
+                except Exception as e:
+                    logger.debug("清理临时目录 %s 失败: %s", out_dir, e)
 
     @staticmethod
     def _parse_daudit_batch(file_paths: List[str]) -> Optional[List[Tuple[str, List[Dict], int, List[str]]]]:

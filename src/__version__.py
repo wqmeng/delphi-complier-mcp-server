@@ -9,8 +9,11 @@ Copyright (C) Equilibrium Software Development Co., Ltd, Jilin
 __version__.py 在运行时动态读取 pyproject.toml，确保单点维护。
 """
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _get_project_root() -> Path:
@@ -36,8 +39,8 @@ def _read_version() -> str:
                         ver = parts[1].strip().strip('"').strip("'")
                         if ver:
                             return ver
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("读取 pyproject.toml version 失败（回退到环境变量/默认值）: %s", e)
     # 回退：尝试从环境变量或返回默认值
     return os.environ.get("DAOFY_VERSION", "0.0.0")
 

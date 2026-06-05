@@ -43,8 +43,8 @@ def _embedding_ok() -> bool:
     try:
         if _embedding_available and callable(_embedding_available):
             return _embedding_available()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("embedding 可用性检查失败（视为不可用）: %s", e)
     return False
 
 
@@ -147,12 +147,12 @@ class ExperienceMemoryService:
         if hasattr(self._local, 'conn') and self._local.conn is not None:
             try:
                 self._local.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("WAL checkpoint 失败（连接将正常关闭）: %s", e)
             try:
                 self._local.conn.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("关闭 sqlite 连接失败: %s", e)
             self._local.conn = None
 
     # ── 内部 helpers ──
@@ -632,8 +632,8 @@ class ExperienceMemoryService:
                 days_since = (datetime.now(timezone.utc) - updated).days
                 if days_since > 30:
                     value *= 0.5 ** (days_since / 30)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("时间衰减计算失败（保留原始 score）: %s", e)
         return round(value, 4)
 
     def prune_list(self, limit: int = 20) -> list:

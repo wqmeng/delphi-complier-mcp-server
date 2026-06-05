@@ -107,10 +107,10 @@ def _act_save(svc, **kw):
             lines.append(f"  或 experience(action=update, id=\"{high_match[0]['id']}\", ...)")
             lines.append("如仍需新保存，设置 force=true 跳过此检查")
             _force = kw.get("force", False)
-            if not _force:
-                return _ok("\n".join(lines), data={"similar": [s["id"] for s in high_match]})
-    except Exception:
-        pass  # 搜索失败不阻塞保存
+        if not _force:
+            return _ok("\n".join(lines), data={"similar": [s["id"] for s in high_match]})
+    except Exception as e:
+        logger.debug("经验去重搜索失败（不影响保存流程）: %s", e)
 
     result = svc.save(
         problem=problem,

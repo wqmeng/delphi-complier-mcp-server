@@ -596,8 +596,8 @@ async def compile_project(
                             if log_path.exists():
                                 try:
                                     log_path.unlink()
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug("清理 exception.log 失败: %s", e)
 
                             proc = _subprocess.Popen([verify_exe], cwd=exe_dir)
                             try:
@@ -763,8 +763,8 @@ async def _compile_dpk_package(
                     output_text += "\n[Output Files]\n"
                     for f in of:
                         output_text += f"  {f}\n"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("收集输出文件列表失败: %s", e)
         
         if errors:
             output_text += f"\n错误:\n"

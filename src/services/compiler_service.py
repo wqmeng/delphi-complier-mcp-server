@@ -1470,8 +1470,8 @@ class CompilerService:
                 parser = DprojParser(str(dproj_path))
                 if parser.parse():
                     dproj_output = parser.get_output_path(config=cfg, platform=plat_dir)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("DProj 解析失败（继续用候选目录列表）: %s", e)
 
         # 收集所有可能输出目录（去重、按可信度排序）
         candidate_dirs: List[Path] = []
