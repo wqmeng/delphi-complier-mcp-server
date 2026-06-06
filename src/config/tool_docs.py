@@ -230,11 +230,12 @@ TOOL_HELP_DOCS: dict = {
     },
     "delphi_file": {
         "summary": "Delphi 文件(.pas/.dfm/.dproj)专用操作。禁止用原生 read/write/edit！",
-        "description": "Delphi 文件专用操作：读/写/格式化/备份管理（编码检测+自动备份+DFM转换）",
+        "description": "Delphi 文件专用操作：读/写/批量写入/格式化/备份管理（编码检测+自动备份+DFM转换）",
         "triggers": [
             "读文件、查看源码、打开文件、cat、写代码、编辑文件、改代码、修改代码",
             "新建文件、格式化、整理代码、恢复备份、回退修改、diff、差异对比",
             "查看备份、还原文件、增删uses、添加单元、删除单元",
+            "批量写入、批量修改、多处修改、多 edit、batch_write",
         ],
         "file_triggers": "操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此",
         "constraints": [
@@ -244,12 +245,13 @@ TOOL_HELP_DOCS: dict = {
             "自动编码检测(UTF-8/GBK/UTF-16)",
             "自动备份(__history)",
             "DFM二进制↔文本透明转换",
-            "按类名/函数名搜索定位代码、部分写入、格式化、uses子句增删",
+            "按类名/函数名搜索定位代码、部分写入、批量写入(batch_write)、格式化、uses子句增删",
         ],
         "workflow": "get_coding_rules → delphi_file(read) → delphi_file(write) → delphi_file(format) → compile_project",
         "actions": {
             "read": "读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位。start_line 为 0-indexed（第 1 行=0）",
             "write": "写文件，支持全文替换或部分写入(start_line/end_line)。start_line/end_line 为 0-indexed 左闭右开。每次部分写入后会返回偏移量，用于后续编辑的行号调整",
+            "batch_write": "批量写入：传入 edits 数组（顺序不限），内部自动排序后以备份文件为参照系累积偏移，一次性写出。相邻 edit 区间不能重叠（自动检测并拒绝）",
             "format": "使用 pasfmt 格式化代码",
             "backup": "备份管理（创建/列表/恢复）",
             "uses": "增删 uses 子句中的单元",
@@ -264,7 +266,23 @@ TOOL_HELP_DOCS: dict = {
             'delphi_file(action="backup", backup_action="list", file_path="Unit1.pas")                 列出备份',
             'delphi_file(action="backup", backup_action="restore", file_path="Unit1.pas", version=3)   恢复',
             'delphi_file(action="uses", uses_action="add", unit_name="System.SysUtils", file_path="Unit1.pas")  增uses',
+            'delphi_file(action="batch_write", file_path="Unit1.pas", edits=[{start_line:10,end_line:12,content:"..."},{start_line:5,end_line:7,content:"..."}])  批量写入(edits顺序不限/自动检测重叠)',
         ],
+        "action_params": {
+            "batch_write": {
+                "description": "批量写入。传入 edits 数组（顺序不限），内部自动排序后以备份文件为参照系累积偏移，一次性写出。edits 每项结构：{start_line(必需,0-indexed inclusive), end_line(可选,0-indexed exclusive,不传则末尾), content(必需,完整替代[start,end)区间,空串=删除行), description(可选)}。相邻 edit 区间不能重叠（自动检测并拒绝）。注意：content 应包含替换后的完整内容，不要包含已存在的行，否则可能造成重复",
+                "required": ["file_path", "edits"],
+                "optional": {
+                    "backup": "写入前自动备份，默认 true",
+                    "encoding": "写入编码 auto/utf-8/gbk/utf-16，默认 auto",
+                    "auto_format": "写入后自动调用 pasfmt 格式化，默认 false",
+                    "force": "强制写入，跳过 AI 偏移量检查（检测到重复行时阻止写入），默认 false",
+                },
+                "examples": [
+                    'delphi_file(action="batch_write", file_path="Unit1.pas", edits=[{start_line:7,end_line:10,content:"更新代码"},{start_line:18,end_line:21,content:"更新代码"}])',
+                ],
+            },
+        },
     },
     "manage_component": {
         "summary": "DFM 组件增/删/改/生成 + PAS 自动同步。",
@@ -469,7 +487,7 @@ TOOL_SHORT_DESC: dict = {
         "搜索 Delphi API/项目代码/文档(类/函数/语义搜索)，构建知识库。"
     ),
     "delphi_file": (
-        "Delphi 文件(.pas/.dfm/.dproj)专用操作: 读/写/格式化/备份/uses管理。"
+        "Delphi 文件(.pas/.dfm/.dproj)专用操作: 读/写/批量写入/格式化/备份/uses管理。"
         " 禁止用原生 read/write/edit 修改 .pas/.dfm 文件。"
     ),
     "manage_component": (

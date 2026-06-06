@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026.06.03] - 2026-06-03
+
+### Added
+
+- **`delphi_file` 新增 `batch_write` action**：一次传入多个 edit，内部按 `start_line` 升序排列，以备份文件为参照系，内存中累积偏移量后一次性写出。相邻 edit 区间重叠时自动检测并拒绝，防止行号映射错误。
+  - 新增 `handle_batch_write()` 函数
+  - `edits` 参数：数组，每项含 `start_line`（0-indexed inclusive）、`end_line`（0-indexed exclusive，可选）、`content`、`description`（可选）
+  - 支持 `backup`/`encoding`/`auto_format` 参数，兼容 DFM 二进制文件
+  - 配套 18 个测试用例（基本功能 + 14 个边界测试：重叠检测、相邻区间、文件边界、大偏移、CRLF、10 edit 混合等）
+- **`batch_write` 新增 AI 偏移量错误自动检测**：
+  - `force` 参数（默认 false）：设为 true 可跳过重复行检查强制写入
+  - per-edit 检查：content 首行与被替换行内容相同时发出 `⚠️` 警告
+  - post-merge 扫描：所有 edit 应用后扫描结果中新增的连续重复非空行，检测到时阻止写入并返回明确错误信息
+  - 只报告新增重复（排除原始文件已有的连续重复行），避免误报
+  - 写入被阻止时文件保持原样不被修改
+  - 配套 4 个测试用例（警告/force绕过/重复检测/post-merge force绕过）
+
+### Fixed
+
+- **`compilers.json` 路径自愈**：`config_manager.py` 检测到 `compilers.json` 不在 `src/config/` 时自动回退到项目根 `config/`，存在则切换并打印 INFO 提示。两个候选路径：`[src/config/, 项目根/config/]`，避免 MCP 启动时因路径差异直接报错。
+- **18 处 `except Exception: pass` 添加 `logger.debug`**：原 except 块静默吞掉所有异常，调试时无法定位失败原因。改为记录 `logger.debug(msg, exc_info=True)` 附带调用栈，不改变原有控制流（仍 `pass`）。涉及 10 个文件：`__version__.py` / `utils/__init__.py` / `compiler_service.py` / `experience_service.py` / `smart_cache_knowledge_base.py` / `audit.py` / `compile_project.py` / `experience.py` / `read_source_file.py` / `knowledge_base.py`。
+
+### Changed
+
+- **`search_knowledge` 597→37 行重构**：`tools/knowledge_base.py` 单函数从 597 行拆为 37 行主函数 + 16 个模块级子函数（`_filter_by_search_type` / `_trunc_hint` / `_format_symbol` / `_format_document_results` / `_empty_query_guide` / `_has_meaningful_results` / `_search_references` / `_search_symbols` / `_try_semantic_search` / `_start_async_project_rebuild` / `_maybe_search_document` / `_multi_keyword_search` / `_multi_kw_ref_one_kb` / `_multi_kw_sym_one_kb` / `_format_search_output` / `_format_one_section`）。嵌套常量 `_SEARCH_TYPE_TO_KIND` / `_KIND_DESC` 提升为模块级，内联 import 保留在子函数内避免循环依赖，`_format_one_section` 用 `style` 参数统一 4 种输出格式。行为完全等价，pytest 727 passed（零回归）。
+
 ## [2026.06.01] - 2026-06-01
 
 ### Fixed
