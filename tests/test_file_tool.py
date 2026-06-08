@@ -742,7 +742,7 @@ async def test_is_delphi_file():
 @pytest.mark.asyncio
 async def test_is_dfm_file():
     assert _is_dfm_file("test.dfm") is True
-    assert _is_dfm_file("test.fmx") is False
+    assert _is_dfm_file("test.fmx") is True
     assert _is_dfm_file("test.pas") is False
 
 

@@ -434,6 +434,7 @@ TOOL_HELP_DOCS: dict = {
             "merge": "合并多条经验为一条。ids=[id1,id2,...] 至少2个, keep=保留的ID(可选)",
             "prune": "列出低价值经验（按价值升序），供 AI 检查后删除。limit=返回条数",
             "delete": "删除经验。id=经验ID",
+            "rebuild_embedding": "重建缺失向量的经验记录。需先通过 delphi_kb(action=build_embedding) 加载模型",
         },
     },
     "daofy_update": {
@@ -518,7 +519,7 @@ TOOL_SHORT_DESC: dict = {
     "experience": (
         "经验记忆管理: 保存/搜索 AI 成功解决问题的做法(语义搜索)。"
         " save 自动去重(>0.85 合并到旧记录)。"
-        " 支持 merge(合并多条为一条) / prune(列出低价值条目) 等维护操作。"
+        " 支持 merge(合并多条为一条) / prune(列出低价值条目) / rebuild_embedding(重建缺失向量) 等维护操作。"
     ),
     "daofy_update": (
         "检查 Daofy 版本更新、执行 git pull 更新。"

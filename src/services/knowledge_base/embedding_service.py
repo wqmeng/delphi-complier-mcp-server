@@ -37,6 +37,7 @@ if site.USER_SITE is not None:
 _model = None
 _model_name = "intfloat/multilingual-e5-small"
 _MODEL_LOAD_TIMEOUT = 60  # 模型加载超时秒数（含下载）
+_env_lock = threading.Lock()  # 保护 os.environ 的线程安全
 
 
 def is_available() -> bool:
@@ -91,11 +92,12 @@ def load_model(timeout: int = None):
     }
 
     def _restore_env():
-        for k, v in _saved_env.items():
-            if v is not None:
-                os.environ[k] = v
-            else:
-                os.environ.pop(k, None)
+        with _env_lock:
+            for k, v in _saved_env.items():
+                if v is not None:
+                    os.environ[k] = v
+                else:
+                    os.environ.pop(k, None)
 
     def _try_load(endpoint):
         """尝试从指定 endpoint 加载模型（在子线程中运行，可被超时中断）"""
@@ -105,21 +107,24 @@ def load_model(timeout: int = None):
             try:
                 if endpoint:
                     logger.info(f"加载 embedding 模型（镜像: {endpoint}）: {_model_name}")
-                    os.environ["HF_ENDPOINT"] = endpoint
+                    with _env_lock:
+                        os.environ["HF_ENDPOINT"] = endpoint
                 else:
                     logger.info(f"加载 embedding 模型: {_model_name}")
 
                 # 优先使用离线模式
-                os.environ["TRANSFORMERS_OFFLINE"] = "1"
-                os.environ["HF_HUB_OFFLINE"] = "1"
+                with _env_lock:
+                    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+                    os.environ["HF_HUB_OFFLINE"] = "1"
                 m = SentenceTransformer(_model_name, local_files_only=True)
                 logger.info("embedding 模型加载完成（离线模式）")
                 result[0] = m
                 return
             except Exception as e:
                 logger.warning(f"  镜像 {endpoint or 'default'} 离线加载失败: {e}，尝试联网下载...")
-                os.environ.pop("TRANSFORMERS_OFFLINE", None)
-                os.environ.pop("HF_HUB_OFFLINE", None)
+                with _env_lock:
+                    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+                    os.environ.pop("HF_HUB_OFFLINE", None)
                 try:
                     m = SentenceTransformer(_model_name, local_files_only=False)
                     logger.info("embedding 模型加载完成（联网模式）")

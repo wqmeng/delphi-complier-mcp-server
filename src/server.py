@@ -594,8 +594,8 @@ async def run_server():
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["save", "search", "get", "list", "update", "merge", "prune", "delete"],
-                            "description": "操作类型: save=保存经验(自动去重), search=语义搜索, get=查看详情, list=浏览列表, update=更新, merge=合并多条, prune=列出低价值待清理条目, delete=删除",
+                            "enum": ["save", "search", "get", "list", "update", "merge", "prune", "delete", "rebuild_embedding"],
+                            "description": "操作类型: save=保存经验(自动去重), search=语义搜索, get=查看详情, list=浏览列表, update=更新, merge=合并多条, prune=列出低价值待清理条目, delete=删除, rebuild_embedding=重建缺失向量(需模型已加载)",
                         },
                         "problem": {"type": "string", "description": "[save] 问题描述"},
                         "solution": {"type": "string", "description": "[save] 解决步骤"},
@@ -609,6 +609,7 @@ async def run_server():
                         "keep": {"type": "string", "description": "[merge] 保留的目标ID（可选，不传则创建新记录）"},
                         "sort_by": {"type": "string", "default": "updated_at", "enum": ["updated_at", "created_at", "hit_count", "score"], "description": "[list] 排序字段"},
                         "limit": {"type": "integer", "default": 20, "description": "[list/prune] 返回条数"},
+                        "force": {"type": "boolean", "default": False, "description": "[save] 发现高相似度经验时仍强制新保存（跳过 >0.7 去重提醒层）"},
                     },
                     "required": ["action"],
                 }

@@ -43,8 +43,10 @@ def experience(**kwargs) -> dict:
             return _act_prune(svc, **kwargs)
         elif action == "delete":
             return _act_delete(svc, **kwargs)
+        elif action == "rebuild_embedding":
+            return _act_rebuild_embedding(svc, **kwargs)
         else:
-            return _err(f"未知 action: {action}，可用: save/search/get/list/update/merge/prune/delete")
+            return _err(f"未知 action: {action}，可用: save/search/get/list/update/merge/prune/delete/rebuild_embedding")
     except Exception as e:
         logger.exception("experience 执行失败")
         return _err(str(e))
@@ -229,7 +231,7 @@ def _act_prune(svc, **kw):
             f"{r['problem'][:60]}{tags_str}"
         )
     return _ok("\n".join(lines), data=results)
-
+"""
 
 def _act_delete(svc, **kw):
     exp_id = kw.get("id", "").strip()
@@ -241,3 +243,15 @@ def _act_delete(svc, **kw):
         return _err(f"经验不存在: {exp_id}")
 
     return _ok(f"deleted: {exp_id}")
+
+
+def _act_rebuild_embedding(svc, **kw):
+    result = svc.rebuild_embeddings()
+    if "error" in result:
+        return _err(result["error"])
+    lines = [f"经验 embedding 重建完成:"]
+    lines.append(f"  总记录: {result['total']}")
+    lines.append(f"  已有向量: {result['skipped']}")
+    lines.append(f"  本次重建: {result['rebuilt']}")
+    lines.append(f"  失败: {result['failed']}")
+    return _ok("\n".join(lines), data=result)

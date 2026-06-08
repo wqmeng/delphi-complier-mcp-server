@@ -692,6 +692,67 @@ class ExperienceMemoryService:
             logger.info("经验已删除: %s", exp_id)
         return deleted
 
+    def rebuild_embeddings(self) -> dict:
+        """重建所有缺少 embedding 的经验记录的向量。
+
+        在模型已加载后调用，为之前因模型未加载而保存的无向量记录补生成 embedding。
+        已有 embedding 的记录不受影响。
+
+        Returns:
+            {total: 总记录数, rebuilt: 重建数, skipped: 已有向量数, failed: 失败数}
+        """
+        if not _embedding_ok() or encode_single is None or np is None:
+            return {
+                "total": 0,
+                "rebuilt": 0,
+                "skipped": 0,
+                "failed": 0,
+                "error": "embedding 模型未加载，请先调用 delphi_kb(action=build_embedding) 加载模型",
+            }
+
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, problem FROM experiences WHERE embedding IS NULL"
+        )
+        rows = cursor.fetchall()
+
+        total = len(rows)
+        rebuilt = 0
+        failed = 0
+
+        # 也扫描已有 embedding 的记录数
+        cursor.execute("SELECT COUNT(*) as cnt FROM experiences WHERE embedding IS NOT NULL")
+        skipped = cursor.fetchone()["cnt"]
+
+        for row in rows:
+            exp_id = row["id"]
+            problem = row["problem"]
+            try:
+                blob = self._maybe_encode(problem, prefix="passage")
+                if blob is not None:
+                    conn.execute(
+                        "UPDATE experiences SET embedding = ? WHERE id = ?",
+                        (blob, exp_id),
+                    )
+                    rebuilt += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.warning("重建 embedding 失败 (id=%s): %s", exp_id, e)
+                failed += 1
+
+        if rebuilt > 0:
+            conn.commit()
+
+        logger.info("经验 embedding 重建完成: rebuilt=%d, skipped=%d, failed=%d", rebuilt, skipped, failed)
+        return {
+            "total": total + skipped,
+            "rebuilt": rebuilt,
+            "skipped": skipped,
+            "failed": failed,
+        }
+
 
 # 全局单例
 _instance: Optional[ExperienceMemoryService] = None
