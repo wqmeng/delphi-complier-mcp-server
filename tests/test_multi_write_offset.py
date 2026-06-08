@@ -36,11 +36,11 @@ def _assert_success(result: dict):
 def _extract_offset(msg: str) -> int:
     """
     从新的紧凑输出格式中提取偏移量.
-    新格式: 'wrote: foo.pas, 0-based [s, e) \u2192 [s, e+delta), ...'
+    新格式: 'wrote: foo.pas, 0-indexed [s, e) \u2192 [s, e+delta), ...'
     偏移量 = (e+delta) - e
     """
     # 优先匹配 \u2192 前后的两个范围, 计算 e_delta - e
-    m = re.search(r'0-based \[(\d+),\s*(\d+)\)\s*\u2192\s*\[(\d+),\s*(\d+)\)', msg)
+    m = re.search(r'0-indexed \[(\d+),\s*(\d+)\)\s*\u2192\s*\[(\d+),\s*(\d+)\)', msg)
     if m:
         s1, e1, s2, e2 = map(int, m.groups())
         return e2 - e1
@@ -50,7 +50,7 @@ def _extract_offset(msg: str) -> int:
 
 
 def _extract_range(msg: str) -> tuple:
-    m = re.search(r'0-based \[(\d+),\s*(\d+)\)', msg)
+    m = re.search(r'0-indexed \[(\d+),\s*(\d+)\)', msg)
     if m:
         return (int(m.group(1)), int(m.group(2)))
     return (0, 0)

@@ -150,7 +150,7 @@ async def _read_content(
       - end_line 不传时等价于「读到 limit 行为止」
 
     show_line_numbers: 为 True 时每行前面添加行号前缀（如 "     0: unit Unit1;"），
-                       行号为 0-based 绝对行号（与 batch_write / write 的 start_line 直接对齐）。
+                       行号为 0-indexed 绝对行号（与 batch_write / write 的 start_line 直接对齐）。
     """
     # 直接文件读取（支持编码检测 + 降级链）
     if os.path.isfile(file_path):
@@ -197,15 +197,15 @@ async def _read_content(
 
                 text = ''.join(selected)
 
-                # show_line_numbers: 为每行添加 0-based 绝对行号前缀
+                # show_line_numbers: 为每行添加 0-indexed 绝对行号前缀
                 # 修复: 之前是 1-based, 导致 AI 用 read 看到的行号传给 batch_write 时
-                # 必然错位 1 行 (1-based 第 N 行 = 0-based 第 N-1 行).
+                # 必然错位 1 行 (1-based 第 N 行 = 0-indexed 第 N-1 行).
                 # 现在 read 输出与 batch_write 接受的格式完全对齐: 看到 5 传 5, 看到 0 传 0.
                 if show_line_numbers and selected:
                     line_offset = max(start_line, 0)  # 0-indexed start
                     numbered_lines = []
                     for i, line in enumerate(selected):
-                        abs_lineno = line_offset + i      # 0-based 绝对行号 (与 batch_write 对齐)
+                        abs_lineno = line_offset + i      # 0-indexed 绝对行号 (与 batch_write 对齐)
                         numbered_lines.append(f"{abs_lineno:>6}: {line}")
                     text = ''.join(numbered_lines)
 
@@ -215,12 +215,12 @@ async def _read_content(
                 lines_shown = len(selected)
                 actual_end_line = start_line + lines_shown  # 0-indexed exclusive end
 
-                # 单行 meta: 编码 + 0-based 行号范围
-                # 0-based 前缀已隐含「行号可直接用于 batch_write / write / format 的 start_line」,
+                # 单行 meta: 编码 + 0-indexed 行号范围
+                # 0-indexed 前缀已隐含「行号可直接用于 batch_write / write / format 的 start_line」,
                 # 避免 AI 误用 1-based 导致错位 1 行 (历史最常见错误之一).
                 # 无论 show_line_numbers 是否开启, 范围都展示, 让 AI 始终知道读到哪段.
                 # 截断时仅追加 (truncated) 标记, 不重复暴露行数 (AI 用 start_line={actual_end_line} 续读即可).
-                meta = f"# encoding: {enc}, 0-based [{start_line}, {actual_end_line})"
+                meta = f"# encoding: {enc}, 0-indexed [{start_line}, {actual_end_line})"
                 if not reached_eof:
                     meta += " (truncated)"
                 meta += "\n"
@@ -463,12 +463,12 @@ async def _handle_partial_write(
         # ── 预览模式：返回 diff 预览，不写盘 ──
         if preview:
             # 构建 per-edit diff 预览（模仿 batch_write 格式）
-            old_lines = [lines[s + i].rstrip('\n\r') for i in range(e - s)]
+            # 行号以 L{orig-line-no}: 标注，便于 AI 对照 0-indexed 行号
             new_lines = content.splitlines(keepends=False) if content else []
             diff_lines = []
-            for ol in old_lines:
+            for i, ol in enumerate([lines[s + i].rstrip('\n\r') for i in range(e - s)]):
                 display = ol if len(ol) <= 80 else ol[:77] + "..."
-                diff_lines.append(f"    - {display}")
+                diff_lines.append(f"    - L{s + i}: {display}")
             for nl in new_lines:
                 display = nl if len(nl) <= 80 else nl[:77] + "..."
                 diff_lines.append(f"    + {display}")
@@ -478,7 +478,7 @@ async def _handle_partial_write(
             new_e = e + delta
             parts = [
                 f"wrote: {os.path.basename(file_path)} (preview)",
-                f"0-based [{s}, {e}) → [{s}, {new_e})",
+                f"0-indexed [{s}, {e}) → [{s}, {new_e})",
                 f"encoding: {enc}",
                 "preview: true（未写入磁盘）",
             ]
@@ -573,14 +573,14 @@ async def _handle_partial_write(
 
         # 单行 meta (与 read 对齐):
         #   wrote: basename
-        #   0-based [s, e) → [s, e+offset)   ← 隐含 offset (右端变化量)
+        #   0-indexed [s, e) → [s, e+offset)   ← 隐含 offset (右端变化量)
         #   encoding: utf-8
         #   backup: __history\<basename>.~N~
         basename = os.path.basename(file_path)
         new_e = e + offset
         parts = [
             f"wrote: {basename}",
-            f"0-based [{s}, {e}) → [{s}, {new_e})",
+            f"0-indexed [{s}, {e}) → [{s}, {new_e})",
             f"encoding: {enc}",
         ]
         if backup and bak_path:
@@ -951,12 +951,12 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 continue
 
             removed = adj_e - adj_s
-            removed_lines_preview = []  # for diff preview (all branches)
+            removed_lines_preview = []  # for diff preview (stores (orig_line_no, content) tuples)
 
             if c == '':
                 # 删除行：直接移除
                 if removed > 0 and removed <= 5:
-                    removed_lines_preview = [lines[adj_s + i].rstrip('\n\r') for i in range(removed)]
+                    removed_lines_preview = [(s + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
                 lines[adj_s:adj_e] = []
                 inserted = 0
                 c_lines = []
@@ -983,9 +983,9 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                             f"可能因偏移量错误造成重复（如需强制写入请设 force=true）"
                         )
 
-                # 保存被替换的行用于 diff 预览（截断长行）
+                # 保存被替换的行用于 diff 预览（截断长行），附带原始行号
                 if removed > 0 and removed <= 5:
-                    removed_lines_preview = [lines[adj_s + i].rstrip('\n\r') for i in range(removed)]
+                    removed_lines_preview = [(s + i, lines[adj_s + i].rstrip('\n\r')) for i in range(removed)]
 
                 lines[adj_s:adj_e] = c_lines
 
@@ -1000,10 +1000,11 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
 
             # ── Per-edit diff 预览（≤5 行时显示全量，超过则省略） ──
             # 这是早期预警：AI 通过对比 - / + 行可发现错位改写
+            # 行号以 L{orig-line-no}: 形式标注，便于 AI 对照 0-indexed 行号
             if removed_lines_preview:
-                for rl in removed_lines_preview:
+                for orig_lineno, rl in removed_lines_preview:
                     display = rl if len(rl) <= 80 else rl[:77] + "..."
-                    results.append(f"    - {display}")
+                    results.append(f"    - L{orig_lineno}: {display}")
             if c_lines:
                 # 同样截断
                 max_show = min(len(c_lines), 5)
@@ -1592,7 +1593,7 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
         f"wrote: {basename}",
         f"action: {action_desc} {unit_name_stripped} in {uses_section}",
         f"uses: {', '.join(new_units)}",
-        f"0-based [{s}, {e}) → [{s}, {new_e})",
+        f"0-indexed [{s}, {e}) → [{s}, {new_e})",
         f"encoding: {write_enc}",
     ]
     if backup_path:

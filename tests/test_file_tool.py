@@ -437,7 +437,7 @@ async def test_read_with_end_line():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "0-based [0, 3)" in msg, f"unexpected range in: {msg}"
+        assert "0-indexed [0, 3)" in msg, f"unexpected range in: {msg}"
         assert "// line 3" in msg
         assert "// line 5" not in msg  # index 4, outside [0,3)
     finally:
@@ -461,7 +461,7 @@ async def test_read_with_start_line_and_end_line():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "0-based [4, 10)" in msg
+        assert "0-indexed [4, 10)" in msg
         assert "// line 5" in msg    # index 4 → line 5
         assert "// line 10" in msg   # index 9 → line 10
         assert "// line 4" not in msg   # index 3, outside [4,10)
@@ -782,7 +782,7 @@ async def test_read_0indexed_default_start():
         result = await handle_read({"file_path": file_path, "end_line": 2})
         _assert_success(result)
         msg = result["message"]
-        assert "0-based [0, 2)" in msg
+        assert "0-indexed [0, 2)" in msg
         assert "line1" in msg and "line2" in msg
         assert "line3" not in msg
     finally:
@@ -804,7 +804,7 @@ async def test_read_0indexed_empty_range():
         _assert_success(result)
         msg = result["message"]
         # [2,2) → 空区间，实际行数应为 0
-        assert "0-based [2, 2)" in msg
+        assert "0-indexed [2, 2)" in msg
         # 空区间 → 紧随 meta 行之后不应出现文件正文行
         # (新格式无 ==== 分隔线, 直接断言整条消息不含 "a\n")
         assert "a\n" not in msg
@@ -829,7 +829,7 @@ async def test_read_0indexed_single_line():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "0-based [2, 3)" in msg
+        assert "0-indexed [2, 3)" in msg
         assert "gamma" in msg
         assert "alpha" not in msg and "beta" not in msg and "delta" not in msg
     finally:
@@ -851,8 +851,8 @@ async def test_read_0indexed_truncation_hint():
         })
         _assert_success(result)
         msg = result["message"]
-        # meta 行应含 0-based 范围 + 截断标记 (替代旧版"使用 start_line=8"footer)
-        assert "0-based [5, 8)" in msg, f"meta 行应含 0-based 范围: {msg}"
+        # meta 行应含 0-indexed 范围 + 截断标记 (替代旧版"使用 start_line=8"footer)
+        assert "0-indexed [5, 8)" in msg, f"meta 行应含 0-indexed 范围: {msg}"
         assert " (truncated)" in msg, f"meta 行应含 (truncated) 标记: {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -892,7 +892,7 @@ async def test_read_0indexed_beyond_eof():
         msg = result["message"]
         assert "x" in msg and "y" in msg and "z" in msg
         # 总行数应显示实际行数（3），因为 end_line 超过 EOF 时 reached_eof=True
-        assert "0-based [0, 3)" in msg
+        assert "0-indexed [0, 3)" in msg
         assert "truncated" not in msg
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -1088,7 +1088,7 @@ async def test_write_partial_offset_in_response():
         msg = result["message"]
         # 新格式: offset 隐含在 [s, e) → [s, e+delta) 中
         # 替换 [1,3) = 2行, 插入 3行, delta = +1, 新区间 [1, 4)
-        assert "0-based [1, 3) → [1, 4)" in msg, f"返回值应含 [s,e)→[s,e+delta): {msg}"
+        assert "0-indexed [1, 3) → [1, 4)" in msg, f"返回值应含 [s,e)→[s,e+delta): {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1110,7 +1110,7 @@ async def test_write_partial_offset_delete():
         _assert_success(result)
         msg = result["message"]
         # 删除 [1,4) = 3行, 插入 0行, delta = -3, 新区间 [1, 1)
-        assert "0-based [1, 4) → [1, 1)" in msg, f"删除3行新区间应为 [1, 1): {msg}"
+        assert "0-indexed [1, 4) → [1, 1)" in msg, f"删除3行新区间应为 [1, 1): {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1132,7 +1132,7 @@ async def test_write_partial_offset_no_change():
         _assert_success(result)
         msg = result["message"]
         # 替换 [1,2) = 1行, 插入 1行, delta = 0, 新区间 [1, 2) (不变)
-        assert "0-based [1, 2) → [1, 2)" in msg, f"行数不变新区间应与原区间相同: {msg}"
+        assert "0-indexed [1, 2) → [1, 2)" in msg, f"行数不变新区间应与原区间相同: {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1180,8 +1180,8 @@ async def test_read_show_line_numbers_true():
         assert "0: alpha" in msg, f"第 0 行应有行号前缀: {msg}"
         assert "1: beta" in msg, f"第 1 行应有行号前缀: {msg}"
         assert "2: gamma" in msg, f"第 2 行应有行号前缀: {msg}"
-        # meta 行应含 0-based 范围标记 (替代旧版"带行号"+"0-indexed"+"batch_write" 三处提示)
-        assert "0-based [0, 3)" in msg, f"meta 行应含 0-based 范围: {msg}"
+        # meta 行应含 0-indexed 范围标记 (替代旧版"带行号"+"0-indexed"+"batch_write" 三处提示)
+        assert "0-indexed [0, 3)" in msg, f"meta 行应含 0-indexed 范围: {msg}"
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -1260,7 +1260,7 @@ async def test_read_0indexed_limit_after_truncation():
         })
         _assert_success(result)
         msg = result["message"]
-        assert "0-based [10, 17)" in msg, f"范围异常: {msg}"
+        assert "0-indexed [10, 17)" in msg, f"范围异常: {msg}"
         # 应包含 [10,17) → 7 行
         assert "R10" in msg
         assert "R16" in msg
@@ -1847,7 +1847,7 @@ async def test_write_partial_preview_diff_in_message():
         _assert_success(result)
         msg = result["message"]
         assert "preview" in msg, f"应标记 preview, got: {msg}"
-        assert "- bbb" in msg, f"缺失删除行标记: {msg}"
+        assert "- L1: bbb" in msg, f"缺失删除行标记: {msg}"
         assert "+ BBB" in msg, f"缺失新增行标记: {msg}"
         with open(file_path, "r", encoding="utf-8") as f:
             assert f.read() == "aaa\nbbb\nccc\n", "preview 不应改文件"
@@ -1961,7 +1961,7 @@ async def test_batch_write_preview_diff_in_message():
         _assert_success(result)
         msg = result["message"]
         assert "batch_preview:" in msg, f"应标记 preview, got: {msg}"
-        assert "- bbb" in msg, f"缺失删除行标记: {msg}"
+        assert "- L1: bbb" in msg, f"缺失删除行标记: {msg}"
         assert "+ BBB" in msg, f"缺失新增行标记: {msg}"
         assert "preview: true" in msg, f"缺失 preview 标记: {msg}"
     finally:

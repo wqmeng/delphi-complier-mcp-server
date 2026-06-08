@@ -180,12 +180,12 @@ Agent 根据以下规则计算后续行号，**不需要重新读取文件**：
 
 **read 输出**:
 ```
-# encoding: utf-8, 0-based [0, 200) (truncated)
+# encoding: utf-8, 0-indexed [0, 200) (truncated)
 ```
 | 字段 | 说明 |
 |------|------|
 | `encoding:` | 文件编码 (utf-8 / utf-16-le / utf-16 / gbk / 等) |
-| `0-based [s, e)` | 本次返回的 0-indexed 左闭右开区间（对应 read 的 `start_line`/`end_line`） |
+| `0-indexed [s, e)` | 本次返回的 0-indexed 左闭右开区间（对应 read 的 `start_line`/`end_line`） |
 | `(truncated)` | 文件超出 2000 行被截断（可选标记） |
 
 **write 输出** (全文替换):
@@ -195,7 +195,7 @@ wrote: Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1~
 
 **write 输出** (部分替换 `start_line`/`end_line`):
 ```
-wrote: Unit1.pas, 0-based [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
+wrote: Unit1.pas, 0-indexed [5, 10) → [5, 13), encoding: utf-8, backup: __history\Unit1.pas.~1~
 ```
 - `[5, 10) → [5, 13)`：原始行号 → 写入后行号，**偏移量 = 13 - 10 = +3**（隐含在区间变换里）
 - DFM 转换 / 编码回退会附加额外标记: `ℹ transcoded: utf-16 → utf-8` / `⚠ fallback: gbk → utf-8` / `format: binary DFM converted` / `formatted: yes`
@@ -227,7 +227,7 @@ batch_wrote: 2 edits, Unit1.pas, encoding: utf-8, backup: __history\Unit1.pas.~1
 
 **uses 输出**:
 ```
-wrote: Unit1.pas, 0-based [2, 3) → [2, 4), encoding: utf-8, backup: __history\Unit1.pas.~1~
+wrote: Unit1.pas, 0-indexed [2, 3) → [2, 4), encoding: utf-8, backup: __history\Unit1.pas.~1~
 ```
 格式与 `write` 部分替换一致，偏移量算法也相同。
 
