@@ -665,6 +665,39 @@ end;
         调用 delphi_kb(action=build_embedding) 加载模型后，首次语义搜索
         会自动为所有 WHERE embedding IS NULL 的记录补生成向量后重试。
 
+### 9.2.1 自动去重机制（save 核心流程）
+
+`experience(action="save")` 不是简单 INSERT，而是"先查再决定"的智能流程：
+
+```
+save(problem, solution)
+  │
+  ├─ embedding 语义搜索相似记录
+  │   │
+  │   ├─ similarity > 0.85 ──→ 自动合并到旧记录（不新增）
+  │   │   ├─ solution: 旧方案 + 新方案 拼接
+  │   │   ├─ tags: 去重合并
+  │   │   ├─ tools_used: 去重合并
+  │   │   ├─ score: +0.05（不超过 1.0）
+  │   │   └─ hit_count: 不变
+  │   │
+  │   ├─ similarity > 0.7（非 force 模式）──→ 拦截 + 提示
+  │   │     返回相似记录列表，建议 AI 用 merge/update 人工合并
+  │   │     传 force=true 跳过此检查直接保存
+  │   │
+  │   └─ similarity ≤ 0.7 ──→ 新建记录 ✅
+  │
+  └─ embedding 不可用 ──→ 直接新建（无去重，降级为 LIKE 搜索）
+```
+
+**设计意图**：
+
+| 阈值 | 含义 | 处理方式 |
+|------|------|---------|
+| > 0.85 | 几乎同一问题 | 自动合并，零摩擦 |
+| > 0.7 | 可能相关 | 提醒 AI 人工判断 |
+| ≤ 0.7 | 不同问题 | 正常新建 |
+
 步骤 ⑤ 验证
         └─ experience(action="search", query="...") 确认能语义召回
 ```
@@ -713,11 +746,100 @@ experience(
 
 ### 9.5 定期维护
 
-- **prune**：每月用 `experience(action="prune")` 列出低价值条目（低 hit_count、长期未更新），检查后删除
-- **merge**：发现多条经验描述同一类问题时，手动合并为一条抽象经验，`tags` 覆盖各类场景
-- **规则联动**：经验被反复 hit 3 次以上的问题，应考虑升级为 CODING_RULES 中的正式规则
+#### 9.5.1 prune — 清理低价值经验
 
-> 经验库会自动去重（相似度 >0.85 合并到旧记录），定期用 `prune` 清理低价值条目。
+`experience(action="prune")` 按价值分数升序列出候选删除条目，供 AI 人工判断后 `delete`。
+
+**价值计算公式**：
+
+```
+value = hit_count × score × time_decay
+```
+
+- `hit_count`: 被查看/复用次数（越高越有价值）
+- `score`: 质量评分（越高越有价值）
+- `time_decay`: 超过 30 天未更新，按半衰期衰减（每 30 天 × 0.5）
+
+**典型低价值模式**：
+
+| 模式 | 说明 | 处理 |
+|------|------|------|
+| hit_count=1 且长期未更新 | 存了从未用过 | 考虑删除 |
+| 内容过于具体 | 可泛化为更抽象的经验 | 合并到抽象经验后删除 |
+| 已被其他经验覆盖 | 描述同一问题的冗余记录 | 保留最佳，删除其余 |
+
+#### 9.5.2 merge — 合并同类经验
+
+当多条经验描述同一类问题时，用 `merge` 合并为一条抽象经验，`tags` 覆盖各类场景。
+
+```python
+# 合并到目标记录（保留目标，删除其余）
+experience(action="merge",
+    ids=["exp_id_1", "exp_id_2", "exp_id_3"],
+    keep="exp_id_1")
+
+# 合并为新记录（全部删除，新建）
+experience(action="merge",
+    ids=["exp_id_1", "exp_id_2"])
+```
+
+**合并规则**：problem/solution 拼接、tags/tools_used 去重、hit_count 累加。
+
+#### 9.5.3 经验维护最佳实践
+
+| 时机 | 实践 | 说明 |
+|------|------|------|
+| 保存前 | **先泛化** | 调用 `search(query=...)` 确认是否已有同类经验；找到后用 `merge`/`update` 合并，不另存具体场景 |
+| 任务完成 | **主动合并** | 如果刚解决的方案与已有经验相关但方式不同，手动 merge 避免各自独立 |
+| 定期 | **清理 prune** | 每月执行 `prune` 列出低价值记录，审查后 `delete`；保持经验库精炼 |
+| 发现重复 | **抽象合并** | 多条经验描述同类问题（如不同工具的「消息精简」），合并为一条抽象经验，`tags` 覆盖各类场景 |
+
+#### 9.5.4 规则联动
+
+经验被反复 hit 3 次以上的问题，应考虑升级为 CODING_RULES 中的正式规则，让所有 AI Agent 都能受益，而非依赖经验召回。
+
+```
+hit_count ≥ 3 的经验 → 评估是否可规则化 → 更新 CODING_RULES.mdc → 保留经验作为参考用例
+```
+
+---
+
+### 9.6 Embedding 降级策略
+
+经验库在没有向量模型时也完全可用，只是搜索精度降低。降级流程：
+
+```
+search(query)
+  │
+  ├─ embedding 模型已加载？
+  │   ├─ 是 → 语义搜索（余弦相似度排序）
+  │   │      └─ 无结果？→ 自动 rebuild_embeddings() 后重试
+  │   └─ 否 → LIKE 关键词降级搜索（%query%）
+  │
+  └─ 结果返回
+```
+
+**关键点**：
+
+- **模型未加载**：`save()` 不保存 embedding（BLOB 为 NULL），`search()` 用 LIKE 降级
+- **模型后加载**：调用 `delphi_kb(action=build_embedding)` 后，首次 `search()` 自动触发生成缺失向量
+- **rebuild_embedding**：也可手动调用 `experience(action="rebuild_embedding")` 为所有 `embedding IS NULL` 的记录补向量
+- **降级是完全透明的**：上层无需关心当前使用哪种搜索模式
+
+---
+
+### 9.7 质量保障体系
+
+| 保障机制 | 层级 | 说明 |
+|----------|------|------|
+| 自动去重合并 | save() | similarity > 0.85 自动合并，> 0.7 拦截提醒 |
+| 自动重建向量 | search() | 模型已加载但无结果时自动触发 |
+| 时间衰减 | prune() | 30 天未更新的经验价值按半衰期衰减 |
+| 使用计数 | get() | 每次查看递增 hit_count |
+| 超时保护 | server.py | 30 秒超时，防止 embedding 加载阻塞 MCP |
+| 线程安全 | 连接层 | 每线程独立 SQLite 连接，WAL 模式防锁 |
+
+> 经验库的唯一标识是 ID（短 UUID），不可手动修改。所有管理操作都通过 experience 工具进行，禁止直接操作 SQLite 文件。
 
 ---
 
