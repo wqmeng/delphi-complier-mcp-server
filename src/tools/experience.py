@@ -231,7 +231,6 @@ def _act_prune(svc, **kw):
             f"{r['problem'][:60]}{tags_str}"
         )
     return _ok("\n".join(lines), data=results)
-"""
 
 def _act_delete(svc, **kw):
     exp_id = kw.get("id", "").strip()
