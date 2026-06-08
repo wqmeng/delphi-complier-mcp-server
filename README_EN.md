@@ -71,9 +71,11 @@ All knowledge base data is stored in the `data/` folder under the project root:
 | Third-party Library KB | `data/thirdparty-knowledge-base/` | Third-party component library source |
 | Generic Document KB | `data/document-knowledge-base/` | Delphi CHM help + generic docs |
 | Project KB | `<project-dir>/.delphi-kb/` | Project-level KB, stored in project directory |
+| Experience KB | `data/experience-knowledge-base/` | AI experience memory (`experiences.sqlite`) |
 
 Each knowledge base directory contains:
-- SQLite database file
+- `documents.sqlite` / `knowledge_base.sqlite` / `knowledge.sqlite` - SQLite database file
+- `experiences.sqlite` - Experience memory database
 - `config.json` - Knowledge base configuration file
 
 ## Knowledge Base Configuration
@@ -86,6 +88,7 @@ Each knowledge base has a `config.json` file. Configs are auto-generated on firs
 | Third-party | `data/thirdparty-knowledge-base/config.json` |
 | Documents | `data/document-knowledge-base/config.json` |
 | Project | `<project-dir>/.delphi-kb/config.json` |
+| Experience | `data/experience-knowledge-base/` (SQLite only, no config.json) |
 
 ## Installation
 

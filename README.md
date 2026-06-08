@@ -110,9 +110,11 @@ delphi_kb(
 | 第三方库知识库 | `data/thirdparty-knowledge-base/` | 第三方组件库源码 |
 | 通用文档知识库 | `data/document-knowledge-base/` | Delphi CHM 帮助文档 + 通用文档 |
 | 项目知识库 | `<项目目录>/.delphi-kb/` | 项目级知识库，存放在项目目录下 |
+| 经验知识库 | `data/experience-knowledge-base/` | AI 经验记忆（`experiences.sqlite`） |
 
 每个知识库目录包含：
 - `documents.sqlite` / `knowledge_base.sqlite` / `knowledge.sqlite` - SQLite 数据库文件
+- `experiences.sqlite` - 经验记忆数据库
 - `config.json` - 知识库配置文件
 
 ## 知识库配置说明
@@ -125,6 +127,7 @@ delphi_kb(
 | 第三方库 | `data/thirdparty-knowledge-base/config.json` |
 | 通用文档 | `data/document-knowledge-base/config.json` |
 | 项目级 | `<项目目录>/.delphi-kb/config.json` |
+| 经验库 | `data/experience-knowledge-base/`（纯 SQLite，无 config.json） |
 
 配置文件在首次构建时自动生成，通常无需手动修改。
 
