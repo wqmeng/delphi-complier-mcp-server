@@ -154,7 +154,7 @@ pip install daofy-for-delphi
 
 [] 检查并安装 Git/Python 3.10-3.14/7-Zip
 
-[] 安装 `https://github.com/chinawsb/daofy.git`
+[] 安装 `https://github.com/chinawsb/daofy.git`（国内用户可用镜像: `https://gitee.com/zuoyouruanjian/daofy.git`）
 
 [] 安装完成后验证结果并帮我配置当前客户端
 
@@ -164,6 +164,8 @@ pip install daofy-for-delphi
 
 ```bash
 git clone https://github.com/chinawsb/daofy.git
+# 国内用户可用 Gitee 镜像加速:
+# git clone https://gitee.com/zuoyouruanjian/daofy.git
 cd daofy
 ```
 
