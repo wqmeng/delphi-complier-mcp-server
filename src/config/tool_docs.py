@@ -229,8 +229,8 @@ TOOL_HELP_DOCS: dict = {
         ],
     },
     "delphi_file": {
-        "summary": "Delphi 文件(.pas/.dfm/.dproj)专用操作。禁止用原生 read/write/edit！",
-        "description": "Delphi 文件专用操作：读/写/批量写入/格式化/备份管理（编码检测+自动备份+DFM转换）",
+        "summary": "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用操作。禁止用原生 read/write/edit！",
+        "description": "Delphi 文件专用操作：读/写/批量写入/格式化/备份管理/uses子句增删（编码检测+自动备份+DFM转换）",
         "triggers": [
             "读文件、查看源码、打开文件、cat、写代码、编辑文件、改代码、修改代码",
             "新建文件、格式化、整理代码、恢复备份、回退修改、diff、差异对比",
@@ -487,7 +487,7 @@ TOOL_SHORT_DESC: dict = {
         "搜索 Delphi API/项目代码/文档(类/函数/语义搜索)，构建知识库。"
     ),
     "delphi_file": (
-        "Delphi 文件(.pas/.dfm/.dproj)专用操作: 读/写/批量写入/格式化/备份/uses管理。"
+        "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用操作: 读/写/批量写入/格式化/备份/uses管理。"
         " 禁止用原生 read/write/edit 修改 .pas/.dfm 文件。"
     ),
     "manage_component": (

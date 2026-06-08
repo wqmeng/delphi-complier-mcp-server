@@ -253,3 +253,89 @@ class TestMigratedMCPTools:
 
         for name, doc in TOOL_HELP_DOCS.items():
             assert len(str(doc)) > 50, f"{name} TOOL_HELP_DOCS too short"
+
+
+# ═══════════════════════════════════════════════════════════════
+# 工具 inputSchema 完整性（2026-06-07 用户反馈 bug 修复回归）
+# ═══════════════════════════════════════════════════════════════
+
+class TestToolSchemaCompleteness:
+    """验证工具 inputSchema 声明了所有 handler 中实际读取的参数
+
+    历史 bug (2026-06-07 用户反馈):
+      - async_task 的 long_poll_seconds 在 src/tools/async_tasks.py:325 中读取
+        (arguments.get("long_poll_seconds", 0))，但未在 inputSchema 中声明，
+        导致 MCP 客户端（Claude Desktop、Qoder 等）静默丢弃该参数
+      - delphi_file action=batch_write 的 force 在 src/tools/file_tool.py:759 中
+        读取（arguments.get("force", False)），但未在 inputSchema 中声明，
+        同样被静默丢弃
+
+    这些测试确保任何 handler 中 arguments.get("xxx", default) 引入的参数
+    都必须在 list_tools() 的 inputSchema.properties 中显式声明。
+    """
+
+    SERVER_PATH = Path(__file__).parent.parent / "src" / "server.py"
+
+    @classmethod
+    def _extract_tool_block(cls, tool_name: str) -> str:
+        """从 server.py 源码提取指定 Tool 的整个 inputSchema 块（粗略按 Tool( 边界）。"""
+        src = cls.SERVER_PATH.read_text(encoding="utf-8")
+        # 匹配 `name="<tool_name>"` 到下个 `Tool(` 之前的所有内容
+        pattern = rf'name="{re.escape(tool_name)}"(.*?)(?=\n\s*Tool\()'
+        m = re.search(pattern, src, re.DOTALL)
+        assert m, f"Could not locate Tool definition for {tool_name!r} in server.py"
+        return m.group(1)
+
+    def test_async_task_schema_declares_long_poll_seconds(self):
+        """async_task inputSchema 必须声明 long_poll_seconds（与 handler 中 arguments.get 一致）"""
+        block = self._extract_tool_block("async_task")
+        assert '"long_poll_seconds"' in block, (
+            "async_task inputSchema missing 'long_poll_seconds' declaration. "
+            "MCP 客户端会因 schema mismatch 静默丢弃该参数，导致长轮询失效。"
+        )
+        # 验证类型/默认值与 handler 一致
+        after = block.split('"long_poll_seconds"', 1)[1][:400]
+        assert '"type": "integer"' in after, "long_poll_seconds 应声明为 integer"
+        assert '"default": 0' in after, "long_poll_seconds 默认值应为 0"
+
+    def test_delphi_file_schema_declares_batch_write_force(self):
+        """delphi_file inputSchema 必须在 batch_write 段（edits 之后）声明 force"""
+        block = self._extract_tool_block("delphi_file")
+        edits_idx = block.find('"edits"')
+        assert edits_idx > 0, "delphi_file schema missing 'edits' declaration"
+        # 提取 edits 之后到 # format 段之前的内容
+        rest = block[edits_idx:]
+        # 截到 # format 注释或下个 # action 段（避免误匹配其他工具的 force 字段）
+        segment_end = rest.find("# ---- [仅 action=format]")
+        if segment_end > 0:
+            rest = rest[:segment_end]
+        assert '"force"' in rest, (
+            "delphi_file batch_write 段缺少 'force' 参数声明。\n"
+            "force 是 batch_write 专属参数（跳过 AI 偏移量检查），"
+            "MCP 客户端会因 schema mismatch 静默丢弃该参数。"
+        )
+        # 验证类型/默认值与 handler 一致
+        after = rest.split('"force"', 1)[1][:400]
+        assert '"type": "boolean"' in after, "force 应声明为 boolean"
+        assert '"default": False' in after, "force 默认值应为 False"
+
+    def test_handler_arguments_match_schema_known_gaps_only(self):
+        """回归检查：本次用户反馈的具体 schema 缺失已全部修复
+
+        全量扫描（覆盖所有 handler 的 arguments.get）容易误报
+        （如 server.py 内部字典键、read_source_file 等独立工具的字段），
+        所以此处只对本次修复涉及的两个 handler 做精准验证。
+        """
+        # 1) async_tasks.py 中 long_poll_seconds 必须能正常读取（handler 逻辑无回归）
+        from src.tools.async_tasks import get_task_status  # noqa: F401
+        # 2) file_tool.py 中 force 必须能正常读取（handler 逻辑无回归）
+        from src.tools.file_tool import handle_batch_write  # noqa: F401
+        # 3) 双方各自 handler 中确实读取这些参数（静态扫描确认）
+        async_src = (Path(__file__).parent.parent / "src" / "tools" / "async_tasks.py").read_text(encoding="utf-8")
+        file_src = (Path(__file__).parent.parent / "src" / "tools" / "file_tool.py").read_text(encoding="utf-8")
+        assert 'arguments.get("long_poll_seconds", 0)' in async_src, (
+            "async_tasks.py handler 移除了 long_poll_seconds 读取逻辑"
+        )
+        assert 'arguments.get("force", False)' in file_src, (
+            "file_tool.py handle_batch_write 移除了 force 读取逻辑"
+        )

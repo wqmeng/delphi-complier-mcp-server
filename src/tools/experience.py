@@ -95,22 +95,27 @@ def _act_save(svc, **kw):
     tags = kw.get("tags")
 
     # 保存前搜索相似经验，提醒 AI 泛化
-    try:
-        similar = svc.search(query=problem, top_k=3)
-        high_match = [s for s in similar if s.get("similarity", 0) > 0.7]
-        if high_match:
-            lines = ["⚠️ 发现高相似度经验，建议用 merge/update 合并而非另存："]
-            for s in high_match:
-                lines.append(f"  [{s['similarity']:.0%}] {s['id']} {s['problem'][:60]}")
-            lines.append("如需确认后合并，取消本次 save，改用:")
-            lines.append(f"  experience(action=merge, ids=[\"...\", \"{high_match[0]['id']}\"])")
-            lines.append(f"  或 experience(action=update, id=\"{high_match[0]['id']}\", ...)")
-            lines.append("如仍需新保存，设置 force=true 跳过此检查")
-            _force = kw.get("force", False)
-        if not _force:
-            return _ok("\n".join(lines), data={"similar": [s["id"] for s in high_match]})
-    except Exception as e:
-        logger.debug("经验去重搜索失败（不影响保存流程）: %s", e)
+    # 注意：svc.save() 内部也会做 >0.85 去重合并，这里的 >0.7 检查是额外提醒层
+    # 如果用户不 force，则返回警告并终止保存（让 AI 选择 merge/update）
+    # 如果用户 force=true，则跳过提醒，让 svc.save() 的 >0.85 逻辑处理最终去重
+    _force = kw.get("force", False)
+    if not _force:
+        try:
+            similar = svc.search(query=problem, top_k=3)
+            high_match = [s for s in similar if s.get("similarity", 0) > 0.7]
+            if high_match:
+                lines = ["⚠️ 发现高相似度经验，建议用 merge/update 合并而非另存："]
+                for s in high_match:
+                    lines.append(f"  [{s['similarity']:.0%}] {s['id']} {s['problem'][:60]}")
+                lines.append("如需确认后合并，取消本次 save，改用:")
+                best_id = high_match[0]['id']
+                lines.append(f'  experience(action=merge, ids=["...", "{best_id}"]')
+                lines.append(f'  或 experience(action=update, id="{best_id}", ...)')
+                lines.append("如仍需新保存，设置 force=true 跳过此检查")
+                return _ok("\n".join(lines), data={"similar": [s["id"] for s in high_match]})
+        except Exception as e:
+            logger.debug("经验去重搜索失败（不影响保存流程）: %s", e)
+
 
     result = svc.save(
         problem=problem,

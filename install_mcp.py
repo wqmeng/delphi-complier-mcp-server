@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Daofy MCP Server 安装/卸载脚本 - 配置 AI Agent"""
 
-VERSION = "2026-05-16 16:30"  # 版本号随实际修改时间更新
+VERSION = "2026-06-07 10:30"  # 版本号随实际修改时间更新
 
 import argparse
 import ctypes
@@ -22,6 +22,14 @@ from pathlib import Path
 
 MCP_SERVER_NAME = "daofy"
 LEGACY_SERVER_NAME = "delphi-compiler"
+
+# 退出码契约（install.bat 根据 errorlevel 区分提示）
+# 0 = 成功（MCP Server 已配置/卸载）
+# 1 = 失败（前置条件不满足、输入无效、所有配置都失败等）
+# 2 = 用户主动取消（按 q 退出、确认卸载时按 n 等，不算失败也不算成功）
+EXIT_SUCCESS = 0
+EXIT_FAILURE = 1
+EXIT_CANCELLED = 2
 
 
 def _enable_ansi() -> bool:
@@ -133,7 +141,7 @@ def get_python_exe() -> str:
 
     error("未找到 Python 3.10+，请先安装 Python 3.10 或更高版本")
     error("下载地址: https://www.python.org/downloads/")
-    sys.exit(1)
+    sys.exit(EXIT_FAILURE)
 
 
 # ============================================================
@@ -245,6 +253,8 @@ def _detect_path(paths: list[str], agent_name: str = "") -> str | None:
         "OpenCode": ["opencode"],
         "Windsurf": ["windsurf"],
         "Cline": ["cline"],
+        "Qoder": ["qoder"],
+        "Qoder CN": ["qoder cn", "qodercn", "qoder-cn", "qoder_cn"],
     }
     keywords = keywords_map.get(agent_name, [])
 
@@ -458,6 +468,39 @@ AGENT_DEFINITIONS = {
             os.path.join(_env("LOCALAPPDATA"), "Programs", "ChatGLM", "ChatGLM.exe"),
         ],
         "experimental": True,
+    },
+    "Qoder": {
+        # 阿里云通义团队出品的 Agentic Coding Platform（国际版）
+        # 独立 IDE，支持 STDIO/SSE/Streamable HTTP 三种 MCP 传输
+        # 配置文件: %APPDATA%\Qoder\mcp-settings.json（mcpServers 键）
+        # 注: 国际版路径来自 docs.qoder.com 文档调研，本机未实测（测试机装的是 Qoder CN）。
+        # 文档: https://docs.qoder.com/user-guide/chat/model-context-protocol
+        "config_type": "Standard",
+        "doc_url": "https://docs.qoder.com/user-guide/chat/model-context-protocol",
+        "config_path": lambda: os.path.join(_env("APPDATA"), "Qoder", "mcp-settings.json"),
+        "detect_paths": lambda: [
+            os.path.join(_env("LOCALAPPDATA"), "Programs", "Qoder", "Qoder.exe"),
+        ],
+        "modes": ["global"],
+    },
+    "Qoder CN": {
+        # Qoder 国内版（Qoder CN）——通过阿里云通义灵码（Lingma）集成
+        # 实际安装路径: C:\Users\<user>\AppData\Local\Programs\QoderCN\QoderCN.exe
+        # 实际 MCP 配置: %APPDATA%\QoderCN\SharedClientCache\extension\local\mcp.json
+        #   （外层含 mcpServers 键 + userConfigMD5 字段；mcpServers.daofy 内部还有
+        #    identifier/disabled/source/version/createAt 等元数据，重写会被简化版覆盖，
+        #    Qoder CN 重启时会自动重建这些元数据）
+        # 简化版缓存: %APPDATA%\QoderCN\SharedClientCache\mcp.json
+        # 文档: https://help.aliyun.com/zh/lingma/qoder-cn/user-guide/guide-for-using-mcp
+        "config_type": "Standard",
+        "doc_url": "https://help.aliyun.com/zh/lingma/qoder-cn/user-guide/guide-for-using-mcp",
+        "config_path": lambda: os.path.join(
+            _env("APPDATA"), "QoderCN", "SharedClientCache", "extension", "local", "mcp.json",
+        ),
+        "detect_paths": lambda: [
+            os.path.join(_env("LOCALAPPDATA"), "Programs", "QoderCN", "QoderCN.exe"),
+        ],
+        "experimental": True,  # extension\local\mcp.json 含元数据，重写会清空 identifier/source
     },
 }
 
@@ -710,7 +753,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
         server_script = os.path.join(str(get_script_dir()), "src", "server.py")
         if not os.path.exists(server_script):
             error(f"MCP Server 脚本不存在: {server_script}")
-            sys.exit(1)
+            sys.exit(EXIT_FAILURE)
 
     agents = detect_agents()
 
@@ -724,6 +767,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             "Cursor": "Cursor", "OpenCode": "OpenCode", "Windsurf": "Windsurf",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
+            "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
         }
         target = filter_map.get(agent_filter, agent_filter)
         agents = [a for a in agents if a["name"] == target]
@@ -733,7 +777,8 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
 
     if not installed_agents:
         warn("未检测到任何已安装的 AI Agent")
-        sys.exit(0)
+        error("请先安装 Claude Desktop、Cursor、CodeArts Agent 等任意一个 AI Agent")
+        sys.exit(EXIT_FAILURE)
 
     # ================================================================
     # 分两组展示：全局配置 / 项目级配置
@@ -801,7 +846,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
                 choice = "q"
             if not choice or choice.lower() == "q":
                 info("已取消")
-                sys.exit(0)
+                sys.exit(EXIT_CANCELLED)
             if choice.lower() in ("a", "all"):
                 # 全选：每个 display 项独立复制，保留各自的 implied_mode
                 selected = []
@@ -824,7 +869,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
                             warn(f"忽略无效选择: {idx}")
                 if not selected:
                     warn("未选择任何有效的 Agent")
-                    sys.exit(0)
+                    sys.exit(EXIT_FAILURE)
 
     # agent_filter 模式或未设置 _implied_mode 的自动推断
     for a in selected:
@@ -840,7 +885,7 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
             for a in need_path:
                 rel = _get_project_relative_config_path(a["name"], a)
                 error(f"  {a['name']} 的配置相对路径: {rel}")
-            sys.exit(1)
+            sys.exit(EXIT_FAILURE)
         default_dir = str(get_script_dir())
         info("")
         info("以下 Agent 需要指定项目目录：")
@@ -947,6 +992,9 @@ def do_install(python_exe: str, project_dir: str = "", agent_filter: str = "All"
     if success_count > 0:
         success("MCP Server 安装完成！")
         _prompt_restart(selected, restart)
+    else:
+        error("所有选中的 Agent 都未能成功配置")
+        sys.exit(EXIT_FAILURE)
 
 
 # ============================================================
@@ -987,7 +1035,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
 
     if not display_items:
         info("没有需要卸载的 AI Agent")
-        sys.exit(0)
+        sys.exit(EXIT_SUCCESS)
 
     # ================================================================
     # 分两组展示：全局配置 / 项目级配置（同安装流程）
@@ -1029,6 +1077,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             "Cursor": "Cursor", "OpenCode": "OpenCode", "Windsurf": "Windsurf",
             "Cline": "Cline", "Roo": "Roo Code", "Tongyi": "通义灵码",
             "Doubao": "豆包", "Kimi": "Kimi", "ChatGLM": "智谱清言",
+            "Qoder": "Qoder", "QoderCN": "Qoder CN", "Qoder CN": "Qoder CN",
         }
         target = filter_map.get(agent_filter, agent_filter)
         selected = [a for a in agents if a["name"] == target and a.get("was_configured")]
@@ -1047,7 +1096,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
                 choice = "q"
             if not choice or choice.lower() == "q":
                 info("已取消")
-                sys.exit(0)
+                sys.exit(EXIT_CANCELLED)
             if choice.lower() in ("a", "all"):
                 selected_with_modes = display_items
             else:
@@ -1062,7 +1111,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
                             warn(f"忽略无效选择: {idx}")
                 if not selected_with_modes:
                     warn("未选择任何有效的 Agent")
-                    sys.exit(0)
+                    sys.exit(EXIT_FAILURE)
         # 转为独立 dict 列表，保留 implied_mode
         selected = []
         for agent, implied_mode in selected_with_modes:
@@ -1071,7 +1120,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
             selected.append(entry)
 
     if not selected:
-        sys.exit(0)
+        sys.exit(EXIT_SUCCESS)
 
     # 为项目级 Agent 补充路径检测（选中后才提示）
     for a in selected:
@@ -1081,7 +1130,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
                 error("项目级 Agent 需要 --project-dir 参数指定项目目录")
                 rel = _get_project_relative_config_path(a["name"], a)
                 error(f"  {a['name']} 的配置相对路径: {rel}")
-                sys.exit(1)
+                sys.exit(EXIT_FAILURE)
             info("")
             rel = _get_project_relative_config_path(a["name"], a)
             info(f"{a['name']} 使用项目级 MCP 配置（{rel}），请输入项目目录")
@@ -1109,7 +1158,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
 
     if not to_uninstall:
         info("没有需要卸载的 MCP 配置")
-        sys.exit(0)
+        sys.exit(EXIT_SUCCESS)
 
     info("")
     warn("将卸载以下 Agent 的 MCP Server 配置:")
@@ -1122,7 +1171,7 @@ def do_uninstall(agent_filter: str = "All", project_dir: str = "",
         confirm = "n"
     if confirm.lower() != "y":
         info("已取消")
-        sys.exit(0)
+        sys.exit(EXIT_CANCELLED)
 
     separator("卸载 MCP Server")
     success_count = 0
@@ -1362,14 +1411,14 @@ def main() -> None:
     """安装/卸载脚本入口函数，解析命令行参数并执行对应操作。"""
     if sys.platform != "win32":
         error("此脚本仅支持 Windows 系统")
-        sys.exit(1)
+        sys.exit(EXIT_FAILURE)
 
     parser = argparse.ArgumentParser(description="Daofy for Delphi 安装/卸载脚本")
     parser.add_argument("--uninstall", action="store_true", help="卸载模式")
     parser.add_argument("--agent", default="All",
                         choices=["Claude", "Trae", "CodeArts", "Cursor", "OpenCode",
                                  "Windsurf", "Cline", "Roo", "Tongyi", "Doubao",
-                                 "Kimi", "ChatGLM", "All"],
+                                 "Kimi", "ChatGLM", "Qoder", "QoderCN", "All"],
                         help="指定 AI Agent")
     parser.add_argument("--force", action="store_true", help="强制重新配置")
     parser.add_argument("--restart", action="store_true", help="操作后自动重启 AI Agent（不交互询问）")
@@ -1395,12 +1444,12 @@ def main() -> None:
         # 检查 MCP Server 文件是否存在，不存在则自动下载解压
         if not ensure_server_files():
             error("MCP Server 文件准备失败")
-            sys.exit(1)
+            sys.exit(EXIT_FAILURE)
 
         python_exe = args.python or get_python_exe()
         if not os.path.exists(python_exe):
             error(f"Python 不存在: {python_exe}")
-            sys.exit(1)
+            sys.exit(EXIT_FAILURE)
         do_install(python_exe, project_dir=args.project_dir,
                    agent_filter=args.agent, force=args.force, restart=restart,
                    use_pip=args.pip)

@@ -161,6 +161,91 @@ class TestInstallMCPCore(unittest.TestCase):
                 path = defn["config_path"]()
                 self.assertIsInstance(path, str)
 
+    def test_qoder_agent_definitions(self):
+        """验证 Qoder 和 Qoder CN 的 Agent 定义（2026-06-07 新增）"""
+        import install_mcp
+
+        # AGENT_DEFINITIONS 必须包含 Qoder 和 Qoder CN
+        self.assertIn("Qoder", install_mcp.AGENT_DEFINITIONS)
+        self.assertIn("Qoder CN", install_mcp.AGENT_DEFINITIONS)
+
+        # Qoder 必须是 Standard 类型，config_path 指向 mcp-settings.json
+        qoder = install_mcp.AGENT_DEFINITIONS["Qoder"]
+        self.assertEqual(qoder["config_type"], "Standard")
+        self.assertTrue(
+            qoder["config_path"]().endswith("mcp-settings.json"),
+            f"Qoder config_path should end with mcp-settings.json, got: {qoder['config_path']()}",
+        )
+        # Qoder 必须有官方文档链接
+        self.assertTrue(
+            qoder["doc_url"].startswith("http"),
+            f"Qoder doc_url should be a URL, got: {qoder['doc_url']}",
+        )
+        # Qoder 至少有一条 detect_paths
+        self.assertTrue(
+            len(qoder["detect_paths"]()) > 0,
+            "Qoder should have at least one detect_paths entry",
+        )
+
+        # Qoder CN：Standard + extension\local\mcp.json（实测本机 Qoder CN 真实路径）
+        qoder_cn = install_mcp.AGENT_DEFINITIONS["Qoder CN"]
+        self.assertEqual(qoder_cn["config_type"], "Standard")
+        self.assertTrue(
+            qoder_cn["config_path"]().endswith("extension\\local\\mcp.json"),
+            f"Qoder CN config_path should end with extension\\local\\mcp.json, "
+            f"got: {qoder_cn['config_path']()}",
+        )
+        # Qoder CN 路径必须在 QoderCN 子目录下（不是 Qoder 国际版）
+        self.assertIn("QoderCN", qoder_cn["config_path"](),
+                      f"Qoder CN config_path should be under QoderCN/, got: {qoder_cn['config_path']()}")
+        # Qoder CN detect_paths 必须指向 QoderCN.exe（不是 Qoder.exe）
+        detect_paths = qoder_cn["detect_paths"]()
+        self.assertTrue(len(detect_paths) > 0, "Qoder CN should have at least one detect_paths entry")
+        self.assertTrue(any("QoderCN" in p for p in detect_paths),
+                        f"Qoder CN detect_paths should include QoderCN.exe, got: {detect_paths}")
+        # Qoder CN 必须有阿里云文档链接
+        self.assertIn("aliyun.com", qoder_cn["doc_url"],
+                     f"Qoder CN doc_url should reference aliyun, got: {qoder_cn['doc_url']}")
+        # Qoder CN 必须标记为 experimental（extension\local\mcp.json 含元数据，重写会清空）
+        self.assertTrue(
+            qoder_cn.get("experimental", False),
+            "Qoder CN should be marked experimental",
+        )
+
+    def test_qoder_agents_in_install_cli(self):
+        """验证 Qoder/QoderCN 已注册到 argparse choices 和 filter_map（install/uninstall 两侧）"""
+        import re
+        install_mcp_path = Path(__file__).resolve().parent.parent / "install_mcp.py"
+        src = install_mcp_path.read_text(encoding="utf-8")
+
+        # 1) argparse --agent choices 必须包含 "Qoder" 和 "QoderCN"
+        match = re.search(
+            r'parser\.add_argument\("--agent".*?choices=\[(.*?)\]',
+            src, re.DOTALL,
+        )
+        self.assertIsNotNone(match, "Could not find --agent choices in install_mcp.py")
+        choices_str = match.group(1)
+        self.assertIn('"Qoder"', choices_str,
+                      f"argparse choices should include 'Qoder', got: {choices_str}")
+        self.assertIn('"QoderCN"', choices_str,
+                      f"argparse choices should include 'QoderCN', got: {choices_str}")
+
+        # 2) filter_map 必须在 do_install 和 do_uninstall 两处都包含 "QoderCN": "Qoder CN" 短名
+        self.assertGreaterEqual(
+            src.count('"QoderCN": "Qoder CN"'), 2,
+            'filter_map should include \'"QoderCN": "Qoder CN"\' in both install and uninstall',
+        )
+
+        # 3) _detect_path keywords_map 必须包含 Qoder 和 Qoder CN 关键词
+        self.assertIn(
+            '"Qoder": ["qoder"]', src,
+            "keywords_map should include 'Qoder' with qoder keyword",
+        )
+        self.assertIn(
+            '"Qoder CN": ["qoder cn"', src,
+            "keywords_map should include 'Qoder CN' with qoder cn keywords",
+        )
+
     def test_detect_path_keywords_map(self):
         """验证 _detect_path 的关键词映射包含所有 Agent"""
         from install_mcp import _detect_path
@@ -235,6 +320,110 @@ class TestInstallMCPCore(unittest.TestCase):
                 pass  # 无意外异常即可
             except Exception:
                 pass
+
+    def test_exit_code_constants(self):
+        """验证退出码常量契约（0=成功, 1=失败, 2=取消）"""
+        from install_mcp import EXIT_SUCCESS, EXIT_FAILURE, EXIT_CANCELLED
+        self.assertEqual(EXIT_SUCCESS, 0)
+        self.assertEqual(EXIT_FAILURE, 1)
+        self.assertEqual(EXIT_CANCELLED, 2)
+
+    def test_no_magic_exit_codes_in_install_functions(self):
+        """do_install/do_uninstall 不应硬编码 sys.exit(N)，必须用 EXIT_* 常量。
+
+        这是 install.bat 显示成功/失败/取消三种结果的核心契约——
+        若此处回归硬编码 0/1/2，bat 端 [SUCCESS]/[ERROR]/[INFO] 分支会错位。
+        """
+        import inspect
+        import re
+        from install_mcp import do_install, do_uninstall
+
+        for name, func in (("do_install", do_install), ("do_uninstall", do_uninstall)):
+            src = inspect.getsource(func)
+            # 匹配 sys.exit(0/1/2) 这种 magic number 形式
+            hardcoded = re.findall(r"sys\.exit\(\s*(\d+)\s*\)", src)
+            self.assertEqual(
+                hardcoded, [],
+                f"{name} 中存在硬编码 sys.exit(N): {hardcoded}。"
+                f"应使用 EXIT_SUCCESS/EXIT_FAILURE/EXIT_CANCELLED 常量。"
+            )
+
+    def test_do_install_no_agents_exits_failure(self):
+        """do_install: 未检测到任何 AI Agent 时退出 1（前置条件失败）。"""
+        from install_mcp import do_install
+
+        with patch('install_mcp.detect_agents', return_value=[]), \
+             patch('install_mcp.get_script_dir', return_value=Path(tempfile.mkdtemp())):
+            with self.assertRaises(SystemExit) as ctx:
+                do_install("C:\\fake\\python.exe")
+            self.assertEqual(ctx.exception.code, 1,
+                "未检测到任何 AI Agent 应该退出 1，不应被 bat 端误判为成功")
+
+    def test_do_install_q_cancel_exits_cancelled(self):
+        """do_install: 用户在交互中按 q 取消时退出 2（用户主动取消）。
+
+        这是用户报告的 '按q退出也提示成功了' bug 的核心回归测试：
+        之前用 sys.exit(0) 导致 bat 端 if errorlevel 1 漏检，错误地显示
+        '[SUCCESS] Daofy installed successfully!'。
+        """
+        from install_mcp import do_install
+
+        # 模拟两个已安装的 Agent，触发 display_items > 1 进入交互选择
+        fake_agents = [
+            {
+                "name": "FakeA", "installed": True, "path": "C:\\fake\\a.exe",
+                "config_path": "C:\\fake\\a.json", "config_type": "Standard",
+                "modes": ["global"], "doc_url": "", "experimental": False,
+                "was_configured": False,
+            },
+            {
+                "name": "FakeB", "installed": True, "path": "C:\\fake\\b.exe",
+                "config_path": "C:\\fake\\b.json", "config_type": "Standard",
+                "modes": ["global"], "doc_url": "", "experimental": False,
+                "was_configured": False,
+            },
+        ]
+        # do_install 头部会检查 src/server.py 是否存在；用临时目录创建它
+        fake_script_dir = Path(tempfile.mkdtemp())
+        (fake_script_dir / "src").mkdir(parents=True, exist_ok=True)
+        (fake_script_dir / "src" / "server.py").write_text("# fake", encoding="utf-8")
+
+        with patch('install_mcp.detect_agents', return_value=fake_agents), \
+             patch('install_mcp.get_script_dir', return_value=fake_script_dir), \
+             patch('builtins.input', return_value='q'):  # 模拟用户输入 q
+            with self.assertRaises(SystemExit) as ctx:
+                do_install("C:\\fake\\python.exe")
+            self.assertEqual(ctx.exception.code, 2,
+                "按 q 取消应退出 2 (EXIT_CANCELLED)，不应被 bat 端误判为成功")
+
+    def test_bat_runs_install_labels_use_exit_codes(self):
+        """install.bat 的 :RUN_INSTALL 区段必须使用 %errorlevel% 三分支判断。
+
+        :RUN_INSTALL 是 install_mcp.py 的调用点——必须按 0/1/2 三种 errorlevel
+        分别给出 [SUCCESS]/[ERROR]/[INFO] 提示。旧版的 'if errorlevel 1' (>=1)
+        粗粒度判断无法区分 0 (成功) 和 2 (用户取消)，会显示错误的 [SUCCESS]。
+        """
+        bat_path = Path(__file__).resolve().parent.parent / "install.bat"
+        src = bat_path.read_text(encoding="utf-8")
+
+        # 截取 :RUN_INSTALL 标签下方到文件末尾（bat fall-through 终止于此）
+        marker = ":RUN_INSTALL"
+        idx = src.find(marker)
+        self.assertGreater(idx, -1, "install.bat 必须存在 :RUN_INSTALL 标签")
+        run_section = src[idx:]
+
+        # 0/1/2 三个值都必须被处理
+        self.assertIn("%errorlevel%==0", run_section,
+            ":RUN_INSTALL 必须区分 errorlevel==0 (成功)")
+        self.assertIn("%errorlevel%==1", run_section,
+            ":RUN_INSTALL 必须区分 errorlevel==1 (失败)")
+        self.assertIn("%errorlevel%==2", run_section,
+            ":RUN_INSTALL 必须区分 errorlevel==2 (用户取消)")
+
+        # 三个 label 都必须存在
+        for label in (":RUN_OK", ":RUN_FAIL", ":RUN_CANCEL"):
+            self.assertIn(label, run_section,
+                f":RUN_INSTALL 区段必须定义 {label} 标签")
 
 
 # ============================================================

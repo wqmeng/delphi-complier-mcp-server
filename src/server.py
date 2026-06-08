@@ -369,17 +369,17 @@ async def run_server():
                         "record_name": {"type": "string", "description": "[仅 action=read, search_type=record] Record 类型名"},
                         "function_name": {"type": "string", "description": "[仅 action=read, search_type=function] 函数/过程名，如 'Create'"},
                         "start_line": {"type": "integer", "default": 0, "description": "起始行号（从0开始，左闭右开区间）。action=read 时分段读取；action=write 时配合 end_line 做部分写入"},
-                        "limit": {"type": "integer", "default": 2000, "description": "[仅 action=read] 最大返回行数。当文件超长时分段读取"},
-                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[仅 action=read] 是否在输出中显示行号前缀（如 '     1: unit Unit1;'），默认 false"},
+                        "limit": {"type": "integer", "default": 500, "description": "[仅 action=read] 最大返回行数（默认500，上限1000）。当文件超长时分段读取"},
+                        "show_line_numbers": {"type": "boolean", "default": False, "description": "[仅 action=read] 是否在输出中显示行号前缀（0-based，如 '     0: unit Unit1;'），默认 false"},
                         "end_line": {"type": "integer", "description": "结束行号（不包含该行，左闭右开区间），不传则到文件末尾。action=read 时配合 start_line 分段；action=write 时配合 start_line 做部分写入"},
                         "search_in": {"type": "string", "enum": ["all", "delphi", "thirdparty"], "default": "all", "description": "[仅 action=read, search_type=class/function] 搜索范围"},
                         "project_path": {"type": "string", "description": "[仅 action=read, search_type=class/function] 项目文件路径，用于在项目知识库中查找 .pas"},
 
                         # ---- [仅 action=write/batch_write] 参数 ----
                         "content": {"type": "string", "description": "【action=write 必需】写入的内容。不传 start_line/end_line 时替换全文，必须包含完整文件内容。配合 start_line/end_line 时仅替换指定行范围。"},
-                        "encoding": {"type": "string", "default": "auto", "description": "[write/batch_write] 写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
-                        "auto_format": {"type": "boolean", "default": False, "description": "[write/batch_write] 写入后自动调用 pasfmt 格式化代码"},
-                        "backup": {"type": "boolean", "default": True, "description": "[write/batch_write] 写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
+                        "encoding": {"type": "string", "default": "auto", "description": "[write/batch_write/uses] 写入编码: auto=自动检测保持原始编码, 也可指定 utf-8/gbk/utf-16"},
+                        "auto_format": {"type": "boolean", "default": False, "description": "[write/batch_write/uses] 写入后自动调用 pasfmt 格式化代码"},
+                        "backup": {"type": "boolean", "default": True, "description": "[write/batch_write/uses] 写入前自动备份原文件到 __history 目录（建议保持默认 true）"},
 
                         # ---- [仅 action=batch_write] 参数 ----
                         # 🧪 实验性功能：批量写入在 AI 多次连续编辑场景下偏移量易错，
@@ -401,6 +401,7 @@ async def run_server():
                                 }
                             }
                         },
+                        "force": {"type": "boolean", "default": False, "description": "[仅 action=batch_write] 强制写入：true 时跳过 AI 偏移量检查（content 首行与被替换行相同、或结果中出现连续重复行时不再报错）。批量写入遇到偏移量误判时用此参数绕过。"},
 
                         # ---- [仅 action=format] 参数 ----
                         "mode": {"type": "string", "enum": ["file", "code", "check"], "default": "file", "description": "[仅 action=format] 格式化模式: file=格式化文件, code=格式化代码段, check=仅检查格式"},
@@ -474,6 +475,7 @@ async def run_server():
                     "properties": {
                         "action": {"type": "string", "enum": ["start", "status", "result", "list", "cancel"], "description": "操作类型", "default": "list"},
                         "task_id": {"type": "string", "description": "任务ID（action=status/result/cancel时使用）"},
+                        "long_poll_seconds": {"type": "integer", "default": 0, "minimum": 0, "maximum": 30, "description": "[仅 action=status] 长轮询等待秒数（可选，默认0即立即返回。MCP请求通道有超时限制，建议≤30秒，超时改用短轮询）"},
                         "task_type": {"type": "string", "description": "任务类型（action=start时使用），如: build_knowledge_base, build_thirdparty_knowledge_base, init_project_knowledge_base, build_document_knowledge_base, build_embedding"},
                         "task_params": {"type": "object", "description": "任务参数（action=start时使用，根据task_type不同而不同）"},
                         "show_progress": {"type": "boolean", "default": True, "description": "是否显示进度"},
@@ -792,7 +794,23 @@ async def run_server():
         return get_tool_help(tool_name=arguments.get("tool_name", ""))
 
     async def _handle_experience(arguments: dict) -> dict:
-        return _experience(**arguments)
+        """处理 experience 工具调用，带 asyncio 超时保护（30s）。"""
+        import asyncio
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_experience, **arguments),
+                timeout=30,
+            )
+            return result
+        except asyncio.TimeoutError:
+            return {
+                "status": "failed",
+                "message": "experience 操作超时（30s），可能是 embedding 模型加载/下载耗时过长。"
+                    " 建议：先调用 delphi_kb(action=build_embedding) 预加载模型，"
+                    " 再使用 experience 的语义搜索功能。",
+            }
+        except Exception as e:
+            return {"status": "failed", "message": f"experience failed: {e}"}
 
     async def _handle_daofy_update(arguments: dict) -> dict:
         """处理 daofy_update 工具调用。"""

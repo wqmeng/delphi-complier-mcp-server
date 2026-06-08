@@ -294,16 +294,30 @@ echo [INFO] Starting Daofy installation...
 echo:
 
 "!PY!" "%SD%\install_mcp.py" %*
-if errorlevel 1 (
-    echo:
-    echo [ERROR] Installation failed.
-    pause
-    exit /b 1
-)
+if %errorlevel%==0 goto :RUN_OK
+if %errorlevel%==1 goto :RUN_FAIL
+if %errorlevel%==2 goto :RUN_CANCEL
+echo:
+echo [WARNING] Operation completed with exit code %errorlevel%
+pause
+exit /b %errorlevel%
 
+:RUN_OK
 echo:
 echo [SUCCESS] Daofy installed successfully!
 pause
 exit /b 0
+
+:RUN_FAIL
+echo:
+echo [ERROR] Installation failed.
+pause
+exit /b 1
+
+:RUN_CANCEL
+echo:
+echo [INFO] Installation cancelled.
+pause
+exit /b 2
 
 

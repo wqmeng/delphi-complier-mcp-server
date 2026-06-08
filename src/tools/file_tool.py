@@ -10,6 +10,7 @@ Action 模式:
   batch_write 批量写入（edits 数组，内部自动按 start_line 排序后依次替换，以备份文件为参照系）
   format      格式化 Delphi 源码（继承 format_delphi，pasfmt 驱动）
   backup      备份管理（创建/恢复/列表/对比）
+  uses        增删 uses 子句中的单元（命名空间冲突检测 + 自动排序）
 
 返回值统一为 dict，遵循项目规范:
   success: {"status": "success", "message": "...", ...}
@@ -69,8 +70,9 @@ def _is_delphi_file(file_path: str) -> bool:
 
 
 def _is_dfm_file(file_path: str) -> bool:
-    """判断是否是 DFM 文件"""
-    return os.path.splitext(file_path)[1].lower() == '.dfm'
+    """判断是否是 DFM/FMX 表单文件（Delphi VCL/FireMonkey 表单，可能为二进制或文本格式）"""
+    ext = os.path.splitext(file_path)[1].lower()
+    return ext in {'.dfm', '.fmx'}
 
 
 def _wrap_error(msg: str) -> Dict[str, Any]:
@@ -1147,10 +1149,11 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
             before_lines = 0
             if os.path.isfile(file_path):
                 try:
-                    with open(file_path, 'r', encoding='utf-8', newline='',
+                    fmt_enc = detect_encoding(file_path)
+                    with open(file_path, 'r', encoding=fmt_enc, newline='',
                               buffering=1048576) as f:
                         before_lines = sum(1 for _ in f)
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     pass
 
             result = await pasfmt.format_file(
@@ -1164,7 +1167,8 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
             # 格式化成功且文件存在时，计算行数变化并附加到返回消息
             if result.get("status") == "success" and result.get("formatted") and os.path.isfile(file_path):
                 try:
-                    with open(file_path, 'r', encoding='utf-8', newline='',
+                    fmt_enc = detect_encoding(file_path)
+                    with open(file_path, 'r', encoding=fmt_enc, newline='',
                               buffering=1048576) as f:
                         after_lines = sum(1 for _ in f)
                     offset = after_lines - before_lines
@@ -1175,7 +1179,7 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
                         )
                         if isinstance(result.get("message"), str):
                             result["message"] += offset_info
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     pass
 
     # pasfmt.format_file / format_code 结果已统一为 dict
@@ -1236,30 +1240,66 @@ async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================================
 
 # 匹配 uses 子句的正则：uses Unit1, Unit2; 可以跨多行
-# 先剥离 Pascal 花括号注释 { ... }，避免注释内的 ; 干扰匹配
+# 先剥离 Pascal 注释（花括号 { } + 星号括号 (* *)），避免注释内的 ; 干扰匹配
 # 捕获组: (1)uses关键字 (2)整个单元列表 (3)分号
 _USES_RE = re.compile(
     r'\b(uses)\b\s+(.*?)\s*(;)',
     re.DOTALL | re.IGNORECASE,
 )
 
-# 剥离 Pascal 花括号注释（含 $ 开头的条件编译指令）
-_STRIP_BRACE_COMMENTS = re.compile(r'\{[^}]*\}', re.DOTALL)
+# 匹配 Pascal 注释的正则：花括号 { ... }（含 $ 条件编译指令）和星号括号 (* ... *)
+_PASCAL_COMMENTS_RE = re.compile(r'\{[^}]*\}|\(\*.*?\*\)', re.DOTALL)
+
+
+def _strip_comments_with_offset_map(text: str) -> tuple:
+    """剥离 Pascal 注释（花括号 + 星号括号），构建 stripped→original 偏移映射。
+
+    返回 (stripped_text, offset_map):
+      - stripped_text: 剥离注释后的文本
+      - offset_map: 列表，长度 = len(stripped_text) + 1（含 exclusive end sentinel)
+        offset_map[i] = 原始文本中对应字符的位置
+
+    偏移映射用于将 stripped 文本中搜索到的位置映射回原始文本位置，
+    避免 uses 子句前存在注释/编译指令时切片错位导致文件破坏。
+    """
+    offset_map = []
+    stripped_segments = []
+    pos = 0  # 当前在原始文本中的位置
+
+    for match in _PASCAL_COMMENTS_RE.finditer(text):
+        # 保留注释之前的文本段，记录每个字符的原始位置
+        segment = text[pos:match.start()]
+        if segment:
+            offset_map.extend(range(pos, pos + len(segment)))
+            stripped_segments.append(segment)
+        pos = match.end()
+
+    # 保留最后一段文本
+    segment = text[pos:]
+    if segment:
+        offset_map.extend(range(pos, pos + len(segment)))
+        stripped_segments.append(segment)
+
+    # Sentinel: exclusive end 位置映射到原始文本末尾
+    offset_map.append(len(text))
+
+    stripped_text = ''.join(stripped_segments)
+    return (stripped_text, offset_map)
 
 
 def _find_uses_section(text: str, section: str) -> Optional[tuple]:
     """在指定区域(interface/implementation)查找 uses 子句。
 
-    搜索前会剥离花括号注释，避免 { ... } 内的 ';' 干扰正则匹配。
-    返回的偏移量基于原始 text（注释剥离后的偏移映射）。
+    搜索前剥离 Pascal 注释（花括号 + 星号括号），避免注释内的 ';' 干扰匹配。
+    返回的偏移量通过 offset_map 映射回原始 text，确保切片正确。
 
     返回 (uses_start, uses_end, units_text) 元组，或 None。
-    uses_start/uses_end 是基于原始 text 的偏移。
+    uses_start/uses_end 是基于原始 text 的偏移（已从 stripped 映射回 original）。
     """
     section_lower = section.lower()
 
-    # 剥离花括号注释，同时构建原始偏移映射
-    stripped = _STRIP_BRACE_COMMENTS.sub('', text)
+    # 剥离注释，构建偏移映射（stripped 位置 → 原始位置）
+    stripped, offset_map = _strip_comments_with_offset_map(text)
 
     if section_lower == "interface":
         impl_pos = re.search(r'\bimplementation\b', stripped, re.IGNORECASE)
@@ -1269,7 +1309,12 @@ def _find_uses_section(text: str, section: str) -> Optional[tuple]:
         chunk = stripped[start:end]
         match = _USES_RE.search(chunk)
         if match:
-            return (match.start() + start, match.end() + start, match.group(2))
+            s_stripped = match.start() + start
+            e_stripped = match.end() + start
+            # 通过 offset_map 映射回原始文本位置
+            s_original = offset_map[s_stripped]
+            e_original = offset_map[e_stripped]
+            return (s_original, e_original, match.group(2))
         return None
 
     elif section_lower == "implementation":
@@ -1280,7 +1325,12 @@ def _find_uses_section(text: str, section: str) -> Optional[tuple]:
         chunk = stripped[start:]
         match = _USES_RE.search(chunk)
         if match:
-            return (match.start() + start, match.end() + start, match.group(2))
+            s_stripped = match.start() + start
+            e_stripped = match.end() + start
+            # 通过 offset_map 映射回原始文本位置
+            s_original = offset_map[s_stripped]
+            e_original = offset_map[e_stripped]
+            return (s_original, e_original, match.group(2))
         return None
 
     return None
@@ -1351,9 +1401,17 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if ext not in ('.pas', '.dpr', '.dpk', '.inc'):
         return _wrap_error(f"uses 操作仅支持 .pas/.dpr/.dpk/.inc 文件，不支持 {ext}")
 
-    # 读取文件
-    original_encoding = detect_encoding(file_path)
-    with open(file_path, 'r', encoding=original_encoding, newline='',
+    # 读取文件（始终用实际检测编码读取，避免乱码；写出按 encoding 参数决定）
+    encoding = arguments.get("encoding", "auto")
+    detected_enc = detect_encoding(file_path)
+    if encoding == "auto":
+        read_enc = detected_enc
+        write_enc = detected_enc
+    else:
+        read_enc = detected_enc
+        write_enc = encoding
+
+    with open(file_path, 'r', encoding=read_enc, newline='',
               buffering=1048576) as f:
         text = f.read()
 
@@ -1433,17 +1491,19 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if backup:
         backup_path = create_backup(file_path)
 
-    # 写出
+    # 写出（用 write_enc 编码，与读取编码可能不同 = 透明转码）
+    encoding_fallback = False
     try:
-        with open(file_path, 'w', encoding=original_encoding, newline='',
+        with open(file_path, 'w', encoding=write_enc, newline='',
                   buffering=1048576) as f:
             f.write(new_text)
     except UnicodeEncodeError:
-        logger.warning(f"编码 {original_encoding} 写出失败，回退到 utf-8")
+        logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
         with open(file_path, 'w', encoding="utf-8", newline='',
                   buffering=1048576) as f:
             f.write(new_text)
-        original_encoding = "utf-8"
+        write_enc = "utf-8"
+        encoding_fallback = True
 
     # 自动格式化
     fmt_msg = ""
@@ -1473,13 +1533,17 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
         f"action: {action_desc} {unit_name_stripped} in {uses_section}",
         f"uses: {', '.join(new_units)}",
         f"0-based [{s}, {e}) → [{s}, {new_e})",
-        f"encoding: {original_encoding}",
+        f"encoding: {write_enc}",
     ]
     if backup_path:
         parts.append(f"backup: __history\\{os.path.basename(backup_path)}")
     if fmt_msg:
         parts.append("formatted: yes")
-
+    if encoding_fallback:
+        parts.append(f"⚠ fallback: {detected_enc} → utf-8")
+    if write_enc != detected_enc and not encoding_fallback:
+        parts.append(f"ℹ transcoded: {detected_enc} → {write_enc}")
+    
     return {"status": "success", "message": ", ".join(parts)}
 
 

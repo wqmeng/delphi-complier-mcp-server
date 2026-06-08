@@ -12,6 +12,7 @@ Embedding 服务 —— 为知识库提供真语义搜索
 import logging
 import os
 import site
+import threading
 from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ if site.USER_SITE is not None:
 # 全局单例
 _model = None
 _model_name = "intfloat/multilingual-e5-small"
+_MODEL_LOAD_TIMEOUT = 60  # 模型加载超时秒数（含下载）
 
 
 def is_available() -> bool:
@@ -53,11 +55,19 @@ def is_model_loaded() -> bool:
     return _model is not None
 
 
-def load_model():
-    """懒加载模型（全局单例）"""
+def load_model(timeout: int = None):
+    """懒加载模型（全局单例），带超时保护。
+
+    Args:
+        timeout: 超时秒数，None 使用 _MODEL_LOAD_TIMEOUT 默认值。
+            超时后返回 None，避免阻塞 MCP tool call。
+    """
     global _model
     if _model is not None:
         return _model
+
+    if timeout is None:
+        timeout = _MODEL_LOAD_TIMEOUT
 
     from sentence_transformers import SentenceTransformer
 
@@ -87,38 +97,58 @@ def load_model():
             else:
                 os.environ.pop(k, None)
 
-    for ep in _endpoints:
-        try:
-            if ep:
-                logger.info(f"加载 embedding 模型（镜像: {ep}）: {_model_name}")
-                os.environ["HF_ENDPOINT"] = ep
-            else:
-                logger.info(f"加载 embedding 模型: {_model_name}")
-
-            # 优先使用离线模式（避免联网验证 SSL 证书失败）
-            os.environ["TRANSFORMERS_OFFLINE"] = "1"
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            _model = SentenceTransformer(_model_name, local_files_only=True)
-            logger.info("embedding 模型加载完成（离线模式）")
-            _restore_env()
-            return _model
-        except Exception as e:
-            logger.warning(f"  镜像 {ep or 'default'} 离线加载失败: {e}，尝试联网下载...")
-            # 清除离线标志，尝试联网下载
-            os.environ.pop("TRANSFORMERS_OFFLINE", None)
-            os.environ.pop("HF_HUB_OFFLINE", None)
+    def _try_load(endpoint):
+        """尝试从指定 endpoint 加载模型（在子线程中运行，可被超时中断）"""
+        result = [None]  # 用列表传递结果（线程间共享引用）
+        error = [None]
+        def _worker():
             try:
-                _model = SentenceTransformer(_model_name, local_files_only=False)
-                logger.info("embedding 模型加载完成（联网模式）")
-                _restore_env()
-                return _model
-            except Exception as e2:
-                logger.warning(f"  镜像 {ep or 'default'} 联网加载也失败: {e2}")
-                # 恢复环境变量后继续下一个镜像
-                _restore_env()
-                continue
+                if endpoint:
+                    logger.info(f"加载 embedding 模型（镜像: {endpoint}）: {_model_name}")
+                    os.environ["HF_ENDPOINT"] = endpoint
+                else:
+                    logger.info(f"加载 embedding 模型: {_model_name}")
 
-    logger.warning("所有镜像源均无法加载 embedding 模型")
+                # 优先使用离线模式
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                m = SentenceTransformer(_model_name, local_files_only=True)
+                logger.info("embedding 模型加载完成（离线模式）")
+                result[0] = m
+                return
+            except Exception as e:
+                logger.warning(f"  镜像 {endpoint or 'default'} 离线加载失败: {e}，尝试联网下载...")
+                os.environ.pop("TRANSFORMERS_OFFLINE", None)
+                os.environ.pop("HF_HUB_OFFLINE", None)
+                try:
+                    m = SentenceTransformer(_model_name, local_files_only=False)
+                    logger.info("embedding 模型加载完成（联网模式）")
+                    result[0] = m
+                except Exception as e2:
+                    logger.warning(f"  镜像 {endpoint or 'default'} 联网加载也失败: {e2}")
+                    error[0] = e2
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            # 线程超时仍在运行（daemon 线程会在主进程退出时自动终止）
+            logger.warning(f"加载 embedding 模型超时（{timeout}s），镜像 {endpoint or 'default'}")
+            _restore_env()
+            return None
+        if result[0] is not None:
+            _restore_env()
+            return result[0]
+        _restore_env()
+        return None
+
+    for ep in _endpoints:
+        m = _try_load(ep)
+        if m is not None:
+            _model = m
+            return _model
+
+    logger.warning("所有镜像源均无法加载 embedding 模型（或加载超时）")
     return None
 
 

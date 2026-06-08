@@ -30,17 +30,28 @@ try:
         cosine_similarity,
         blob_to_vector,
         is_available as _embedding_available,
+        is_model_loaded as _embedding_model_loaded,
     )
 except ImportError:
     encode_single = None
     cosine_similarity = None
     blob_to_vector = None
     _embedding_available = lambda: False
+    _embedding_model_loaded = lambda: False
 
 
 def _embedding_ok() -> bool:
-    """检查 embedding 是否可用（模型已加载）"""
+    """检查 embedding 是否可用（模型已加载且依赖齐全）
+
+    与知识库保持一致：仅在模型已加载后才走 embedding 路径，
+    避免 save/search 触发懒加载导致超时。
+    """
     try:
+        # 必须模型已加载（不触发懒加载）
+        if not (_embedding_model_loaded and callable(_embedding_model_loaded)
+                and _embedding_model_loaded()):
+            return False
+        # 依赖库可 import
         if _embedding_available and callable(_embedding_available):
             return _embedding_available()
     except Exception as e:
@@ -318,11 +329,14 @@ class ExperienceMemoryService:
 
         conn = self._get_conn()
         cursor = conn.cursor()
+        # 限制扫描行数，避免全表扫描随数据增长越来越慢
+        scan_limit = max(top_k * 10, 200)
         cursor.execute(
             "SELECT id, problem, solution, tools_used, context, tags, "
             "hit_count, score, created_at, updated_at, embedding "
             "FROM experiences WHERE embedding IS NOT NULL "
-            "ORDER BY updated_at DESC"
+            "ORDER BY updated_at DESC LIMIT ?",
+            (scan_limit,)
         )
         rows = cursor.fetchall()
         if not rows:
