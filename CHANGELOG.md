@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2026.06.08] - 2026-06-08
 
+### Added
+
+- **`delphi_file` write/batch_write 支持 `preview` 预览模式**：`preview=true` 时跳过备份/写盘/格式化，仅计算并返回 diff 预览。write 全量预览返回文件大小变化；write 部分写入预览和 batch_write 预览显示 `- L{行号}:` 格式的 diff。配套 9 个测试用例。
+
 ### Fixed
 
 - **`ExperienceMemoryService.delete()` 方法定义缺失修复**：`experience_service.py` 中 `delete()` 的 `def delete(...)` 方法头丢失，docstring 与方法体成为 `rebuild_embeddings()` `return` 后的死代码。`merge()` 中 `self.delete(did)` 调用会抛出 `AttributeError`。已在 `prune_list()` 与 `rebuild_embeddings()` 之间补充完整的方法定义，并移除死代码。

@@ -125,7 +125,12 @@ delphi_file(action="read", search_type="class",
 delphi_file(action="write", file_path="Unit1.pas", content="unit Unit1;\n...")
 ```
 
-`content` 必须包含完整的文件内容。
+`content` 必须包含完整的文件内容。如需预览（不实际写入），加 `preview=true`：
+
+```python
+# 预览效果（返回文件大小变化），不写盘
+delphi_file(action="write", file_path="Unit1.pas", content="新内容", preview=true)
+```
 
 ### 4.2 部分写入
 
@@ -136,6 +141,14 @@ delphi_file(action="write",
     content="替换后的内容",
     start_line=5,
     end_line=10)
+
+# 预览 diff（显示 - / + 行，含行号），不写盘
+delphi_file(action="write",
+    file_path="src/Unit1.pas",
+    content="新内容",
+    start_line=5,
+    end_line=10,
+    preview=true)
 ```
 
 ### 4.3 行号规则（⚠️ 易错）
@@ -182,6 +195,16 @@ wrote: Unit1.pas, 0-indexed [5, 10) → [5, 13), encoding: utf-8, backup: __hist
 | `encoding` | auto | 写入编码：auto/utf-8/gbk/utf-16 |
 | `auto_format` | false | 写入后自动调用 pasfmt 格式化 |
 | `backup` | true | 写入前自动备份到 `__history` |
+| `preview` | false | 预览模式：只计算 diff 不写盘（不备份、不写入、不格式化） |
+
+**预览输出示例**：
+```
+wrote: Demo.pas (preview), 0-indexed [6, 8) → [6, 7), encoding: utf-8, preview: true（未写入磁盘）
+
+    - L6: procedure Foo;
+    - L7: begin
+    +   // new body
+```
 
 ---
 
@@ -224,6 +247,32 @@ delphi_file(action="batch_write",
 - 相邻 edit 区间不能重叠（自动检测并拒绝）
 - content 应包含替换后的**完整**内容，不要包含已存在的行，否则可能重复
 - `force=true` 可跳过 AI 偏移量检查
+- `preview=true` 可以预览 diff 效果而不实际写入：
+
+```python
+# 预览批量修改效果，不写盘
+delphi_file(action="batch_write",
+    file_path="Unit1.pas",
+    edits=[
+        {"start_line": 5, "end_line": 10, "content": "新代码段1"},
+        {"start_line": 20, "end_line": 22, "content": "新代码段2"},
+    ],
+    preview=true)
+```
+
+**预览输出示例**：
+```
+batch_preview: 2 edits, Demo.pas, encoding: utf-8, preview: true（未写入磁盘）
+
+  [2, 3) → [2, 4)  add uses
+    - L2: interface
+    + uses
+    +   SysUtils;
+  [6, 8) → [6, 7)  update
+    - L6: procedure Foo;
+    - L7: begin
+    +   // new
+```
 
 ---
 
