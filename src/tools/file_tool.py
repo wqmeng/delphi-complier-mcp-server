@@ -22,6 +22,7 @@ import locale
 import shutil
 import tempfile
 import re
+import threading
 from typing import Any, Optional, Dict, List
 from mcp.types import CallToolResult
 from ..utils.logger import get_logger
@@ -319,31 +320,37 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if path_err:
         return _wrap_error("路径安全校验失败: %s" % path_err)
 
-    # DFM 二进制→文本透明转换
-    tmp_cleanup = None
-    if _is_dfm_file(file_path):
-        try:
-            fmt = dfm_utils._detect_dfm_format(file_path)
-        except FileNotFoundError:
-            return _wrap_error(f"DFM 文件不存在: {file_path}")
-        except PermissionError:
-            return _wrap_error(f"无权限读取 DFM 文件: {file_path}")
-        if fmt == "binary":
-            tmp_dir = tempfile.mkdtemp(prefix="filetool_")
-            tmp_text = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
-            result = await dfm_utils.convert_dfm(file_path, tmp_text, to_text=True)
-            if result.get("success"):
-                file_path = tmp_text
-                tmp_cleanup = tmp_dir
-            else:
-                # 转换失败时返回明确错误，不尝试读二进制文件
-                shutil.rmtree(tmp_dir, ignore_errors=True)
-                return _wrap_error(
-                    f"二进制 DFM 转换失败: {result.get('message', '未知错误')}。"
-                    "请检查 Delphi 编译器(dcc32)是否可用"
-                )
+    # 获取读取许可（多读单写：多个读取可并发，写入时不可读）
+    # 必须在 DFM 检测/转换之前获取，防止并发写入干扰
+    read_lock_err = _acquire_read_lock(file_path)
+    if read_lock_err:
+        return _wrap_error(read_lock_err)
 
+    tmp_cleanup = None
+    lock_file_path = file_path  # 保存原始路径，用于锁释放（DFM 转换会改写 file_path）
     try:
+        if _is_dfm_file(file_path):
+            try:
+                fmt = dfm_utils._detect_dfm_format(file_path)
+            except FileNotFoundError:
+                return _wrap_error(f"DFM 文件不存在: {file_path}")
+            except PermissionError:
+                return _wrap_error(f"无权限读取 DFM 文件: {file_path}")
+            if fmt == "binary":
+                tmp_dir = tempfile.mkdtemp(prefix="filetool_")
+                tmp_text = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
+                result = await dfm_utils.convert_dfm(file_path, tmp_text, to_text=True)
+                if result.get("success"):
+                    file_path = tmp_text
+                    tmp_cleanup = tmp_dir
+                else:
+                    # 转换失败时返回明确错误，不尝试读二进制文件
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+                    return _wrap_error(
+                        f"二进制 DFM 转换失败: {result.get('message', '未知错误')}。"
+                        "请检查 Delphi 编译器(dcc32)是否可用"
+                    )
+
         return await _read_content(
             file_path=file_path,
             start_line=start_line,
@@ -354,6 +361,7 @@ async def handle_read(arguments: Dict[str, Any]) -> Dict[str, Any]:
             show_line_numbers=show_line_numbers,
         )
     finally:
+        _release_read_lock(lock_file_path)
         if tmp_cleanup:
             shutil.rmtree(tmp_cleanup, ignore_errors=True)
 
@@ -599,6 +607,98 @@ async def _handle_partial_write(
             shutil.rmtree(tmp_cleanup, ignore_errors=True)
 
 
+# ── 文件级写入锁：防止对同一个文件并行写入 ──────────────────────────────
+# 同一个文件同时被多个 agent write/batch_write 会导致内容错乱。
+# 用 in-process dict 做简单互斥：第二个并发写直接拒绝，让 agent 合并后重试。
+# 多读单写 (RWLock) — 每个文件路径一个锁条目
+# 结构: { normalized_path: {"lock": threading.Lock(), "readers": int, "writer": bool} }
+_file_rw_locks: Dict[str, Dict] = {}
+_file_rw_dict_lock = threading.Lock()  # 保护 _file_rw_locks 字典本身的并发访问
+
+
+def _get_rw_entry(file_path: str) -> Dict:
+    """获取或创建路径对应的 RWLock 条目（线程安全）"""
+    normalized = os.path.abspath(file_path)
+    with _file_rw_dict_lock:
+        entry = _file_rw_locks.get(normalized)
+        if entry is None:
+            entry = {
+                "lock": threading.Lock(),
+                "readers": 0,
+                "writer": False,
+            }
+            _file_rw_locks[normalized] = entry
+        return entry
+
+
+def _acquire_read_lock(file_path: str) -> Optional[str]:
+    """
+    获取文件的读取许可。
+    多个读取可并发进行，但写入进行时不允许读取。
+    
+    Returns:
+        None 表示成功，可以读取
+        str  表示冲突，返回错误消息
+    """
+    normalized = os.path.abspath(file_path)
+    entry = _get_rw_entry(file_path)
+    with entry["lock"]:
+        if entry["writer"]:
+            return (
+                f"文件 {os.path.basename(normalized)} 正在被写入操作占用，无法读取。"
+                "请等待写入完成后再试。"
+            )
+        entry["readers"] += 1
+    return None
+
+
+def _release_read_lock(file_path: str) -> None:
+    """释放文件的读取许可"""
+    normalized = os.path.abspath(file_path)
+    with _file_rw_dict_lock:
+        entry = _file_rw_locks.get(normalized)
+        if entry is None:
+            return
+    with entry["lock"]:
+        entry["readers"] = max(0, entry["readers"] - 1)
+
+
+def _acquire_write_lock(file_path: str) -> Optional[str]:
+    """
+    获取文件的写入许可。
+    写入时不允许其他读取或写入同时进行。
+    
+    Returns:
+        None 表示成功，可以写入
+        str  表示冲突，返回错误消息
+    """
+    normalized = os.path.abspath(file_path)
+    entry = _get_rw_entry(file_path)
+    with entry["lock"]:
+        if entry["writer"] or entry["readers"] > 0:
+            rc = entry["readers"]
+            wc = "是" if entry["writer"] else "否"
+            return (
+                f"文件 {os.path.basename(normalized)} 正在被其他操作占用"
+                f"（读取中: {rc}, 写入中: {wc}）。"
+                "同一个文件的所有修改必须合并为一次 batch_write 完成，"
+                "请重新 read 文件后规划全部 edits，用 batch_write 一次性写入。"
+            )
+        entry["writer"] = True
+    return None
+
+
+def _release_write_lock(file_path: str) -> None:
+    """释放文件的写入许可"""
+    normalized = os.path.abspath(file_path)
+    with _file_rw_dict_lock:
+        entry = _file_rw_locks.get(normalized)
+        if entry is None:
+            return
+    with entry["lock"]:
+        entry["writer"] = False
+
+
 async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     处理 write action。
@@ -661,20 +761,32 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         else:
             original_encoding = encoding
 
-        # 部分写入: 指定行范围替换
+    # ────────────── 部分写入（读取→修改→写回）──────────────
         if start_line is not None or end_line is not None:
-            return await _handle_partial_write(
-                file_path=file_path,
-                content=content,
-                backup=backup,
-                encoding=encoding,
-                auto_format=auto_format,
-                start_line=start_line,
-                end_line=end_line,
-                original_encoding=original_encoding,
-                is_dfm_binary=is_dfm_binary,
-                preview=preview,
-            )
+            if preview:
+                lock_err = _acquire_read_lock(file_path)
+            else:
+                lock_err = _acquire_write_lock(file_path)
+            if lock_err:
+                return _wrap_error(lock_err)
+            try:
+                return await _handle_partial_write(
+                    file_path=file_path,
+                    content=content,
+                    backup=backup,
+                    encoding=encoding,
+                    auto_format=auto_format,
+                    start_line=start_line,
+                    end_line=end_line,
+                    original_encoding=original_encoding,
+                    is_dfm_binary=is_dfm_binary,
+                    preview=preview,
+                )
+            finally:
+                if preview:
+                    _release_read_lock(file_path)
+                else:
+                    _release_write_lock(file_path)
 
         if backup:
             backup_path = create_backup(file_path)
@@ -688,20 +800,29 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         # 新文件默认 UTF-8 BOM（避免中文 Windows 下 Delphi/pasfmt 误判为 GBK）
         original_encoding = encoding if encoding != "auto" else "utf-8-sig"
 
-    # 预览模式（全量写入）：读原文件，计算 diff 后返回
+    # ────────────── 预览（全量写入，只读不写）──────────────
     if preview and file_exists:
-        original_content = ""
-        with open(file_path, 'r', encoding=original_encoding or 'utf-8',
-                  buffering=1048576) as f:
-            original_content = f.read()
-        # 简单的 diff 预览：标记全文替换
-        old_bytes = len(original_content.encode('utf-8'))
-        new_bytes = len(content.encode('utf-8'))
-        return {"status": "success", "message":
-            f"[preview] would replace full file: {os.path.basename(file_path)}, "
-            f"{old_bytes} bytes → {new_bytes} bytes"}
+        lock_err = _acquire_read_lock(file_path)
+        if lock_err:
+            return _wrap_error(lock_err)
+        try:
+            original_content = ""
+            with open(file_path, 'r', encoding=original_encoding or 'utf-8',
+                      buffering=1048576) as f:
+                original_content = f.read()
+            old_bytes = len(original_content.encode('utf-8'))
+            new_bytes = len(content.encode('utf-8'))
+            return {"status": "success", "message":
+                f"[preview] would replace full file: {os.path.basename(file_path)}, "
+                f"{old_bytes} bytes → {new_bytes} bytes"}
+        finally:
+            _release_read_lock(file_path)
     
-    # 写入文件
+    # ────────────── 全量写入 ──────────────
+    lock_err = _acquire_write_lock(file_path)
+    if lock_err:
+        return _wrap_error(lock_err)
+    
     tmp_path = None
     try:
         tmp_fd, tmp_path = tempfile.mkstemp(
@@ -771,6 +892,7 @@ async def handle_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
         logger.error(f"写入文件失败: {e}", exc_info=True)
         return _wrap_error(f"写入文件失败: {str(e)}")
     finally:
+        _release_write_lock(file_path)
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
@@ -902,20 +1024,32 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if backup and not preview:
         bak_path = create_backup(file_path)
 
-    # ── 读文件（二进制 DFM 需转文本） ──
+    # ── 加锁：写锁或读锁，覆盖整个读→改→写周期 ──
+    if preview:
+        lock_err = _acquire_read_lock(file_path)
+    else:
+        lock_err = _acquire_write_lock(file_path)
+    if lock_err:
+        if bak_path and os.path.exists(bak_path):
+            try:
+                os.remove(bak_path)
+            except OSError:
+                pass
+        return _wrap_error(lock_err)
+
     read_path = file_path
     tmp_cleanup = None
-    if is_dfm_binary:
-        tmp_dir = tempfile.mkdtemp(prefix="filetool_")
-        text_path = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
-        conv_result = await dfm_utils.convert_dfm(file_path, text_path, to_text=True)
-        if not conv_result.get("success"):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return _wrap_error(f"二进制 DFM 转换失败: {conv_result.get('message', '未知错误')}")
-        read_path = text_path
-        tmp_cleanup = tmp_dir
-
     try:
+        # ── 读文件（二进制 DFM 需转文本） ──
+        if is_dfm_binary:
+            tmp_dir = tempfile.mkdtemp(prefix="filetool_")
+            text_path = os.path.join(tmp_dir, os.path.basename(file_path) + ".txt")
+            conv_result = await dfm_utils.convert_dfm(file_path, text_path, to_text=True)
+            if not conv_result.get("success"):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                return _wrap_error(f"二进制 DFM 转换失败: {conv_result.get('message', '未知错误')}")
+            read_path = text_path
+            tmp_cleanup = tmp_dir
         with open(read_path, 'r', encoding=read_enc, newline='', buffering=1048576) as f:
             lines = f.readlines()
 
@@ -1071,13 +1205,9 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     "如需强制写入请设置 force=true"
                 )
 
-        # ── 预览模式：跳过磁盘写入 ──
-        if preview:
-            # diffs 已经记录在 results 中，直接进入汇总
-            pass
-        else:
+        # ── 写入磁盘（非预览模式） ──
+        if not preview:
             # DFM 二进制 → 转回二进制
-            final_path = file_path
             if is_dfm_binary:
                 text_tmp = file_path + ".txt"
                 with open(text_tmp, 'w', encoding=write_enc, newline='', buffering=1048576) as f:
@@ -1105,7 +1235,6 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     encoding_fallback = True
 
             # 写入后自动格式化
-            fmt_msg = ""
             if auto_format and _is_delphi_file(file_path):
                 try:
                     fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
@@ -1160,6 +1289,11 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "failed", "message": "\n".join(summary)}
 
     finally:
+        # 释放锁
+        if preview:
+            _release_read_lock(file_path)
+        else:
+            _release_write_lock(file_path)
         if tmp_cleanup:
             shutil.rmtree(tmp_cleanup, ignore_errors=True)
 
@@ -1201,47 +1335,59 @@ async def handle_format(arguments: Dict[str, Any]) -> Dict[str, Any]:
         if not file_path:
             return _wrap_error("请提供 file_path 参数")
         if action == "check":
-            result = await pasfmt.format_file(
-                file_path=file_path,
-                dry_run=True,
-            )
+            lock_err = _acquire_read_lock(file_path)
+            if lock_err:
+                return _wrap_error(lock_err)
+            try:
+                result = await pasfmt.format_file(
+                    file_path=file_path,
+                    dry_run=True,
+                )
+            finally:
+                _release_read_lock(file_path)
         else:
-            # 记录格式化前行数，用于计算偏移量
-            before_lines = 0
-            if os.path.isfile(file_path):
-                try:
-                    fmt_enc = detect_encoding(file_path)
-                    with open(file_path, 'r', encoding=fmt_enc, newline='',
-                              buffering=1048576) as f:
-                        before_lines = sum(1 for _ in f)
-                except (OSError, UnicodeDecodeError):
-                    pass
+            lock_err = _acquire_write_lock(file_path)
+            if lock_err:
+                return _wrap_error(lock_err)
+            try:
+                # 记录格式化前行数，用于计算偏移量
+                before_lines = 0
+                if os.path.isfile(file_path):
+                    try:
+                        fmt_enc = detect_encoding(file_path)
+                        with open(file_path, 'r', encoding=fmt_enc, newline='',
+                                  buffering=1048576) as f:
+                            before_lines = sum(1 for _ in f)
+                    except (OSError, UnicodeDecodeError):
+                        pass
 
-            result = await pasfmt.format_file(
-                file_path=file_path,
-                config_path=arguments.get("config_path"),
-                backup=backup_flag,
-                in_place=True,
-                uses_style=uses_style,
-            )
+                result = await pasfmt.format_file(
+                    file_path=file_path,
+                    config_path=arguments.get("config_path"),
+                    backup=backup_flag,
+                    in_place=True,
+                    uses_style=uses_style,
+                )
 
-            # 格式化成功且文件存在时，计算行数变化并附加到返回消息
-            if result.get("status") == "success" and result.get("formatted") and os.path.isfile(file_path):
-                try:
-                    fmt_enc = detect_encoding(file_path)
-                    with open(file_path, 'r', encoding=fmt_enc, newline='',
-                              buffering=1048576) as f:
-                        after_lines = sum(1 for _ in f)
-                    offset = after_lines - before_lines
-                    if offset != 0:
-                        offset_info = (
-                            f"\n偏移量: {offset:+d}（格式化后行数变化）\n"
-                            f"后续编辑: 行号 ≥ 0 的新行号 = 原行号 + {offset}"
-                        )
-                        if isinstance(result.get("message"), str):
-                            result["message"] += offset_info
-                except (OSError, UnicodeDecodeError):
-                    pass
+                # 格式化成功且文件存在时，计算行数变化并附加到返回消息
+                if result.get("status") == "success" and result.get("formatted") and os.path.isfile(file_path):
+                    try:
+                        fmt_enc = detect_encoding(file_path)
+                        with open(file_path, 'r', encoding=fmt_enc, newline='',
+                                  buffering=1048576) as f:
+                            after_lines = sum(1 for _ in f)
+                        offset = after_lines - before_lines
+                        if offset != 0:
+                            offset_info = (
+                                f"\n偏移量: {offset:+d}（格式化后行数变化）\n"
+                                f"后续编辑: 行号 ≥ 0 的新行号 = 原行号 + {offset}"
+                            )
+                            if isinstance(result.get("message"), str):
+                                result["message"] += offset_info
+                    except (OSError, UnicodeDecodeError):
+                        pass
+            finally:
+                _release_write_lock(file_path)
 
     # pasfmt.format_file / format_code 结果已统一为 dict
     return result
@@ -1268,7 +1414,13 @@ async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return _wrap_error("路径安全校验失败: %s" % path_err)
 
     if backup_action == "create":
-        bp = create_backup(file_path)
+        lock_err = _acquire_read_lock(file_path)
+        if lock_err:
+            return _wrap_error(lock_err)
+        try:
+            bp = create_backup(file_path)
+        finally:
+            _release_read_lock(file_path)
         if bp:
             return {"status": "success", "message": f"备份已创建: {bp}"}
         return _wrap_error(f"备份失败: {file_path}")
@@ -1286,7 +1438,13 @@ async def handle_backup(arguments: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "success", "message": "\n".join(lines)}
 
     elif backup_action == "restore":
-        bp = restore_backup(file_path, version=version)
+        lock_err = _acquire_write_lock(file_path)
+        if lock_err:
+            return _wrap_error(lock_err)
+        try:
+            bp = restore_backup(file_path, version=version)
+        finally:
+            _release_write_lock(file_path)
         if bp:
             ver_str = f"v{version}" if version else "最新版本"
             return {"status": "success", "message": f"已从 {ver_str} 恢复: {bp}"}
@@ -1462,150 +1620,157 @@ async def handle_uses(arguments: Dict[str, Any]) -> Dict[str, Any]:
     if ext not in ('.pas', '.dpr', '.dpk', '.inc'):
         return _wrap_error(f"uses 操作仅支持 .pas/.dpr/.dpk/.inc 文件，不支持 {ext}")
 
-    # 读取文件（始终用实际检测编码读取，避免乱码；写出按 encoding 参数决定）
-    encoding = arguments.get("encoding", "auto")
-    detected_enc = detect_encoding(file_path)
-    if encoding == "auto":
-        read_enc = detected_enc
-        write_enc = detected_enc
-    else:
-        read_enc = detected_enc
-        write_enc = encoding
-
-    with open(file_path, 'r', encoding=read_enc, newline='',
-              buffering=1048576) as f:
-        text = f.read()
-
-    # 查找 uses 子句
-    result = _find_uses_section(text, uses_section)
-    if not result:
-        section_hint = f"{uses_section} 区域"
-        return _wrap_error(
-            f"在 {section_hint} 中未找到 uses 子句。"
-            "如果文件是新单元，请先用 write action 写入完整单元结构"
-        )
-
-    uses_start, uses_end, units_text = result
-    existing_units = _parse_units_from_uses(units_text)
-
-    # 检查单元是否已存在/不存在
-    unit_name_stripped = unit_name.strip()
-
-    # 提取单元名（不含 'in' 子句）用于比较
-    def _get_unit_name(entry: str) -> str:
-        in_match = re.match(r"(\S+)\s+in\s+", entry, re.IGNORECASE)
-        return in_match.group(1) if in_match else entry
-
-    def _get_short_name(name: str) -> str:
-        """提取短名（去掉命名空间前缀），如 'Vcl.Forms' → 'Forms'"""
-        return name.rsplit('.', 1)[-1]
-
-    existing_names = [_get_unit_name(e) for e in existing_units]
-    existing_names_lower = [n.lower() for n in existing_names]
-    unit_name_lower = unit_name_stripped.lower()
-
-    if uses_action == "add":
-        if unit_name_lower in existing_names_lower:
-            return {"status": "success", "message": f"{unit_name_stripped} 已在 {uses_section} uses 中，无需添加"}
-        # 检查命名空间前缀冲突：短名相同且至少一方无命名空间时才视为冲突
-        # Forms ↔ Vcl.Forms 冲突，Vcl.Forms ↔ FMX.Forms 不冲突（不同单元）
-        new_short = _get_short_name(unit_name_stripped).lower()
-        collision_idx = None
-        for i, existing in enumerate(existing_names):
-            if existing.lower() != unit_name_lower and _get_short_name(existing).lower() == new_short:
-                # 至少一方是短名（无命名空间）才算冲突
-                if '.' not in unit_name_stripped or '.' not in existing:
-                    collision_idx = i
-                    break
-        if collision_idx is not None:
-            if '.' in unit_name_stripped and '.' not in existing_names[collision_idx]:
-                # 长名替换短名：Vcl.Forms 替换 Forms
-                replaced_unit = existing_units[collision_idx]
-                new_units = existing_units.copy()
-                new_units[collision_idx] = unit_name_stripped
-                new_units.sort(key=lambda e: _get_unit_name(e).lower())
-            else:
-                # 短名冲突长名，已有长名则跳过
-                return {"status": "success", "message": f"{unit_name_stripped} 与已有单元 {existing_names[collision_idx]} 短名相同，视为同一单元，跳过"}
-        else:
-            # 无冲突，直接插入
-            new_units = existing_units + [unit_name_stripped]
-            new_units.sort(key=lambda e: _get_unit_name(e).lower())
-    else:  # remove
-        if unit_name_lower not in existing_names_lower:
-            return {"status": "success", "message": f"{unit_name_stripped} 不在 {uses_section} uses 中，无需删除"}
-        new_units = [e for e in existing_units if _get_unit_name(e).lower() != unit_name_lower]
-
-    if not new_units:
-        return _wrap_error(f"删除 {unit_name_stripped} 后 uses 子句将为空，请改用 write action 重写文件")
-
-    # 重建 uses 文本
-    new_units_text = _build_uses_text(new_units, units_text)
-    new_uses_clause = f"uses {new_units_text};"
-
-    # 替换原 uses 子句
-    new_text = text[:uses_start] + new_uses_clause + text[uses_end:]
-
-    # 备份
-    backup_path = None
-    backup = arguments.get("backup", True)
-    if backup:
-        backup_path = create_backup(file_path)
-
-    # 写出（用 write_enc 编码，与读取编码可能不同 = 透明转码）
-    encoding_fallback = False
+    # 获取写入许可（读+写互斥）
+    lock_err = _acquire_write_lock(file_path)
+    if lock_err:
+        return _wrap_error(lock_err)
     try:
-        with open(file_path, 'w', encoding=write_enc, newline='',
-                  buffering=1048576) as f:
-            f.write(new_text)
-    except UnicodeEncodeError:
-        logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
-        with open(file_path, 'w', encoding="utf-8", newline='',
-                  buffering=1048576) as f:
-            f.write(new_text)
-        write_enc = "utf-8"
-        encoding_fallback = True
+        # 读取文件（始终用实际检测编码读取，避免乱码；写出按 encoding 参数决定）
+        encoding = arguments.get("encoding", "auto")
+        detected_enc = detect_encoding(file_path)
+        if encoding == "auto":
+            read_enc = detected_enc
+            write_enc = detected_enc
+        else:
+            read_enc = detected_enc
+            write_enc = encoding
 
-    # 自动格式化
-    fmt_msg = ""
-    if arguments.get("auto_format", False):
+        with open(file_path, 'r', encoding=read_enc, newline='',
+                  buffering=1048576) as f:
+            text = f.read()
+
+        # 查找 uses 子句
+        result = _find_uses_section(text, uses_section)
+        if not result:
+            section_hint = f"{uses_section} 区域"
+            return _wrap_error(
+                f"在 {section_hint} 中未找到 uses 子句。"
+                "如果文件是新单元，请先用 write action 写入完整单元结构"
+            )
+
+        uses_start, uses_end, units_text = result
+        existing_units = _parse_units_from_uses(units_text)
+
+        # 检查单元是否已存在/不存在
+        unit_name_stripped = unit_name.strip()
+
+        # 提取单元名（不含 'in' 子句）用于比较
+        def _get_unit_name(entry: str) -> str:
+            in_match = re.match(r"(\S+)\s+in\s+", entry, re.IGNORECASE)
+            return in_match.group(1) if in_match else entry
+
+        def _get_short_name(name: str) -> str:
+            """提取短名（去掉命名空间前缀），如 'Vcl.Forms' → 'Forms'"""
+            return name.rsplit('.', 1)[-1]
+
+        existing_names = [_get_unit_name(e) for e in existing_units]
+        existing_names_lower = [n.lower() for n in existing_names]
+        unit_name_lower = unit_name_stripped.lower()
+
+        if uses_action == "add":
+            if unit_name_lower in existing_names_lower:
+                return {"status": "success", "message": f"{unit_name_stripped} 已在 {uses_section} uses 中，无需添加"}
+            # 检查命名空间前缀冲突：短名相同且至少一方无命名空间时才视为冲突
+            # Forms ↔ Vcl.Forms 冲突，Vcl.Forms ↔ FMX.Forms 不冲突（不同单元）
+            new_short = _get_short_name(unit_name_stripped).lower()
+            collision_idx = None
+            for i, existing in enumerate(existing_names):
+                if existing.lower() != unit_name_lower and _get_short_name(existing).lower() == new_short:
+                    # 至少一方是短名（无命名空间）才算冲突
+                    if '.' not in unit_name_stripped or '.' not in existing:
+                        collision_idx = i
+                        break
+            if collision_idx is not None:
+                if '.' in unit_name_stripped and '.' not in existing_names[collision_idx]:
+                    # 长名替换短名：Vcl.Forms 替换 Forms
+                    replaced_unit = existing_units[collision_idx]
+                    new_units = existing_units.copy()
+                    new_units[collision_idx] = unit_name_stripped
+                    new_units.sort(key=lambda e: _get_unit_name(e).lower())
+                else:
+                    # 短名冲突长名，已有长名则跳过
+                    return {"status": "success", "message": f"{unit_name_stripped} 与已有单元 {existing_names[collision_idx]} 短名相同，视为同一单元，跳过"}
+            else:
+                # 无冲突，直接插入
+                new_units = existing_units + [unit_name_stripped]
+                new_units.sort(key=lambda e: _get_unit_name(e).lower())
+        else:  # remove
+            if unit_name_lower not in existing_names_lower:
+                return {"status": "success", "message": f"{unit_name_stripped} 不在 {uses_section} uses 中，无需删除"}
+            new_units = [e for e in existing_units if _get_unit_name(e).lower() != unit_name_lower]
+
+        if not new_units:
+            return _wrap_error(f"删除 {unit_name_stripped} 后 uses 子句将为空，请改用 write action 重写文件")
+
+        # 重建 uses 文本
+        new_units_text = _build_uses_text(new_units, units_text)
+        new_uses_clause = f"uses {new_units_text};"
+
+        # 替换原 uses 子句
+        new_text = text[:uses_start] + new_uses_clause + text[uses_end:]
+
+        # 备份
+        backup_path = None
+        backup = arguments.get("backup", True)
+        if backup:
+            backup_path = create_backup(file_path)
+
+        # 写出（用 write_enc 编码，与读取编码可能不同 = 透明转码）
+        encoding_fallback = False
         try:
-            fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
-            if fmt_result.get("formatted"):
-                fmt_msg = "，已格式化"
-        except Exception as ex:
-            logger.warning(f"uses 操作后格式化失败: {ex}")
+            with open(file_path, 'w', encoding=write_enc, newline='',
+                      buffering=1048576) as f:
+                f.write(new_text)
+        except UnicodeEncodeError:
+            logger.warning(f"编码 {write_enc} 写出失败，回退到 utf-8")
+            with open(file_path, 'w', encoding="utf-8", newline='',
+                      buffering=1048576) as f:
+                f.write(new_text)
+            write_enc = "utf-8"
+            encoding_fallback = True
 
-    # 计算偏移量（uses 修改也会影响行号）
-    s = text[:uses_start].count('\n')           # 0-indexed: uses 关键字所在行
-    uses_old_text = text[uses_start:uses_end]
-    removed = uses_old_text.count('\n')          # 旧 uses 子句占用的行数
-    inserted = new_uses_clause.count('\n')       # 新 uses 子句占用的行数
-    offset = inserted - removed
-    # 计算 exclusive end: uses_end 所在行的下一行
-    e = text[:uses_end].count('\n') + 1
+        # 自动格式化
+        fmt_msg = ""
+        if arguments.get("auto_format", False):
+            try:
+                fmt_result = await pasfmt.format_file(file_path=file_path, backup=False)
+                if fmt_result.get("formatted"):
+                    fmt_msg = "，已格式化"
+            except Exception as ex:
+                logger.warning(f"uses 操作后格式化失败: {ex}")
 
-    action_desc = "added" if uses_action == "add" else "removed"
-    # 单行 meta (与 read/write 对齐)
-    basename = os.path.basename(file_path)
-    new_e = e + offset
-    parts = [
-        f"wrote: {basename}",
-        f"action: {action_desc} {unit_name_stripped} in {uses_section}",
-        f"uses: {', '.join(new_units)}",
-        f"0-indexed [{s}, {e}) → [{s}, {new_e})",
-        f"encoding: {write_enc}",
-    ]
-    if backup_path:
-        parts.append(f"backup: __history\\{os.path.basename(backup_path)}")
-    if fmt_msg:
-        parts.append("formatted: yes")
-    if encoding_fallback:
-        parts.append(f"⚠ fallback: {detected_enc} → utf-8")
-    if write_enc != detected_enc and not encoding_fallback:
-        parts.append(f"ℹ transcoded: {detected_enc} → {write_enc}")
-    
-    return {"status": "success", "message": ", ".join(parts)}
+        # 计算偏移量（uses 修改也会影响行号）
+        s = text[:uses_start].count('\n')           # 0-indexed: uses 关键字所在行
+        uses_old_text = text[uses_start:uses_end]
+        removed = uses_old_text.count('\n')          # 旧 uses 子句占用的行数
+        inserted = new_uses_clause.count('\n')       # 新 uses 子句占用的行数
+        offset = inserted - removed
+        # 计算 exclusive end: uses_end 所在行的下一行
+        e = text[:uses_end].count('\n') + 1
+
+        action_desc = "added" if uses_action == "add" else "removed"
+        # 单行 meta (与 read/write 对齐)
+        basename = os.path.basename(file_path)
+        new_e = e + offset
+        parts = [
+            f"wrote: {basename}",
+            f"action: {action_desc} {unit_name_stripped} in {uses_section}",
+            f"uses: {', '.join(new_units)}",
+            f"0-indexed [{s}, {e}) → [{s}, {new_e})",
+            f"encoding: {write_enc}",
+        ]
+        if backup_path:
+            parts.append(f"backup: __history\\{os.path.basename(backup_path)}")
+        if fmt_msg:
+            parts.append("formatted: yes")
+        if encoding_fallback:
+            parts.append(f"⚠ fallback: {detected_enc} → utf-8")
+        if write_enc != detected_enc and not encoding_fallback:
+            parts.append(f"ℹ transcoded: {detected_enc} → {write_enc}")
+        
+        return {"status": "success", "message": ", ".join(parts)}
+    finally:
+        _release_write_lock(file_path)
 
 
 # ============================================================

@@ -240,6 +240,8 @@ TOOL_HELP_DOCS: dict = {
         "file_triggers": "操作 .pas/.dfm/.dproj/.dpk/.fmx/.inc 文件时必须用此",
         "constraints": [
             "❌ 严禁使用 edit/write/bash echo 直接修改 .pas/.dfm 文件（会绕过备份+编码检测）",
+            "🚫 禁止对同一个文件并行写入。多个 agent 不得同时 write/batch_write 同一个文件。",
+            "🚫 如果需要修改同一个文件的多个位置，必须合并为一次 batch_write，由单个 agent 一次 read → 规划全部 edits → 一次 batch_write 完成。",
         ],
         "features": [
             "自动编码检测(UTF-8/GBK/UTF-16)",
@@ -247,11 +249,11 @@ TOOL_HELP_DOCS: dict = {
             "DFM二进制↔文本透明转换",
             "按类名/函数名搜索定位代码、部分写入、批量写入(batch_write)、格式化、uses子句增删",
         ],
-        "workflow": "get_coding_rules → delphi_file(read) → delphi_file(write) → delphi_file(format) → compile_project",
+        "workflow": "get_coding_rules → delphi_file(read)（规划全部修改，记下原始行号）→ delphi_file(action=batch_write, edits=[...]) 一次性写出 → delphi_file(format) → compile_project。关键规则：同一个文件的所有修改必须打包到一次 batch_write 中，不得分多次 write。不同文件可并行写。",
         "actions": {
             "read": "读文件，支持分段读取(start_line/limit/end_line)或按类名/函数名定位。start_line 为 0-indexed（第 1 行=0）",
-            "write": "写文件，支持全文替换或部分写入(start_line/end_line)。start_line/end_line 为 0-indexed 左闭右开。每次部分写入后会返回偏移量，用于后续编辑的行号调整。支持 preview 参数预览 diff",
-            "batch_write": "批量写入：传入 edits 数组（顺序不限），内部自动排序后以备份文件为参照系累积偏移，一次性写出。相邻 edit 区间不能重叠（自动检测并拒绝）",
+            "write": "写文件，支持全文替换或部分写入(start_line/end_line)。start_line/end_line 为 0-indexed 左闭右开。每次部分写入后会返回偏移量，用于后续编辑的行号调整。支持 preview 参数预览 diff。🚫 同一个文件不要分多次 write，如需多处修改请用 batch_write 一次完成",
+            "batch_write": "⭐ 优先使用。批量写入：传入 edits 数组（顺序不限，统一以原始文件为参照系），内部自动排序+累积偏移，一次性写出。相邻 edit 区间不能重叠（自动检测并拒绝）。适合：同一文件有 2+ 处修改时，一次性规划全部 edits 调用一次 batch_write",
             "format": "使用 pasfmt 格式化代码",
             "backup": "备份管理（创建/列表/恢复）",
             "uses": "增删 uses 子句中的单元",
@@ -493,6 +495,7 @@ TOOL_SHORT_DESC: dict = {
     "delphi_file": (
         "Delphi 文件(.pas/.dfm/.dproj/.dpr/.dpk/.fmx/.inc)专用操作: 读/写/批量写入/格式化/备份/uses管理。"
         " 禁止用原生 read/write/edit 修改 .pas/.dfm 文件。"
+        " ⚠️ 同文件不得并行写：同一文件的多处修改必须由单个 agent 用 batch_write 一次性完成。"
     ),
     "manage_component": (
         "DFM 组件增/删/改/生成 + PAS 自动同步。"
