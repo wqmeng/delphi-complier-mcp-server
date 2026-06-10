@@ -907,8 +907,8 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
     参数:
       file_path: 目标文件路径
       edits: 编辑列表，每个元素为 { start_line, end_line, content, description? }
-      force: 可选，默认 false。设为 true 可跳过 AI 偏移量检查（检测到 content 首行与被替换行相同、
-             或结果中出现连续重复行时报错），强制写入。
+      force: 可选，默认 false。设为 true 可跳过 AI 偏移量检查（检测到结果中出现连续重复行时报错），强制写入。
+             注意：content 首行与被替换行相同仅在 s>0 时告警（s=0 时文件头重复为正常情况）。
       preview: 可选，默认 false。设为 true 时只计算 diff 预览，不备份、不写盘、不格式化。
 
     设计:
@@ -916,8 +916,8 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
       - 先备份文件 → 读入内存 → 依次应用 edit（累计行号偏移） → 一次性写出磁盘
       - 所有 edit 的行号都以「备份文件」（原始内容）为参照系
       - 内部维护累计偏移量，逐 edit 调整 start_line/end_line，确保正确位置
-      - AI 偏移量自动检测: 每 edit 检查 content 首行是否与被替换行相同（偏移错误）；
-        全部 edit 应用后扫描连续重复行；检测到问题返回错误信息，除非 force=true
+      - AI 偏移量自动检测: 每 edit 检查 content 首行是否与被替换行相同（仅 s>0 时，s=0 正常）；
+         全部 edit 应用后扫描连续重复行；检测到问题返回错误信息，除非 force=true
 
     edits 内元素说明（与 write action 的 start_line/end_line 语义完全一致）:
       start_line: 0-indexed inclusive start 行号（以原始文件为参照系）
@@ -1107,9 +1107,10 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                 inserted = len(c_lines)
 
                 # ── AI 偏移检查（仅警告）: content 首行与被替换行内容相同 ──
+                # 注意: s > 0 时才检查。s=0 时（文件头替换）首行相同是完全正常的。
                 first_new = c_lines[0].rstrip('\n\r')
                 first_old = ''
-                if removed > 0 and adj_s < len(lines):
+                if s > 0 and removed > 0 and adj_s < len(lines):
                     first_old = lines[adj_s].rstrip('\n\r')
                     if first_old and first_old == first_new:
                         results.append(
@@ -1251,13 +1252,9 @@ async def handle_batch_write(arguments: Dict[str, Any]) -> Dict[str, Any]:
                     pass
 
         # ── 汇总 ──
-        # 🧪 实验性功能: 批量写入在 AI 多次连续编辑时偏移量易错, 重复行检测可能误报
-        #   已知问题:
-        #     1. AI 误用 read 后的新行号 (而非原始文件行号) 触发 "连续重复行" 误报
-        #     2. 累计偏移量在 edits 数量 ≥ 3 时计算复杂, 容易累积误差
-        #     3. DFM 二进制 + batch_write 组合: 转换 → 文本 → 编辑 → 转回, 字节级可能漂移
-        #   推荐: 每次 read → write 一次, 多轮独立操作更稳
-        summary = ["🧪 batch_write is experimental, prefer action=write (one read+write per turn)"]
+        # batch_write 是推荐的批量写入方式。edits 以原始文件为参照系，内部自动处理偏移。
+        # 单次 edit 覆盖完整方法/过程时可直接用 write 全文替换。
+        summary = []
         basename = os.path.basename(file_path)
         action_label = "batch_preview" if preview else "batch_wrote"
         header_parts = [

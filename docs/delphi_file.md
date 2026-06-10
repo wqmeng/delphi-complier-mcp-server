@@ -48,7 +48,7 @@ get_coding_rules → delphi_file(read) → delphi_file(write) → delphi_file(fo
 |--------|------|
 | `read` | 读取文件，支持分段、按类名/函数名定位 |
 | `write` | 写入文件，支持全文替换或部分写入 |
-| `batch_write` | 🧪 批量写入多处（实验性） |
+| `batch_write` | ⭐ 批量写入多处（推荐） |
 | `format` | 使用 pasfmt 格式化代码 |
 | `backup` | 备份管理（创建/列表/恢复） |
 | `uses` | 增删 uses 子句中的单元 |
@@ -210,7 +210,7 @@ wrote: Demo.pas (preview), 0-indexed [6, 8) → [6, 7), encoding: utf-8, preview
 
 ## 5. Batch Write — 批量写入
 
-> 🧪 **实验性功能**：适合单次 ≥3 处不连续修改的场景。偏移量计算复杂，遇到问题请用多次 `write` 替代。
+> ⭐ **推荐使用**：所有对同一文件的多处修改应合并为一次 `batch_write`。edits 以原始文件为参照系，内部自动处理行号偏移，无需手动累加。
 
 ### 5.1 基本用法
 
@@ -236,17 +236,16 @@ delphi_file(action="batch_write",
 
 | 场景 | 推荐 |
 |------|------|
-| 1~2 处不连续修改 | `read` → `write`（更稳） |
-| 3+ 处不连续修改 | `read` → `batch_write` |
+| 同一文件 N 处修改（任意数量） | `read` → `batch_write`（首选） |
+| 改 1 个完整方法/过程 | `write` + 完整 content（也可用 `batch_write` 单 edit） |
 | 涉及 uses 变更 | `uses` action |
-| 改完整方法 | `write` + 完整 content |
 
 ### 5.4 注意事项
 
 - edits 顺序不限，内部自动排序
 - 相邻 edit 区间不能重叠（自动检测并拒绝）
-- content 应包含替换后的**完整**内容，不要包含已存在的行，否则可能重复
-- `force=true` 可跳过 AI 偏移量检查
+- content 应包含替换区间 `[start_line, end_line)` 的**完整**新内容；不要包含区间外已存在的行，否则实际写入后可能重复
+- `force=true` 可跳过结果中连续重复行的检测（确认无误时使用）
 - `preview=true` 可以预览 diff 效果而不实际写入：
 
 ```python
