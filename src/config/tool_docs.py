@@ -464,6 +464,53 @@ TOOL_HELP_DOCS: dict = {
             'daofy_update(action="version")    显示当前版本',
         ],
     },
+    "generate_copyright": {
+        "summary": "生成软著文档（源代码+说明书+汇总表）。",
+        "description": "软著文档生成 — 源代码/说明书/汇总表",
+        "triggers": ["软著、版权、著作权登记、copyright"],
+        "constraints": ["需要 Edge/Chrome 浏览器 headless"],
+        "actions": {
+            "generate": "生成文档（自动校验配置）",
+            "validate": "检查配置完整性",
+            "update_config": "更新配置（传 config 字典）",
+            "status": "检查浏览器就绪",
+            "list": "列出已生成文件",
+            "generate_content": "扫描源码生成 Markdown 草稿（AI 补充正文后调用 generate）",
+            "audit": "审计草稿驳回风险",
+        },
+        "examples": [
+            'generate_copyright(action="validate")',
+            'generate_copyright(action="update_config", config={"contact_person":"张三"})',
+            'generate_copyright(action="generate")',
+            'generate_copyright(action="audit")',
+        ],
+    },
+    "automate_delphi": {
+        "summary": "驱动 Delphi 程序自动化执行流程并截图。",
+        "description": "Delphi 自动化截图",
+        "triggers": ["自动化测试、截图、Delphi自动化、automate"],
+        "constraints": ["需要 Delphi 程序已链接 DaofyAutomation 单元"],
+        "protocol": {
+            "transport": "命名管道 JSON 请求/响应",
+            "async_cmds": "click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rcall/key/rset/type",
+            "sync_cmds": "其它命令",
+        },
+        "commands": {
+            "goto": "激活窗体", "click": "点击(RTTI/@x,y)", "rclick": "右键菜单",
+            "dblclick": "双击", "hover": "悬停", "move": "移动鼠标",
+            "drag": "拖拽(source→target)", "type": "输入文本", "key": "发送按键",
+            "wait": "等待 ms", "waitfor": "等待属性满足条件",
+            "capture": "截图", "listwnd": "枚举窗口",
+            "dumpstate": "控件树", "dlgscan/dlgclick": "弹出菜单",
+            "msgscan/msgclick/msgclose": "MessageBox", "dlgfile": "文件对话框",
+            "rget/rset": "RTTI 读写属性", "rcall": "调用方法",
+            "rinspect": "检视成员", "snapdir": "设目录", "exit": "退出",
+        },
+        "examples": [
+            'automate_delphi(app_path="App.exe", script=[{"cmd":"goto","target":"TMainForm"},{"cmd":"capture","target":"main"}])',
+            'automate_delphi(app_path="App.exe", script=[{"cmd":"listwnd"}])',
+        ],
+    },
 }
 
 # 工具名列表（保持顺序，用于 list_tools 和 tool_help 的 enum）
@@ -480,9 +527,9 @@ TOOL_NAMES: list = [
     "tool_help",
     "experience",
     "daofy_update",
+    "automate_delphi",
+    "generate_copyright",
 ]
-
-# 精简版 descriptions（用于 list_tools 的 description 字段）
 # 规则：一句话用途 + 硬约束（不遵守会报错的规则）
 TOOL_SHORT_DESC: dict = {
     "project": (
@@ -530,5 +577,16 @@ TOOL_SHORT_DESC: dict = {
     "daofy_update": (
         "检查 Daofy 版本更新、执行 git pull 更新。"
         " action=check 检查新版, action=update 执行更新, action=version 显示当前版本。"
+    ),
+    "automate_delphi": (
+        "Delphi 自动化测试：驱动 Delphi 程序执行流程并截图。"
+        " 支持 keep_alive 复用进程。"
+        " 命令: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/"
+        "capture/listwnd/dumpstate/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/"
+        "rget/rset/rcall/rinspect/snapdir/exit。"
+    ),
+    "generate_copyright": (
+        "生成软著文档（源代码+说明书+汇总表），基于浏览器 PDF 渲染。"
+        " 自动校验配置完整性，支持 action=audit 检查草稿驳回风险。"
     ),
 }

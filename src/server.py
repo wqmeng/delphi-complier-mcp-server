@@ -612,6 +612,74 @@ async def run_server():
                     "required": ["action"],
                 }
             ),
+
+            # ===== 软著文档生成 =====
+            Tool(
+                name="generate_copyright",
+                description=TOOL_SHORT_DESC.get("generate_copyright", "生成软著文档"),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["generate", "validate", "update_config", "status", "list", "generate_content", "audit"],
+                            "default": "generate",
+                            "description": "操作类型: generate=生成文档; validate=检查配置; update_config=更新配置; status=检查环境; list=列出已生成; generate_content=生成草稿; audit=审计草稿",
+                        },
+                        "config": {
+                            "type": "object",
+                            "description": "配置更新（仅 action=update_config 时必需）",
+                        },
+                        "doc_type": {
+                            "type": "string",
+                            "enum": ["all", "source", "manual", "summary"],
+                            "default": "all",
+                            "description": "文档类型（仅 action=generate 时生效）",
+                        },
+                        "output_dir": {
+                            "type": "string",
+                            "description": "输出目录（可选，默认 docs/copyright）",
+                        },
+                    },
+                    "required": ["action"],
+                }
+            ),
+
+            # ===== Delphi 自动化截图 =====
+            Tool(
+                name="automate_delphi",
+                description=TOOL_SHORT_DESC.get("automate_delphi", "Delphi 自动化测试"),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "app_path": {
+                            "type": "string",
+                            "description": "Delphi exe 文件路径",
+                        },
+                        "script": {
+                            "type": "string",
+                            "description": "JSON 脚本（文件路径 或 JSON 字符串）。"
+                                           " 格式: [{\"cmd\":\"goto\",\"target\":\"TMainForm\",\"capture\":\"main_001\"}, ...]"
+                                           " 协议: JSON请求/响应，cmd字段支持: goto/click/rclick/dblclick/hover/move/drag/type/key/wait/waitfor/capture/listwnd/dumpstate/dlgscan/dlgclick/msgscan/msgclick/msgclose/dlgfile/rcall/rinspect/rget/rset/snapdir/exit。async(click/rclick/dblclick/hover/move/drag/msgclick/dlgclick/rinspect)立即返回ACK；sync其余阻塞等待。",
+                        },
+                        "snapshots_dir": {
+                            "type": "string",
+                            "description": "截图输出目录（可选，默认 docs/copyright/snapshots）",
+                        },
+                        "wait_timeout": {
+                            "type": "number",
+                            "default": 10,
+                            "description": "等待 Delphi 管道就绪的超时秒数（默认 10s）",
+                        },
+                        "keep_alive": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": "执行完后是否保持进程运行。True=常驻供后续复用，False=执行完退出（默认）",
+                        },
+                    },
+                    "required": ["app_path", "script"],
+                }
+            ),
         ]
 
     # ============================================================
@@ -872,6 +940,50 @@ async def run_server():
 
         return {"error": f"未知 action: {action}"}
 
+    async def _handle_generate_copyright(arguments: dict) -> dict:
+        """处理 generate_copyright 工具调用。"""
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_generate_copyright, **arguments),
+                timeout=300,
+            )
+            return result
+        except asyncio.TimeoutError:
+            return {"status": "failed", "message": "generate_copyright 执行超时（300s）"}
+        except Exception as e:
+            return {"status": "failed", "message": f"generate_copyright failed: {e}"}
+
+    async def _handle_automate_delphi(arguments: dict) -> dict:
+        """处理 automate_delphi 工具调用。"""
+        import asyncio
+        app_path = arguments.get("app_path", "")
+        script = arguments.get("script", "")
+        snapshots_dir = arguments.get("snapshots_dir", "")
+        wait_timeout = arguments.get("wait_timeout", 10)
+        keep_alive = arguments.get("keep_alive", False)
+
+        if not app_path or not script:
+            return {"status": "error", "message": "缺少必需参数: app_path, script"}
+
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_execute_script,
+                                  app_path=app_path,
+                                  script=script,
+                                  snapshots_dir=snapshots_dir,
+                                  wait_for_pipe=wait_timeout,
+                                  keep_alive=keep_alive),
+                timeout=300,
+            )
+            return result
+        except asyncio.TimeoutError:
+            return {
+                "status": "failed",
+                "message": "automate_delphi 执行超时（300s）",
+            }
+        except Exception as e:
+            return {"status": "failed", "message": f"automate_delphi failed: {e}"}
+
     _TOOL_HANDLERS = {
         "project": _handle_project_tool,
         "delphi_kb": _handle_delphi_kb,
@@ -886,6 +998,8 @@ async def run_server():
         "tool_help": _handle_tool_help,
         "experience": _handle_experience,
         "daofy_update": _handle_daofy_update,
+        "generate_copyright": _handle_generate_copyright,
+        "automate_delphi": _handle_automate_delphi,
     }
 
     @server.call_tool()
